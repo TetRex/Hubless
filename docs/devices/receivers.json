@@ -1,0 +1,938 @@
+{
+  "generated_utc": "2026-10-19T15:36:12Z",
+  "interfaces": [
+    {
+      "collections": [
+        "0059:0001"
+      ],
+      "interface": -1,
+      "known_as": null,
+      "pid": "40B0",
+      "product": "HID VHF Driver",
+      "release": "0000",
+      "usb_serial": "XXXXXXXX"
+    },
+    {
+      "collections": [
+        "000C:0001",
+        "FF13:0001",
+        "FFA0:0001"
+      ],
+      "interface": 3,
+      "known_as": "PRO X 2 LIGHTSPEED",
+      "pid": "0AF7",
+      "product": "PRO X 2 LIGHTSPEED",
+      "release": "0100",
+      "usb_serial": "XXXXXXXX"
+    },
+    {
+      "collections": [
+        "0001:0002"
+      ],
+      "interface": 0,
+      "known_as": "LIGHTSPEED Receiver",
+      "pid": "C547",
+      "product": "USB Receiver",
+      "release": "0402",
+      "usb_serial": null
+    },
+    {
+      "collections": [
+        "0001:0006",
+        "0001:0080",
+        "000C:0001"
+      ],
+      "interface": 1,
+      "known_as": "LIGHTSPEED Receiver",
+      "pid": "C547",
+      "product": "USB Receiver",
+      "release": "0402",
+      "usb_serial": null
+    },
+    {
+      "collections": [
+        "FF00:0001",
+        "FF00:0002"
+      ],
+      "devices": [
+        {
+          "device_info": {
+            "capabilities": "01",
+            "entity_count": 5,
+            "extended_model_id": "00",
+            "model_ids": [
+              "B382",
+              "40B0",
+              "C352"
+            ],
+            "raw": "05 XX XX XX XX 00 0e b3 82 40 b0 c3 52 00 01 00",
+            "transport": "000E",
+            "unit_id": "XXXXXXXX"
+          },
+          "features": [
+            {
+              "flags": [],
+              "id": "0000",
+              "index": 0,
+              "name": "ROOT",
+              "version": 2
+            },
+            {
+              "flags": [],
+              "id": "0001",
+              "index": 1,
+              "name": "FEATURE_SET",
+              "version": 2
+            },
+            {
+              "flags": [],
+              "id": "0003",
+              "index": 2,
+              "name": "DEVICE_FW_VERSION",
+              "version": 4
+            },
+            {
+              "flags": [],
+              "id": "0005",
+              "index": 3,
+              "name": "DEVICE_NAME",
+              "version": 2
+            },
+            {
+              "flags": [],
+              "id": "1D4B",
+              "index": 4,
+              "name": "WIRELESS_DEVICE_STATUS",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "0020",
+              "index": 5,
+              "name": "CONFIG_CHANGE",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "0007",
+              "index": 6,
+              "name": "DEVICE_FRIENDLY_NAME",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "1004",
+              "index": 7,
+              "name": "UNIFIED_BATTERY",
+              "version": 3
+            },
+            {
+              "flags": [],
+              "id": "8071",
+              "index": 8,
+              "name": "RGB_EFFECTS",
+              "version": 3
+            },
+            {
+              "flags": [],
+              "id": "8081",
+              "index": 9,
+              "name": "PER_KEY_LIGHTING_V2",
+              "version": 2
+            },
+            {
+              "flags": [],
+              "id": "1BC0",
+              "index": 10,
+              "name": "REPORT_HID_USAGE",
+              "version": 1
+            },
+            {
+              "flags": [],
+              "id": "40A3",
+              "index": 11,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "1B10",
+              "index": 12,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "4523",
+              "index": 13,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "4540",
+              "index": 14,
+              "name": "KEYBOARD_LAYOUT_2",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "8010",
+              "index": 15,
+              "name": "GKEY",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "8040",
+              "index": 16,
+              "name": "BRIGHTNESS_CONTROL",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "8100",
+              "index": 17,
+              "name": "ONBOARD_PROFILES",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "8060",
+              "index": 18,
+              "name": "REPORT_RATE",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "00D0",
+              "index": 19,
+              "name": "DFU",
+              "version": 3
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1802",
+              "index": 20,
+              "name": "DEVICE_RESET",
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1803",
+              "index": 21,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1806",
+              "index": 22,
+              "name": "CONFIG_DEVICE_PROPS",
+              "version": 8
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1817",
+              "index": 23,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1805",
+              "index": 24,
+              "name": "OOBSTATE",
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1830",
+              "index": 25,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "compliance_deactivatable"
+              ],
+              "id": "1890",
+              "index": 26,
+              "name": null,
+              "version": 9
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "compliance_deactivatable"
+              ],
+              "id": "1891",
+              "index": 27,
+              "name": null,
+              "version": 9
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "18A1",
+              "index": 28,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden"
+              ],
+              "id": "1E00",
+              "index": 29,
+              "name": "ENABLE_HIDDEN_FEATURES",
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1EB0",
+              "index": 30,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1861",
+              "index": 31,
+              "name": null,
+              "version": 1
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "18B0",
+              "index": 32,
+              "name": null,
+              "version": 1
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1801",
+              "index": 33,
+              "name": null,
+              "version": 0
+            }
+          ],
+          "firmware": [
+            {
+              "entity": 0,
+              "kind": "bootloader",
+              "raw": "01 42 4f 54 40 00 00 08 00 ab 2a 6d 6b 14 b3 00",
+              "version": "BOT 40.00.B0008"
+            },
+            {
+              "entity": 1,
+              "kind": "softdevice",
+              "raw": "05 00 00 00 00 00 01 25 00 00 00 00 00 00 00 00",
+              "version": " 00.00.B0125"
+            },
+            {
+              "entity": 2,
+              "kind": "firmware",
+              "raw": "00 4d 50 4b 23 00 00 08 01 40 b0 6d 6b 14 b3 00",
+              "version": "MPK 23.00.B0008"
+            },
+            {
+              "entity": 3,
+              "kind": "other",
+              "raw": "08 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+              "version": " 00.00.B0000"
+            },
+            {
+              "entity": 4,
+              "kind": "other",
+              "raw": "08 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+              "version": " 00.00.B0000"
+            }
+          ],
+          "index": "01",
+          "name": "PRO X TKL",
+          "protocol": "4.2",
+          "type": "keyboard",
+          "type_id": 0
+        }
+      ],
+      "interface": 2,
+      "known_as": "LIGHTSPEED Receiver",
+      "notifications": [
+        "10 ff 8f 00 1a 01 00",
+        "10 ff 8f 83 b5 09 00",
+        "10 ff 8f 83 b5 09 00",
+        "10 ff 8f 83 b5 09 00",
+        "10 ff 8f 83 b5 09 00",
+        "10 ff 8f 83 b5 09 00",
+        "10 02 8f 00 1f 08 00",
+        "10 03 8f 00 12 08 00",
+        "10 04 8f 00 13 08 00",
+        "10 05 8f 00 14 08 00",
+        "10 06 8f 00 15 08 00"
+      ],
+      "pid": "C547",
+      "product": "USB Receiver",
+      "registers": [
+        {
+          "label": "connection_state",
+          "params": "00 00 00",
+          "raw": "00 01 00",
+          "register": "02"
+        },
+        {
+          "label": "firmware_version",
+          "params": "01 00 00",
+          "raw": "01 04 02",
+          "register": "F1"
+        },
+        {
+          "label": "firmware_build",
+          "params": "02 00 00",
+          "raw": "02 00 09",
+          "register": "F1"
+        },
+        {
+          "label": "bootloader",
+          "params": "04 00 00",
+          "raw": "04 02 09",
+          "register": "F1"
+        },
+        {
+          "label": "pairing_info_slot1",
+          "params": "20 00 00",
+          "raw": "20 0d 08 40 b0 11 00 01 b1 00 00 00 00 2c 00 00",
+          "register": "B5",
+          "wpid": "40B0"
+        },
+        {
+          "error": "нет ответа",
+          "label": "pairing_info_slot2",
+          "params": "21 00 00",
+          "register": "B5"
+        },
+        {
+          "error": "нет ответа",
+          "label": "pairing_info_slot3",
+          "params": "22 00 00",
+          "register": "B5"
+        },
+        {
+          "error": "нет ответа",
+          "label": "pairing_info_slot4",
+          "params": "23 00 00",
+          "register": "B5"
+        },
+        {
+          "error": "нет ответа",
+          "label": "pairing_info_slot5",
+          "params": "24 00 00",
+          "register": "B5"
+        },
+        {
+          "error": "нет ответа",
+          "label": "pairing_info_slot6",
+          "params": "25 00 00",
+          "register": "B5"
+        }
+      ],
+      "release": "0402",
+      "role": "receiver",
+      "self_protocol": {
+        "error": "нет ответа"
+      },
+      "usb_serial": null
+    },
+    {
+      "collections": [
+        "0001:0002"
+      ],
+      "interface": 0,
+      "known_as": "LIGHTSPEED Receiver",
+      "pid": "C54D",
+      "product": "USB Receiver",
+      "release": "1402",
+      "usb_serial": "XXXXXXXX"
+    },
+    {
+      "collections": [
+        "0001:0006",
+        "0001:0080",
+        "000C:0001"
+      ],
+      "interface": 1,
+      "known_as": "LIGHTSPEED Receiver",
+      "pid": "C54D",
+      "product": "USB Receiver",
+      "release": "1402",
+      "usb_serial": "XXXXXXXX"
+    },
+    {
+      "collections": [
+        "FF00:0001",
+        "FF00:0002"
+      ],
+      "devices": [
+        {
+          "device_info": {
+            "capabilities": "01",
+            "entity_count": 2,
+            "extended_model_id": "00",
+            "model_ids": [
+              "40A9",
+              "C09B",
+              "0000"
+            ],
+            "raw": "02 XX XX XX XX 00 0c 40 a9 c0 9b 00 00 00 01 00",
+            "transport": "000C",
+            "unit_id": "XXXXXXXX"
+          },
+          "features": [
+            {
+              "flags": [],
+              "id": "0000",
+              "index": 0,
+              "name": "ROOT",
+              "version": 2
+            },
+            {
+              "flags": [],
+              "id": "0001",
+              "index": 1,
+              "name": "FEATURE_SET",
+              "version": 2
+            },
+            {
+              "flags": [],
+              "id": "0003",
+              "index": 2,
+              "name": "DEVICE_FW_VERSION",
+              "version": 7
+            },
+            {
+              "flags": [],
+              "id": "0005",
+              "index": 3,
+              "name": "DEVICE_NAME",
+              "version": 5
+            },
+            {
+              "flags": [],
+              "id": "1D4B",
+              "index": 4,
+              "name": "WIRELESS_DEVICE_STATUS",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "0020",
+              "index": 5,
+              "name": "CONFIG_CHANGE",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "1004",
+              "index": 6,
+              "name": "UNIFIED_BATTERY",
+              "version": 5
+            },
+            {
+              "flags": [],
+              "id": "2250",
+              "index": 7,
+              "name": null,
+              "version": 1
+            },
+            {
+              "flags": [],
+              "id": "2251",
+              "index": 8,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "2202",
+              "index": 9,
+              "name": "EXTENDED_ADJUSTABLE_DPI",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "8090",
+              "index": 10,
+              "name": "MODE_STATUS",
+              "version": 3
+            },
+            {
+              "flags": [],
+              "id": "80E0",
+              "index": 11,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "8061",
+              "index": 12,
+              "name": "EXTENDED_ADJUSTABLE_REPORT_RATE",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "8100",
+              "index": 13,
+              "name": "ONBOARD_PROFILES",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "8110",
+              "index": 14,
+              "name": "MOUSE_BUTTON_SPY",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "1500",
+              "index": 15,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1801",
+              "index": 16,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1802",
+              "index": 17,
+              "name": "DEVICE_RESET",
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1803",
+              "index": 18,
+              "name": null,
+              "version": 1
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1806",
+              "index": 19,
+              "name": "CONFIG_DEVICE_PROPS",
+              "version": 8
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1817",
+              "index": 20,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1805",
+              "index": 21,
+              "name": "OOBSTATE",
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1830",
+              "index": 22,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1875",
+              "index": 23,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1861",
+              "index": 24,
+              "name": null,
+              "version": 1
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "compliance_deactivatable"
+              ],
+              "id": "1890",
+              "index": 25,
+              "name": null,
+              "version": 9
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "18A1",
+              "index": 26,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden"
+              ],
+              "id": "1E00",
+              "index": 27,
+              "name": "ENABLE_HIDDEN_FEATURES",
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1E02",
+              "index": 28,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1E22",
+              "index": 29,
+              "name": null,
+              "version": 1
+            },
+            {
+              "flags": [],
+              "id": "1602",
+              "index": 30,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "1EB0",
+              "index": 31,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering",
+                "manuf_deactivatable"
+              ],
+              "id": "18B1",
+              "index": 32,
+              "name": null,
+              "version": 0
+            }
+          ],
+          "firmware": [
+            {
+              "entity": 0,
+              "kind": "bootloader",
+              "raw": "01 42 4c 31 71 00 00 12 00 ab 1c db c0 a7 d9 00",
+              "version": "BL1 71.00.B0012"
+            },
+            {
+              "entity": 1,
+              "kind": "firmware",
+              "raw": "00 4d 50 4d 32 05 00 29 01 40 a9 89 79 0b 20 00",
+              "version": "MPM 32.05.B0029"
+            }
+          ],
+          "index": "01",
+          "name": "PRO X 2",
+          "protocol": "4.2",
+          "type": "mouse",
+          "type_id": 3
+        }
+      ],
+      "interface": 2,
+      "known_as": "LIGHTSPEED Receiver",
+      "notifications": [
+        "10 ff 8f 00 1a 01 00",
+        "10 ff 8f 83 b5 09 00",
+        "10 ff 8f 83 b5 09 00",
+        "10 ff 8f 83 b5 09 00",
+        "10 ff 8f 83 b5 09 00",
+        "10 ff 8f 83 b5 09 00",
+        "10 02 8f 00 1b 08 00",
+        "10 03 8f 00 1c 08 00",
+        "10 04 8f 00 1d 08 00",
+        "10 05 8f 00 1e 08 00",
+        "10 06 8f 00 1f 08 00"
+      ],
+      "pid": "C54D",
+      "product": "USB Receiver",
+      "registers": [
+        {
+          "label": "connection_state",
+          "params": "00 00 00",
+          "raw": "00 01 00",
+          "register": "02"
+        },
+        {
+          "label": "firmware_version",
+          "params": "01 00 00",
+          "raw": "01 07 02",
+          "register": "F1"
+        },
+        {
+          "label": "firmware_build",
+          "params": "02 00 00",
+          "raw": "02 00 11",
+          "register": "F1"
+        },
+        {
+          "label": "bootloader",
+          "params": "04 00 00",
+          "raw": "04 00 08",
+          "register": "F1"
+        },
+        {
+          "label": "pairing_info_slot1",
+          "params": "20 00 00",
+          "raw": "20 0b 08 40 a9 11 00 02 b1 01 00 00 7f 24 00 00",
+          "register": "B5",
+          "wpid": "40A9"
+        },
+        {
+          "error": "нет ответа",
+          "label": "pairing_info_slot2",
+          "params": "21 00 00",
+          "register": "B5"
+        },
+        {
+          "error": "нет ответа",
+          "label": "pairing_info_slot3",
+          "params": "22 00 00",
+          "register": "B5"
+        },
+        {
+          "error": "нет ответа",
+          "label": "pairing_info_slot4",
+          "params": "23 00 00",
+          "register": "B5"
+        },
+        {
+          "error": "нет ответа",
+          "label": "pairing_info_slot5",
+          "params": "24 00 00",
+          "register": "B5"
+        },
+        {
+          "error": "нет ответа",
+          "label": "pairing_info_slot6",
+          "params": "25 00 00",
+          "register": "B5"
+        }
+      ],
+      "release": "1402",
+      "role": "receiver",
+      "self_protocol": {
+        "error": "нет ответа"
+      },
+      "usb_serial": "XXXXXXXX"
+    }
+  ],
+  "tool": "hubless 0.1.0"
+}

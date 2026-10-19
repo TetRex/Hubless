@@ -6,7 +6,10 @@
 
 mod app;
 mod config;
+mod devices;
+mod dump;
 mod hidden_window;
+mod hidpp;
 mod logging;
 mod panel;
 mod single_instance;
@@ -27,14 +30,21 @@ const USAGE: &str = "\
 Hubless — лёгкая замена G Hub
 
 Использование:
-  hubless            запустить в трее
-  hubless --help     эта справка
-  hubless --version  версия";
+  hubless                   запустить в трее
+  hubless --dump [файл]     устройства и таблицы HID++ фич (по умолчанию hubless-dump.json)
+  hubless --help            эта справка
+  hubless --version         версия";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         None => run_tray(),
+        Some("--dump") => {
+            attach_console();
+            let (cfg, _) = config::Config::load();
+            logging::init(&cfg);
+            dump::run(args.get(1).map(Into::into))
+        }
         Some("--help" | "-h") => {
             attach_console();
             println!("{USAGE}");

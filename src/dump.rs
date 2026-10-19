@@ -1,0 +1,331 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! `hubless --dump`: все устройства Logitech, их HID++ фичи — в консоль и в JSON.
+//! Только чтение. Серийные номера и unit id маскируются.
+
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use hidapi::HidApi;
+use serde_json::{Value, json};
+
+use crate::devices::registry::{self, KnownKind};
+use crate::hidpp::features::{self, device_info, device_name};
+use crate::hidpp::message::{DEVICE_SELF, hex};
+use crate::hidpp::root::{self, FeatureEntry, Protocol};
+use crate::hidpp::transport::{self, Interface, Transport};
+use crate::hidpp::{Device, Error, receiver};
+
+const MASK: &str = "XXXXXXXX";
+pub const DEFAULT_FILE: &str = "hubless-dump.json";
+
+pub fn run(out: Option<PathBuf>) -> ExitCode {
+    let api = match HidApi::new() {
+        Ok(api) => api,
+        Err(e) => {
+            eprintln!("hidapi: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let interfaces = transport::enumerate(&api);
+    if interfaces.is_empty() {
+        println!("Устройства Logitech не найдены.");
+    }
+
+    let mut json_ifaces = Vec::new();
+    for info in interfaces {
+        json_ifaces.push(dump_interface(&api, info));
+    }
+
+    let doc = json!({
+        "tool": format!("hubless {}", env!("CARGO_PKG_VERSION")),
+        "generated_utc": utc_now(),
+        "interfaces": json_ifaces,
+    });
+    let path = out.unwrap_or_else(|| PathBuf::from(DEFAULT_FILE));
+    match write_json(&path, &doc) {
+        Ok(()) => {
+            println!("\nJSON: {}", path.display());
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("\nне удалось записать {}: {e}", path.display());
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn write_json(path: &Path, doc: &Value) -> std::io::Result<()> {
+    let mut text = serde_json::to_string_pretty(doc)?;
+    text.push('\n');
+    std::fs::write(path, text)
+}
+
+fn dump_interface(api: &HidApi, info: Interface) -> Value {
+    let known = registry::lookup(info.pid);
+    let title = known.map_or(info.product.as_str(), |k| k.name);
+    println!(
+        "\n== {:04X} {} (интерфейс {}, «{}») ==",
+        info.pid, title, info.interface, info.product
+    );
+    let collections: Vec<String> = info
+        .collections
+        .iter()
+        .map(|c| format!("{:04X}:{:04X}", c.usage_page, c.usage))
+        .collect();
+    println!("  коллекции: {}", collections.join(" "));
+
+    let mut j = json!({
+        "pid": format!("{:04X}", info.pid),
+        "product": info.product,
+        "known_as": known.map(|k| k.name),
+        "interface": info.interface,
+        "release": format!("{:04X}", info.release),
+        "usb_serial": info.serial.as_ref().map(|_| MASK),
+        "collections": collections,
+    });
+    if !info.is_hidpp() {
+        println!("  нет HID++ коллекций (page FF00) — пропуск");
+        return j;
+    }
+
+    let transport = match Transport::open(api, &info) {
+        Ok(t) => t,
+        Err(e) => {
+            println!("  не удалось открыть: {e}");
+            j["error"] = json!(e.to_string());
+            return j;
+        }
+    };
+
+    let mut devices = Vec::new();
+    let mut is_receiver = known.is_some_and(|k| k.kind == KnownKind::Receiver);
+    // LIGHTSPEED-ресиверы на ping по 0xFF не отвечают вовсе — для них быстрый режим.
+    let ping_self = || root::ping(&transport, DEVICE_SELF);
+    let self_protocol = if is_receiver {
+        transport.quick(ping_self)
+    } else {
+        ping_self()
+    };
+    match &self_protocol {
+        Ok(Protocol::V1) => {
+            println!("  0xFF: HID++ 1.0 — ресивер");
+            is_receiver = true;
+        }
+        Ok(Protocol::V2(major, minor)) => {
+            println!("  0xFF: HID++ {major}.{minor}");
+            let d = dump_device(&transport, DEVICE_SELF, (*major, *minor));
+            is_receiver |= d["type"] == "receiver";
+            devices.push(d);
+        }
+        Err(e) => println!("  0xFF: {e}"),
+    }
+    j["self_protocol"] = protocol_json(&self_protocol);
+
+    if is_receiver {
+        j["role"] = json!("receiver");
+        let registers = dump_registers(&transport);
+        for slot in 1..=6u8 {
+            // Слот без pairing info, скорее всего, пуст — опрашиваем быстро.
+            let paired = registers.iter().any(|r| {
+                r["label"] == format!("pairing_info_slot{slot}") && r.get("raw").is_some()
+            });
+            let ping = || root::ping(&transport, slot);
+            let result = if paired {
+                ping()
+            } else {
+                transport.quick(ping)
+            };
+            match result {
+                Ok(Protocol::V2(major, minor)) => {
+                    println!("  слот {slot}: HID++ {major}.{minor}");
+                    devices.push(dump_device(&transport, slot, (major, minor)));
+                }
+                Ok(Protocol::V1) => println!("  слот {slot}: HID++ 1.0 (не поддерживается)"),
+                Err(Error::Timeout) if !paired => println!("  слот {slot}: не спарен"),
+                Err(Error::Timeout) => println!("  слот {slot}: нет ответа (спит/выключено)"),
+                Err(e) => println!("  слот {slot}: {e}"),
+            }
+        }
+        j["registers"] = Value::Array(registers);
+    }
+    j["devices"] = Value::Array(devices);
+
+    let notes = transport.take_notifications();
+    if !notes.is_empty() {
+        j["notifications"] = json!(notes.iter().map(|r| hex(r.as_bytes())).collect::<Vec<_>>());
+    }
+    j
+}
+
+fn protocol_json(p: &Result<Protocol, Error>) -> Value {
+    match p {
+        Ok(Protocol::V2(major, minor)) => json!(format!("{major}.{minor}")),
+        Ok(Protocol::V1) => json!("1.0"),
+        Err(e) => json!({ "error": e.to_string() }),
+    }
+}
+
+fn dump_registers(t: &Transport) -> Vec<Value> {
+    receiver::read_info(t)
+        .into_iter()
+        .map(|reg| {
+            let mut v = json!({
+                "label": reg.label,
+                "register": format!("{:02X}", reg.register),
+                "params": hex(&reg.params),
+            });
+            match &reg.result {
+                Ok(raw) => {
+                    println!("  рег. {:<20} {}", reg.label, hex(raw));
+                    v["raw"] = json!(hex(raw));
+                    if reg.label.starts_with("pairing_info")
+                        && let Some(wpid) = receiver::pairing_wpid(raw)
+                    {
+                        v["wpid"] = json!(format!("{wpid:04X}"));
+                    }
+                }
+                Err(e) => {
+                    println!("  рег. {:<20} {e}", reg.label);
+                    v["error"] = json!(e.to_string());
+                }
+            }
+            v
+        })
+        .collect()
+}
+
+fn dump_device(t: &Transport, index: u8, protocol: (u8, u8)) -> Value {
+    let mut errors = Vec::new();
+    let table = match root::enumerate(t, index) {
+        Ok(table) => table,
+        Err(e) => {
+            println!("    таблица фич: {e}");
+            errors.push(format!("feature table: {e}"));
+            Vec::new()
+        }
+    };
+    let dev = Device::new(t, index, &table);
+
+    let name = device_name::name(&dev)
+        .inspect_err(|e| errors.push(format!("name: {e}")))
+        .ok();
+    let kind = device_name::kind(&dev)
+        .inspect_err(|e| errors.push(format!("type: {e}")))
+        .ok();
+    println!(
+        "    {} ({})",
+        name.as_deref().unwrap_or("?"),
+        kind.map_or("?", |k| k.1)
+    );
+
+    let mut j = json!({
+        "index": format!("{index:02X}"),
+        "protocol": format!("{}.{}", protocol.0, protocol.1),
+        "name": name,
+        "type": kind.map(|k| k.1),
+        "type_id": kind.map(|k| k.0),
+    });
+
+    match device_info::device_info(&dev) {
+        Ok(info) => {
+            let mut raw_hex: Vec<String> = info.raw.iter().map(|b| format!("{b:02x}")).collect();
+            for i in device_info::UNIT_ID_BYTES {
+                raw_hex[i] = "XX".into();
+            }
+            let models: Vec<String> = info.model_ids.iter().map(|m| format!("{m:04X}")).collect();
+            println!(
+                "    модель {} транспорт {:04X}, прошивок: {}",
+                models.join("/"),
+                info.transport,
+                info.entity_count
+            );
+            j["device_info"] = json!({
+                "entity_count": info.entity_count,
+                "unit_id": MASK,
+                "transport": format!("{:04X}", info.transport),
+                "model_ids": models,
+                "extended_model_id": format!("{:02X}", info.extended_model_id),
+                "capabilities": format!("{:02X}", info.capabilities),
+                "raw": raw_hex.join(" "),
+            });
+            let mut fw = Vec::new();
+            for entity in 0..info.entity_count {
+                match device_info::firmware(&dev, entity) {
+                    Ok(f) => {
+                        println!("    {:<12} {}", f.kind, f.version);
+                        fw.push(json!({
+                            "entity": f.entity,
+                            "kind": f.kind,
+                            "version": f.version,
+                            "raw": hex(&f.raw),
+                        }));
+                    }
+                    Err(e) => errors.push(format!("firmware {entity}: {e}")),
+                }
+            }
+            j["firmware"] = Value::Array(fw);
+        }
+        Err(e) => errors.push(format!("device info: {e}")),
+    }
+
+    println!("    фичи ({}):", table.len());
+    println!("      idx  id    ver  флаги             имя");
+    j["features"] = Value::Array(table.iter().map(feature_json).collect());
+    if !errors.is_empty() {
+        for e in &errors {
+            println!("    ! {e}");
+        }
+        j["errors"] = json!(errors);
+    }
+    j
+}
+
+fn feature_json(f: &FeatureEntry) -> Value {
+    let flags = root::flag_names(f.flags);
+    let name = features::name(f.id);
+    println!(
+        "      {:>3}  {:04X}  {:>3}  {:<16}  {}{}",
+        f.index,
+        f.id,
+        f.version,
+        flags.join(","),
+        name.unwrap_or("?"),
+        if features::is_forbidden(f.id) {
+            "  [чёрный список]"
+        } else {
+            ""
+        }
+    );
+    json!({
+        "index": f.index,
+        "id": format!("{:04X}", f.id),
+        "name": name,
+        "version": f.version,
+        "flags": flags,
+    })
+}
+
+/// Текущее время UTC в формате ISO 8601 без внешних зависимостей.
+fn utc_now() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (days, rem) = (secs / 86_400, secs % 86_400);
+    // Алгоритм civil_from_days (Howard Hinnant).
+    let z = days as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
+        rem / 3600,
+        rem % 3600 / 60,
+        rem % 60
+    )
+}
