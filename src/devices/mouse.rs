@@ -9,7 +9,8 @@ use crate::config::config_dir;
 use crate::devices::discovery::Found;
 use crate::hidpp::features::{battery, device_info, dpi, onboard, report_rate};
 use crate::hidpp::message::hex;
-use crate::hidpp::{Device, Error};
+use crate::hidpp::{Device, Error, Write};
+use crate::settings::{self, MouseSettings};
 
 #[derive(Debug)]
 pub struct Status {
@@ -68,6 +69,75 @@ pub fn describe_dpi_list(list: &[u16]) -> String {
         "—".into()
     } else {
         parts.join(", ")
+    }
+}
+
+pub fn lift_off_to_device(l: settings::LiftOff) -> dpi::LiftOff {
+    match l {
+        settings::LiftOff::Low => dpi::LiftOff::Low,
+        settings::LiftOff::Medium => dpi::LiftOff::Medium,
+        settings::LiftOff::High => dpi::LiftOff::High,
+    }
+}
+
+pub fn lift_off_from_device(l: dpi::LiftOff) -> Option<settings::LiftOff> {
+    match l {
+        dpi::LiftOff::Low => Some(settings::LiftOff::Low),
+        dpi::LiftOff::Medium => Some(settings::LiftOff::Medium),
+        dpi::LiftOff::High => Some(settings::LiftOff::High),
+        dpi::LiftOff::Unknown(_) => None,
+    }
+}
+
+/// Записи для режима host: сначала режим, затем DPI/lift-off и частота.
+/// Значения, которые устройство в текущем подключении не поддерживает, пропускаются
+/// (например, 8000 Гц по кабелю) — с записью в лог.
+pub fn host_writes(dev: &Device, s: &MouseSettings) -> Vec<Write> {
+    if s.mode != Some(settings::Mode::Host) {
+        return Vec::new();
+    }
+    let mut writes = vec![onboard::set_mode(onboard::Mode::Host)];
+    if s.dpi.is_some() || s.lift_off.is_some() {
+        match dpi::parameters(dev) {
+            Ok(cur) => {
+                let x = s.dpi.unwrap_or(cur.x);
+                let y = s.dpi_y.or(s.dpi).unwrap_or(cur.y);
+                let lod = s.lift_off.map_or(cur.lift_off, lift_off_to_device);
+                let ok = dpi::supported(dev, false).is_ok_and(|l| l.contains(&x) && l.contains(&y));
+                if ok {
+                    writes.push(dpi::set_parameters(x, y, lod));
+                } else {
+                    tracing::warn!(x, y, "DPI из devices.toml не поддерживается — пропуск");
+                }
+            }
+            Err(e) => tracing::warn!("чтение DPI: {e}"),
+        }
+    }
+    // Частота опроса не применяется: запись 0x8061 принимается мышью, но значение не меняется
+    // (проверено 2026-10-19 через ресивер C54D) — до выяснения причины.
+    if let Some(hz) = s.rate_hz {
+        tracing::info!(hz, "частота опроса в режиме host пока не применяется");
+    }
+    writes
+}
+
+/// Перечитать значение после записи: `Some(true)` — применилось, `Some(false)` — нет,
+/// `None` — проверить не удалось.
+pub fn verify(dev: &Device, w: &Write) -> Option<bool> {
+    let p = &w.params;
+    match w.feature {
+        report_rate::ID => report_rate::current(dev).ok().map(|cur| cur == p[0]),
+        dpi::ID => dpi::parameters(dev).ok().map(|cur| {
+            cur.x.to_be_bytes() == [p[1], p[2]]
+                && cur.y.to_be_bytes() == [p[3], p[4]]
+                && cur.lift_off.to_byte() == p[5]
+        }),
+        onboard::ID => onboard::mode(dev).ok().map(|m| match m {
+            onboard::Mode::Onboard => p[0] == 1,
+            onboard::Mode::Host => p[0] == 2,
+            onboard::Mode::Unknown(b) => p[0] == b,
+        }),
+        _ => None,
     }
 }
 

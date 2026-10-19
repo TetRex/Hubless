@@ -10,9 +10,10 @@ use crate::devices::mouse;
 use crate::hidpp::features::{battery, dpi, onboard, report_rate};
 use crate::hidpp::message::hex;
 use crate::hidpp::{Error, Write};
+use crate::settings::{self, DeviceSettings, MouseSettings};
 
-pub const MOUSE_USAGE: &str = "\
-  hubless mouse [status]    состояние мыши: батарея, DPI, частота опроса, lift-off, onboard
+pub const MOUSE_USAGE: &str =
+    "  hubless mouse [status]    состояние мыши: батарея, DPI, частота опроса, lift-off, onboard
   hubless mouse backup      полный бэкап onboard-памяти в %APPDATA%\\Hubless\\backups
   hubless mouse dpi <N> [<Y>] [--dry-run]          DPI (и отдельно Y, если поддерживается)
   hubless mouse lod <low|medium|high> [--dry-run]  lift-off distance
@@ -54,7 +55,7 @@ pub fn mouse(args: &[String]) -> ExitCode {
             }
         },
         Some(cmd @ ("dpi" | "lod" | "rate" | "mode")) => match plan_write(found, cmd, &args[1..]) {
-            Ok(w) => run_write(found, &w, dry_run),
+            Ok((w, save)) => run_write(found, &w, dry_run, save),
             Err(e) => {
                 eprintln!("{e}");
                 ExitCode::from(2)
@@ -68,7 +69,10 @@ pub fn mouse(args: &[String]) -> ExitCode {
 }
 
 /// Построить запись по аргументам с проверкой против того, что поддерживает мышь.
-fn plan_write(found: &Found, cmd: &str, args: &[String]) -> Result<Write, String> {
+/// Как сохранить применённую запись в `devices.toml`.
+type Save = Box<dyn FnOnce(&mut MouseSettings)>;
+
+fn plan_write(found: &Found, cmd: &str, args: &[String]) -> Result<(Write, Save), String> {
     let dev = found.device();
     let arg = |i: usize| args.get(i).map(String::as_str);
     match cmd {
@@ -106,7 +110,16 @@ fn plan_write(found: &Found, cmd: &str, args: &[String]) -> Result<Write, String
                     .ok_or("укажите low, medium или high")?;
                 (current.x, current.y, lod)
             };
-            Ok(dpi::set_parameters(x, y, lod))
+            let lod_saved = mouse::lift_off_from_device(lod);
+            let save: Save = if cmd == "dpi" {
+                Box::new(move |m| {
+                    m.dpi = Some(x);
+                    m.dpi_y = Some(y);
+                })
+            } else {
+                Box::new(move |m| m.lift_off = lod_saved)
+            };
+            Ok((dpi::set_parameters(x, y, lod), save))
         }
         "rate" => {
             let hz: u32 = arg(0)
@@ -127,13 +140,23 @@ fn plan_write(found: &Found, cmd: &str, args: &[String]) -> Result<Write, String
                     list.join(", ")
                 ));
             }
-            Ok(report_rate::set(index))
+            Ok((
+                report_rate::set(index),
+                Box::new(move |m| m.rate_hz = Some(hz)),
+            ))
         }
         _ => {
             let mode = arg(0)
                 .and_then(onboard::Mode::parse)
                 .ok_or("укажите onboard или host")?;
-            Ok(onboard::set_mode(mode))
+            let saved = match mode {
+                onboard::Mode::Host => settings::Mode::Host,
+                _ => settings::Mode::Onboard,
+            };
+            Ok((
+                onboard::set_mode(mode),
+                Box::new(move |m| m.mode = Some(saved)),
+            ))
         }
     }
 }
@@ -156,7 +179,7 @@ fn packet_text(bytes: &[u8]) -> String {
     s
 }
 
-fn run_write(found: &Found, w: &Write, dry_run: bool) -> ExitCode {
+fn run_write(found: &Found, w: &Write, dry_run: bool, save: Save) -> ExitCode {
     let dev = found.device();
     let packet = match dev.preview(w) {
         Ok(r) => r,
@@ -174,6 +197,24 @@ fn run_write(found: &Found, w: &Write, dry_run: bool) -> ExitCode {
     match dev.apply(w) {
         Ok(r) => {
             println!("  ответ: {}", hex(r.as_bytes()));
+            if mouse::verify(&dev, w) == Some(false) {
+                eprintln!(
+                    "  устройство приняло запись, но значение не изменилось — в настройки не сохраняю"
+                );
+                return ExitCode::FAILURE;
+            }
+            let mut settings = DeviceSettings::load();
+            save(&mut settings.mouse);
+            match settings.save() {
+                Ok(()) => println!("  сохранено в {}", DeviceSettings::path().display()),
+                Err(e) => eprintln!("  не удалось сохранить настройки: {e}"),
+            }
+            if settings.mouse.mode != Some(settings::Mode::Host) {
+                println!(
+                    "  режим onboard: при переподключении мышь вернётся к своему профилю; \
+                     чтобы Hubless применял настройки сам — hubless mouse mode host"
+                );
+            }
             ExitCode::SUCCESS
         }
         Err(e) => {

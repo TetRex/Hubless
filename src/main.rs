@@ -14,6 +14,7 @@ mod hidden_window;
 mod hidpp;
 mod logging;
 mod panel;
+mod settings;
 mod single_instance;
 mod state;
 mod theme;
@@ -35,10 +36,11 @@ Hubless — лёгкая замена G Hub
 Использование:
   hubless                   запустить в трее
   hubless --dump [файл]     устройства и таблицы HID++ фич (по умолчанию hubless-dump.json)
-  hubless mouse [status]    состояние мыши: батарея, DPI, частота опроса, lift-off, onboard
-  hubless mouse backup      полный бэкап onboard-памяти в %APPDATA%\\Hubless\\backups
-  hubless --help           эта справка
-  hubless --version         версия";
+  hubless --test-toast      показать тестовое уведомление Windows
+  hubless --help            эта справка
+  hubless --version         версия
+
+Мышь:";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -56,9 +58,18 @@ fn main() -> ExitCode {
             logging::init(&cfg);
             cli::mouse(&args[1..])
         }
+        Some("--test-toast") => {
+            let (cfg, _) = config::Config::load();
+            logging::init(&cfg);
+            tray::toast::show(
+                "Hubless: проверка уведомлений",
+                "Так выглядит предупреждение о низком заряде.",
+            );
+            ExitCode::SUCCESS
+        }
         Some("--help" | "-h") => {
             attach_console();
-            println!("{USAGE}");
+            println!("{USAGE}\n{}", cli::MOUSE_USAGE);
             ExitCode::SUCCESS
         }
         Some("--version" | "-V") => {
@@ -68,7 +79,10 @@ fn main() -> ExitCode {
         }
         Some(other) => {
             attach_console();
-            eprintln!("Неизвестный аргумент: {other}\n\n{USAGE}");
+            eprintln!(
+                "Неизвестный аргумент: {other}\n\n{USAGE}\n{}",
+                cli::MOUSE_USAGE
+            );
             ExitCode::from(2)
         }
     }

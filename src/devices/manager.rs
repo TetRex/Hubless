@@ -13,9 +13,11 @@ use std::time::{Duration, Instant};
 use hidapi::HidApi;
 
 use crate::devices::discovery::{self, Found, TYPE_MOUSE};
+use crate::devices::mouse;
 use crate::hidpp::features::battery::{self, Battery};
 use crate::hidpp::message::Report;
 use crate::hidpp::transport::{Event, Inbound};
+use crate::settings::DeviceSettings;
 
 const BATTERY_POLL: Duration = Duration::from_secs(5 * 60);
 /// WM_DEVICECHANGE приходит пачкой — ждём тишины перед пересканированием.
@@ -176,6 +178,7 @@ impl Manager {
             Some(f) => {
                 *self.waker.lock().unwrap_or_else(|e| e.into_inner()) = Some(f.transport.waker());
                 self.mouse = Some(f);
+                self.apply_host_settings();
                 self.poll_battery();
             }
             None => self.set_mouse(None),
@@ -218,6 +221,7 @@ impl Manager {
             let online = r.params()[0] & LINK_NOT_ESTABLISHED == 0;
             tracing::info!(online, "связь мыши с ресивером");
             if online {
+                self.apply_host_settings();
                 self.poll_battery();
             } else {
                 self.update(|s| s.connected = false);
@@ -231,6 +235,11 @@ impl Manager {
         self.next_poll = Instant::now() + BATTERY_POLL;
         let Some(m) = &self.mouse else { return };
         let result = battery::status(&m.device());
+        let was_offline = self.snapshot.as_ref().is_some_and(|s| !s.connected);
+        if result.is_ok() && was_offline {
+            // Мышь проснулась/переподключилась без уведомления ресивера.
+            self.apply_host_settings();
+        }
         match result {
             Ok(b) => self.update(|s| {
                 s.battery = Some(b);
@@ -240,6 +249,19 @@ impl Manager {
             Err(e) => {
                 tracing::debug!("батарея: {e}");
                 self.update(|s| s.connected = false);
+            }
+        }
+    }
+
+    /// Режим host: применить настройки из `devices.toml` (читается заново — его меняет CLI).
+    fn apply_host_settings(&self) {
+        let Some(m) = &self.mouse else { return };
+        let settings = DeviceSettings::load();
+        let dev = m.device();
+        for w in mouse::host_writes(&dev, &settings.mouse) {
+            match dev.apply(&w) {
+                Ok(_) => tracing::info!(what = %w.what, "применено"),
+                Err(e) => tracing::warn!(what = %w.what, "не применено: {e}"),
             }
         }
     }
