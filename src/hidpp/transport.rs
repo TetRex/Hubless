@@ -13,7 +13,6 @@ use std::ffi::CString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use hidapi::{DeviceInfo, HidApi, HidDevice};
@@ -28,7 +27,7 @@ pub const HIDPP_USAGE_PAGE: u16 = 0xFF00;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 /// Быстрый режим для перебора слотов, которые скорее всего пусты: без повтора.
-const QUICK_TIMEOUT: Duration = Duration::from_millis(300);
+const QUICK_TIMEOUT: Duration = Duration::from_millis(150);
 /// Таймаут blocking read в потоке чтения: как часто поток проверяет флаг остановки.
 const READ_TIMEOUT_MS: i32 = 1000;
 
@@ -146,7 +145,6 @@ pub struct Transport {
     rx: Receiver<Inbound>,
     tx: Sender<Inbound>,
     stop: Arc<AtomicBool>,
-    readers: Vec<JoinHandle<()>>,
     /// Асинхронные сообщения устройства, пришедшие во время ожидания ответа.
     notifications: RefCell<Vec<Report>>,
     next_sw_id: Cell<u8>,
@@ -160,7 +158,6 @@ impl Transport {
         let (tx, rx) = mpsc::channel();
         let stop = Arc::new(AtomicBool::new(false));
         let mut writers = Vec::new();
-        let mut readers = Vec::new();
 
         for c in &info.collections {
             let Some(report_id) = c.report_id() else {
@@ -169,7 +166,8 @@ impl Transport {
             writers.push((report_id, api.open_path(&c.path)?));
             let reader = api.open_path(&c.path)?;
             let (tx, stop) = (tx.clone(), stop.clone());
-            readers.push(std::thread::spawn(move || read_loop(&reader, &tx, &stop)));
+            // Поток не ждём при закрытии: он сам выйдет по флагу `stop` в течение READ_TIMEOUT_MS.
+            std::thread::spawn(move || read_loop(&reader, &tx, &stop));
         }
         if writers.is_empty() {
             return Err(Error::NoHidppCollection);
@@ -179,7 +177,6 @@ impl Transport {
             rx,
             tx,
             stop,
-            readers,
             notifications: RefCell::default(),
             next_sw_id: Cell::new(0x0A),
             quick: Cell::new(false),
@@ -416,9 +413,6 @@ impl Transport {
 impl Drop for Transport {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
-        for r in self.readers.drain(..) {
-            let _ = r.join();
-        }
     }
 }
 

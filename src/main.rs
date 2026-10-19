@@ -36,7 +36,7 @@ Hubless — лёгкая замена G Hub
 Использование:
   hubless                   запустить в трее
   hubless --dump [файл]     устройства и таблицы HID++ фич (по умолчанию hubless-dump.json)
-  hubless --test-toast      показать тестовое уведомление Windows
+  hubless --test-toast      показать тестовое уведомление (Hubless должен быть запущен)
   hubless --help            эта справка
   hubless --version         версия
 
@@ -59,13 +59,14 @@ fn main() -> ExitCode {
             cli::mouse(&args[1..])
         }
         Some("--test-toast") => {
-            let (cfg, _) = config::Config::load();
-            logging::init(&cfg);
-            tray::toast::show(
-                "Hubless: проверка уведомлений",
-                "Так выглядит предупреждение о низком заряде.",
-            );
-            ExitCode::SUCCESS
+            attach_console();
+            if hidden_window::request_test_notification() {
+                println!("Запрос отправлен запущенному Hubless.");
+                ExitCode::SUCCESS
+            } else {
+                eprintln!("Hubless не запущен: уведомления показывает приложение в трее.");
+                ExitCode::FAILURE
+            }
         }
         Some("--help" | "-h") => {
             attach_console();

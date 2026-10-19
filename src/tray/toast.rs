@@ -1,59 +1,69 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Toast-уведомления Windows для неупакованного приложения.
+//! Уведомления через «balloon» иконки в трее (`Shell_NotifyIcon` + `NIF_INFO`).
 //!
-//! AUMID регистрируется в `HKCU\Software\Classes\AppUserModelId\<id>` (имя для центра уведомлений)
-//! и задаётся процессу. WinRT загружается только в момент показа уведомления.
+//! Windows 10/11 показывает их как обычные toast-уведомления от имени приложения и кладёт
+//! в центр уведомлений. В отличие от WinRT-toast, не требуется ярлык в меню «Пуск» с AUMID.
 
-use windows::Data::Xml::Dom::XmlDocument;
-use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
-use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
-use windows::core::HSTRING;
+use std::cell::Cell;
 
-use crate::win::hkcu_write_string;
+use windows::Win32::Foundation::HWND;
+use windows::Win32::UI::Shell::{
+    NIF_INFO, NIIF_WARNING, NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
+};
 
-const AUMID: &str = "TetRex.Hubless";
+/// tray-icon не отдаёт `uID` своей иконки; он берётся из счётчика, начинающегося с 1.
+/// Перебираем первые несколько значений и запоминаем подошедшее.
+const MAX_ID: u32 = 8;
 
-/// Экранирование для XML-содержимого toast.
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+thread_local! {
+    static ICON_ID: Cell<Option<u32>> = const { Cell::new(None) };
 }
 
-pub fn show(title: &str, text: &str) {
-    if let Err(e) = try_show(title, text) {
-        tracing::warn!("toast: {e}");
+fn copy_wide(dst: &mut [u16], s: &str) {
+    let mut n = 0;
+    for (d, c) in dst.iter_mut().zip(s.encode_utf16()) {
+        *d = c;
+        n += 1;
     }
+    // Последний элемент — завершающий ноль.
+    let end = n.min(dst.len() - 1);
+    dst[end] = 0;
 }
 
-fn try_show(title: &str, text: &str) -> windows::core::Result<()> {
-    hkcu_write_string(
-        &format!(r"Software\Classes\AppUserModelId\{AUMID}"),
-        "DisplayName",
-        "Hubless",
-    )?;
-    // SAFETY: строковый аргумент живёт до конца вызова.
-    unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(AUMID))? };
+pub fn show(hwnd: HWND, title: &str, text: &str) {
+    let mut nid = NOTIFYICONDATAW {
+        cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uFlags: NIF_INFO,
+        dwInfoFlags: NIIF_WARNING,
+        ..Default::default()
+    };
+    copy_wide(&mut nid.szInfoTitle, title);
+    copy_wide(&mut nid.szInfo, text);
 
-    let xml = format!(
-        "<toast><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>",
-        xml_escape(title),
-        xml_escape(text)
-    );
-    let doc = XmlDocument::new()?;
-    doc.LoadXml(&HSTRING::from(xml))?;
-    let toast = ToastNotification::CreateToastNotification(&doc)?;
-    ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(AUMID))?.Show(&toast)
+    let known = ICON_ID.get();
+    let candidates = known
+        .into_iter()
+        .chain((1..=MAX_ID).filter(|id| Some(*id) != known));
+    for id in candidates {
+        nid.uID = id;
+        // SAFETY: структура заполнена и живёт до конца вызова; hwnd — окно tray-icon этого процесса.
+        if unsafe { Shell_NotifyIconW(NIM_MODIFY, &nid) }.as_bool() {
+            ICON_ID.set(Some(id));
+            return;
+        }
+    }
+    tracing::warn!("уведомление не показано: иконка трея не найдена");
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
-    fn escapes_xml() {
-        assert_eq!(
-            super::xml_escape("a<b & \"c\">"),
-            "a&lt;b &amp; &quot;c&quot;&gt;"
-        );
+    fn copy_wide_truncates_with_nul() {
+        let mut buf = [0xFFFFu16; 4];
+        super::copy_wide(&mut buf, "abcdef");
+        assert_eq!(buf, [b'a' as u16, b'b' as u16, b'c' as u16, 0]);
+        super::copy_wide(&mut buf, "x");
+        assert_eq!(&buf[..2], &[b'x' as u16, 0]);
     }
 }

@@ -39,50 +39,51 @@ pub fn find(api: &HidApi, want_kind: u8) -> Vec<Found> {
         .filter(|i| i.is_hidpp())
     {
         let is_receiver = registry::lookup(info.pid).is_some_and(|k| k.kind == KnownKind::Receiver);
+        let Ok(t) = Transport::open(api, &info) else {
+            continue;
+        };
         let slots: Vec<u8> = if is_receiver {
-            let Ok(t) = Transport::open(api, &info) else {
-                continue;
-            };
-            // Слоты без pairing info пропускаем, чтобы не ждать таймаутов.
+            // Только спаренные слоты; тип из pairing info отсекает чужие устройства без пинга.
             receiver::read_info(&t)
                 .iter()
-                .enumerate()
-                .filter(|(_, r)| r.label.starts_with("pairing_info") && r.result.is_ok())
-                .filter_map(|(_, r)| r.label.strip_prefix("pairing_info_slot")?.parse().ok())
+                .filter_map(|r| {
+                    let slot: u8 = r.label.strip_prefix("pairing_info_slot")?.parse().ok()?;
+                    let raw = r.result.as_ref().ok()?;
+                    match receiver::pairing_device_type(raw) {
+                        Some(kind) if kind != want_kind => None,
+                        _ => Some(slot),
+                    }
+                })
                 .collect()
         } else {
             vec![DEVICE_SELF]
         };
         for index in slots {
-            let Ok(t) = Transport::open(api, &info) else {
-                continue;
-            };
-            if let Some(f) = probe(t, index, info.pid, want_kind) {
-                found.push(f);
+            if let Some((name, table)) = probe(&t, index, want_kind) {
+                found.push(Found {
+                    transport: t,
+                    index,
+                    pid: info.pid,
+                    name,
+                    table,
+                });
+                break;
             }
         }
     }
     found
 }
 
-fn probe(t: Transport, index: u8, pid: u16, want_kind: u8) -> Option<Found> {
-    if !matches!(root::ping(&t, index), Ok(Protocol::V2(..))) {
+fn probe(t: &Transport, index: u8, want_kind: u8) -> Option<(String, Vec<FeatureEntry>)> {
+    if !matches!(root::ping(t, index), Ok(Protocol::V2(..))) {
         return None;
     }
-    let table = root::enumerate(&t, index).ok()?;
-    let name = {
-        let dev = Device::new(&t, index, &table);
-        let (kind, _) = device_name::kind(&dev).ok()?;
-        if kind != want_kind {
-            return None;
-        }
-        device_name::name(&dev).unwrap_or_default()
-    };
-    Some(Found {
-        transport: t,
-        index,
-        pid,
-        name,
-        table,
-    })
+    let table = root::enumerate(t, index).ok()?;
+    let dev = Device::new(t, index, &table);
+    let (kind, _) = device_name::kind(&dev).ok()?;
+    if kind != want_kind {
+        return None;
+    }
+    let name = device_name::name(&dev).unwrap_or_default();
+    Some((name, table))
 }

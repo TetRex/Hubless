@@ -22,6 +22,7 @@ use crate::app::{self, AppEvent};
 
 const CLASS: PCWSTR = w!("Hubless.Hidden");
 const WM_APP_SHOW_PANEL: u32 = WM_APP + 1;
+const WM_APP_TEST_NOTIFICATION: u32 = WM_APP + 2;
 
 pub struct HiddenWindow {
     hwnd: HWND,
@@ -98,6 +99,16 @@ pub fn notify_running_instance() {
     }
 }
 
+/// Попросить запущенный экземпляр показать тестовое уведомление; `false` — он не запущен.
+pub fn request_test_notification() -> bool {
+    // SAFETY: поиск окна по имени класса и асинхронная отправка сообщения.
+    unsafe {
+        FindWindowW(CLASS, None).is_ok_and(|hwnd| {
+            PostMessageW(Some(hwnd), WM_APP_TEST_NOTIFICATION, WPARAM(0), LPARAM(0)).is_ok()
+        })
+    }
+}
+
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
         WM_SETTINGCHANGE if is_color_set_change(lparam) => app::post(AppEvent::ThemeChanged),
@@ -110,6 +121,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             app::post(AppEvent::DevicesChanged)
         }
         WM_APP_SHOW_PANEL => app::post(AppEvent::ShowPanel),
+        WM_APP_TEST_NOTIFICATION => app::post(AppEvent::TestNotification),
         _ => {}
     }
     // SAFETY: стандартная обработка остальных сообщений.

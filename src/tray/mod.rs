@@ -100,6 +100,12 @@ impl Tray {
         }
     }
 
+    /// Уведомление Windows от имени иконки в трее.
+    pub fn notify(&self, title: &str, text: &str) {
+        let hwnd = windows::Win32::Foundation::HWND(self.icon.window_handle());
+        toast::show(hwnd, title, text);
+    }
+
     pub fn set_autostart_checked(&self, checked: bool) {
         self.autostart.set_checked(checked);
     }

@@ -17,7 +17,7 @@ use crate::hidden_window::HiddenWindow;
 use crate::panel::PanelController;
 use crate::state::{AppState, BatteryState, DeviceKind, LOW_BATTERY, Link};
 use crate::theme::SystemTheme;
-use crate::tray::{self, Tray, autostart, toast};
+use crate::tray::{self, Tray, autostart};
 use crate::win::wide;
 
 #[derive(Debug, Clone, Copy)]
@@ -41,6 +41,8 @@ pub enum AppEvent {
     PanelIdle,
     ThemeChanged,
     DevicesChanged,
+    /// `hubless --test-toast`: показать тестовое уведомление.
+    TestNotification,
     /// Состояние мыши от device manager (`None` — не найдена).
     Mouse(Option<MouseSnapshot>),
 }
@@ -114,6 +116,10 @@ impl App {
                 self.devices.send(Command::Rescan);
             }
             AppEvent::Mouse(s) => self.on_mouse(s),
+            AppEvent::TestNotification => self.tray.notify(
+                "Hubless: проверка уведомлений",
+                "Так выглядит предупреждение о низком заряде.",
+            ),
             AppEvent::Menu(cmd) => self.menu(cmd),
         }
     }
@@ -148,7 +154,8 @@ impl App {
                 .filter(|d| d.connected && d.battery.is_some_and(BatteryState::is_low))
                 .map(|d| format!("{} — {}", d.name, d.battery_text().unwrap_or_default()))
                 .collect();
-            toast::show(&format!("Заряд ниже {LOW_BATTERY}%"), &names.join("\n"));
+            self.tray
+                .notify(&format!("Заряд ниже {LOW_BATTERY}%"), &names.join("\n"));
         }
         self.low_notified = low;
         self.panel.refresh(&self.state);

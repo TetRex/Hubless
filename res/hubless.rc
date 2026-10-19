@@ -1,2 +1,28 @@
 #define RT_MANIFEST 24
 1 RT_MANIFEST "hubless.exe.manifest"
+
+1 VERSIONINFO
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
+FILEOS 0x40004
+FILETYPE 0x1
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904B0"
+    BEGIN
+      VALUE "CompanyName", "TetRex"
+      VALUE "FileDescription", "Hubless"
+      VALUE "FileVersion", "0.1.0"
+      VALUE "InternalName", "hubless"
+      VALUE "LegalCopyright", "Copyright (C) 2026 TetRex. GPL-3.0-or-later"
+      VALUE "OriginalFilename", "hubless.exe"
+      VALUE "ProductName", "Hubless"
+      VALUE "ProductVersion", "0.1.0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

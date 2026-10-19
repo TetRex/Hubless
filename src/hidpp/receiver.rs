@@ -43,9 +43,11 @@ pub fn read_info(t: &Transport) -> Vec<RegisterValue> {
         read(t, "firmware_build", FIRMWARE, false, [0x02, 0, 0]),
         read(t, "bootloader", FIRMWARE, false, [0x04, 0, 0]),
     ];
-    // У LIGHTSPEED-ресиверов обычно один слот: пустые не отвечают вовсе, поэтому быстрый режим.
+    // У LIGHTSPEED-ресиверов 1–2 слота, пустые не отвечают вовсе: быстрый режим
+    // и остановка после двух пустых слотов подряд.
+    let mut empty_in_row = 0;
     for slot in 1..=6u8 {
-        regs.push(t.quick(|| {
+        let reg = t.quick(|| {
             read(
                 t,
                 format!("pairing_info_slot{slot}"),
@@ -53,7 +55,16 @@ pub fn read_info(t: &Transport) -> Vec<RegisterValue> {
                 true,
                 [PAIRING_INFO + slot - 1, 0, 0],
             )
-        }));
+        });
+        empty_in_row = if reg.result.is_ok() {
+            0
+        } else {
+            empty_in_row + 1
+        };
+        regs.push(reg);
+        if empty_in_row == 2 {
+            break;
+        }
     }
     regs
 }
@@ -62,4 +73,14 @@ pub fn read_info(t: &Transport) -> Vec<RegisterValue> {
 pub fn pairing_wpid(raw: &[u8]) -> Option<u16> {
     let wpid = u16::from_be_bytes([*raw.get(3)?, *raw.get(4)?]);
     (wpid != 0).then_some(wpid)
+}
+
+/// Тип устройства из pairing info (байт 7, младшая тетрада; по Solaar): 1 — клавиатура, 2 — мышь.
+/// Возвращает тип в терминах `0x0005` (0 — клавиатура, 3 — мышь), если он известен.
+pub fn pairing_device_type(raw: &[u8]) -> Option<u8> {
+    match raw.get(7)? & 0x0F {
+        1 => Some(0),
+        2 => Some(3),
+        _ => None,
+    }
 }
