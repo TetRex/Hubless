@@ -37,6 +37,7 @@ Hubless — лёгкая замена G Hub
   hubless                   запустить в трее
   hubless --dump [файл]     устройства и таблицы HID++ фич (по умолчанию hubless-dump.json)
   hubless --test-toast      показать тестовое уведомление (Hubless должен быть запущен)
+  hubless --quit            завершить запущенный Hubless (как «Выход» в меню)
   hubless --help            эта справка
   hubless --version         версия
 
@@ -64,6 +65,12 @@ fn main() -> ExitCode {
             logging::init(&cfg);
             cli::keyboard(&args[1..])
         }
+        Some("headset") => {
+            attach_console();
+            let (cfg, _) = config::Config::load();
+            logging::init(&cfg);
+            cli::headset(&args[1..])
+        }
         Some("--test-toast") => {
             attach_console();
             if hidden_window::request_test_notification() {
@@ -74,12 +81,23 @@ fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         }
+        Some("--quit") => {
+            attach_console();
+            if hidden_window::request_quit() {
+                println!("Запущенный Hubless завершается.");
+                ExitCode::SUCCESS
+            } else {
+                eprintln!("Hubless не запущен.");
+                ExitCode::FAILURE
+            }
+        }
         Some("--help" | "-h") => {
             attach_console();
             println!(
-                "{USAGE}\n{}\n\nКлавиатура:\n{}",
+                "{USAGE}\n{}\n\nКлавиатура:\n{}\n\nГарнитура:\n{}",
                 cli::MOUSE_USAGE,
-                cli::KEYBOARD_USAGE
+                cli::KEYBOARD_USAGE,
+                cli::HEADSET_USAGE
             );
             ExitCode::SUCCESS
         }

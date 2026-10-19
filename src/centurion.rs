@@ -25,6 +25,15 @@ pub const ROOT: u16 = 0x0000;
 pub const FEATURE_SET: u16 = 0x0001;
 pub const BRIDGE: u16 = 0x0003;
 pub const BATTERY_SOC: u16 = 0x0104;
+pub const AUTO_SLEEP: u16 = 0x0108;
+pub const SIDETONE: u16 = 0x0604;
+
+/// Чтение и запись значения у `SIDETONE` и `AUTO_SLEEP` (по HeadsetControl).
+const FN_GET: u8 = 0x00;
+const FN_SET: u8 = 0x10;
+/// Sidetone: id микрофона и максимум шкалы устройства (HeadsetControl, PRO X 2).
+const SIDETONE_MIC: u8 = 0x01;
+pub const SIDETONE_MAX: u8 = 100;
 
 const ROOT_GET_FEATURE: u8 = 0x00;
 const FS_GET_COUNT: u8 = 0x00;
@@ -123,8 +132,50 @@ pub fn parse_frame(frame: &[u8]) -> Option<&[u8]> {
 pub struct Adapter {
     dev: HidDevice,
     bridge: Option<u8>,
+    /// Индексы фич гарнитуры за мостом (кеш на время сессии).
+    headset_index: std::collections::HashMap<u16, u8>,
     /// Все кадры, полученные во время запросов (для дампа).
     pub log: Vec<String>,
+}
+
+/// Запись в гарнитуру через мост (аналог `hidpp::Write`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Write {
+    pub feature: u16,
+    pub function: u8,
+    pub params: Vec<u8>,
+    pub what: String,
+}
+
+/// Sidetone (громкость своего голоса в наушниках), 0–100.
+pub fn set_sidetone(state: &[u8], level: u8) -> Write {
+    let level = level.min(SIDETONE_MAX);
+    // HeadsetControl: если ответ на чтение ≥ 4 байт — формат v2 с байтом 0xFF.
+    let params = if state.len() >= 4 {
+        vec![SIDETONE_MIC, 0xFF, level]
+    } else {
+        vec![SIDETONE_MIC, level]
+    };
+    Write {
+        feature: SIDETONE,
+        function: FN_SET,
+        params,
+        what: format!("sidetone {level}"),
+    }
+}
+
+/// Автоотключение через `minutes` минут без звука (0 — никогда, по HeadsetControl).
+pub fn set_auto_sleep(minutes: u8) -> Write {
+    Write {
+        feature: AUTO_SLEEP,
+        function: FN_SET,
+        params: vec![minutes],
+        what: if minutes == 0 {
+            "автоотключение: никогда".into()
+        } else {
+            format!("автоотключение через {minutes} мин")
+        },
+    }
 }
 
 impl Adapter {
@@ -132,8 +183,92 @@ impl Adapter {
         Ok(Self {
             dev: api.open_path(path)?,
             bridge: None,
+            headset_index: std::collections::HashMap::new(),
             log: Vec::new(),
         })
+    }
+
+    /// Первый адаптер Centurion (коллекция `0xFFA0` известной гарнитуры) с найденным мостом.
+    pub fn find(api: &HidApi) -> Option<Self> {
+        let info = api.device_list().find(|d| {
+            d.vendor_id() == crate::hidpp::transport::LOGITECH_VID
+                && d.usage_page() == USAGE_PAGE
+                && crate::devices::registry::lookup(d.product_id())
+                    .is_some_and(|k| k.kind == crate::devices::registry::KnownKind::Headset)
+        })?;
+        let mut a = Self::open(api, info.path())
+            .inspect_err(|e| tracing::warn!("гарнитура: не открыть адаптер: {e}"))
+            .ok()?;
+        a.find_bridge()
+            .inspect_err(|e| tracing::warn!("гарнитура: нет моста: {e}"))
+            .ok()?;
+        Some(a)
+    }
+
+    /// Следующий асинхронный кадр (payload) или `None`, если за `timeout` ничего не пришло.
+    pub fn next_event(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>, Error> {
+        match self.recv(Instant::now() + timeout) {
+            Ok(p) => Ok(Some(p)),
+            Err(Error::Timeout) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Событие моста о подключении гарнитуры: `[bridge, 0x00, 0x00, connected]`.
+    pub fn connection_event(&self, p: &[u8]) -> Option<bool> {
+        let bridge = self.bridge?;
+        (p.len() >= 4 && p[0] == bridge && p[1] == 0x00 && p[2] == 0x00).then(|| p[3] != 0)
+    }
+
+    /// Подключена ли гарнитура к адаптеру (по состоянию моста).
+    pub fn headset_connected(&mut self) -> Result<bool, Error> {
+        let s = self.bridge_status()?;
+        Ok(s.len() >= 4 && s[3] != 0)
+    }
+
+    /// Индекс фичи гарнитуры (с кешем).
+    fn index_of(&mut self, id: u16) -> Result<u8, Error> {
+        if let Some(&i) = self.headset_index.get(&id) {
+            return Ok(i);
+        }
+        let i = self.headset_feature(id)?.index;
+        self.headset_index.insert(id, i);
+        Ok(i)
+    }
+
+    /// Уровень sidetone 0–100: последний байт ответа fn0 (`01 01 32` → 50, проверено 2026-10-19).
+    pub fn sidetone_level(&mut self) -> Result<u8, Error> {
+        self.sidetone()?.last().copied().ok_or(Error::Malformed)
+    }
+
+    /// Автоотключение в минутах, 0 — никогда: первый байт ответа fn0 (проверено 2026-10-19).
+    pub fn auto_sleep_minutes(&mut self) -> Result<u8, Error> {
+        self.auto_sleep()?.first().copied().ok_or(Error::Malformed)
+    }
+
+    /// Сырой ответ `SIDETONE` fn0.
+    pub fn sidetone(&mut self) -> Result<Vec<u8>, Error> {
+        let i = self.index_of(SIDETONE)?;
+        self.bridged(i, FN_GET, &[])
+    }
+
+    /// Сырой ответ `AUTO_SLEEP` fn0.
+    pub fn auto_sleep(&mut self) -> Result<Vec<u8>, Error> {
+        let i = self.index_of(AUTO_SLEEP)?;
+        self.bridged(i, FN_GET, &[])
+    }
+
+    /// Кадр, который уйдёт в адаптер для записи (без отправки).
+    pub fn preview(&mut self, w: &Write) -> Result<[u8; FRAME_LEN], Error> {
+        let i = self.index_of(w.feature)?;
+        let payload = self.bridge_payload(i, w.function, &w.params)?;
+        Ok(build_frame(&payload))
+    }
+
+    /// Отправить запись; ответ гарнитуры (данные после индекса и функции).
+    pub fn apply(&mut self, w: &Write) -> Result<Vec<u8>, Error> {
+        let i = self.index_of(w.feature)?;
+        self.bridged(i, w.function, &w.params)
     }
 
     fn send(&mut self, payload: &[u8]) -> Result<(), Error> {
@@ -225,20 +360,8 @@ impl Adapter {
         params: &[u8],
     ) -> Result<Vec<u8>, Error> {
         let bridge = self.bridge.ok_or(Error::FeatureMissing(BRIDGE))?;
-        let mut sub = vec![0x00, sub_index, (function & 0xF0) | SW_ID];
-        sub.extend_from_slice(params);
-        assert!(
-            sub.len() <= 56,
-            "fragmented bridge messages are not needed for reads"
-        );
         let send_fn = BRIDGE_SEND | SW_ID;
-        let mut payload = vec![
-            bridge,
-            send_fn,
-            (sub.len() >> 8) as u8 & 0x0F,
-            sub.len() as u8,
-        ];
-        payload.extend_from_slice(&sub);
+        let payload = self.bridge_payload(sub_index, function, params)?;
         self.send(&payload)?;
 
         let deadline = Instant::now() + TIMEOUT;
@@ -283,6 +406,23 @@ impl Adapter {
                 return Ok(r[7..].to_vec());
             }
         }
+    }
+
+    /// Payload запроса к гарнитуре через мост:
+    /// `[bridge][0x10|sw][size_hi][size_lo][0x00][sub_index][function|sw][params...]`.
+    fn bridge_payload(&self, sub_index: u8, function: u8, params: &[u8]) -> Result<Vec<u8>, Error> {
+        let bridge = self.bridge.ok_or(Error::FeatureMissing(BRIDGE))?;
+        let mut sub = vec![0x00, sub_index, (function & 0xF0) | SW_ID];
+        sub.extend_from_slice(params);
+        assert!(sub.len() <= 56, "fragmented bridge messages are not needed");
+        let mut payload = vec![
+            bridge,
+            BRIDGE_SEND | SW_ID,
+            (sub.len() >> 8) as u8 & 0x0F,
+            sub.len() as u8,
+        ];
+        payload.extend_from_slice(&sub);
+        Ok(payload)
     }
 
     /// Индекс фичи гарнитуры по ID через мост.

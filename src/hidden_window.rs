@@ -23,6 +23,8 @@ use crate::app::{self, AppEvent};
 const CLASS: PCWSTR = w!("Hubless.Hidden");
 const WM_APP_SHOW_PANEL: u32 = WM_APP + 1;
 const WM_APP_TEST_NOTIFICATION: u32 = WM_APP + 2;
+const WM_APP_SETTINGS_CHANGED: u32 = WM_APP + 3;
+const WM_APP_QUIT: u32 = WM_APP + 4;
 
 pub struct HiddenWindow {
     hwnd: HWND,
@@ -99,6 +101,30 @@ pub fn notify_running_instance() {
     }
 }
 
+pub fn is_running() -> bool {
+    // SAFETY: поиск окна по имени класса.
+    unsafe { FindWindowW(CLASS, None).is_ok() }
+}
+
+/// Сообщить запущенному экземпляру, что `devices.toml` изменился; `false` — он не запущен.
+pub fn notify_settings_changed() -> bool {
+    // SAFETY: поиск окна по имени класса и асинхронная отправка сообщения.
+    unsafe {
+        FindWindowW(CLASS, None).is_ok_and(|hwnd| {
+            PostMessageW(Some(hwnd), WM_APP_SETTINGS_CHANGED, WPARAM(0), LPARAM(0)).is_ok()
+        })
+    }
+}
+
+/// Попросить запущенный экземпляр завершиться штатно (как «Выход» в меню); `false` — он не запущен.
+pub fn request_quit() -> bool {
+    // SAFETY: поиск окна по имени класса и асинхронная отправка сообщения.
+    unsafe {
+        FindWindowW(CLASS, None)
+            .is_ok_and(|hwnd| PostMessageW(Some(hwnd), WM_APP_QUIT, WPARAM(0), LPARAM(0)).is_ok())
+    }
+}
+
 /// Попросить запущенный экземпляр показать тестовое уведомление; `false` — он не запущен.
 pub fn request_test_notification() -> bool {
     // SAFETY: поиск окна по имени класса и асинхронная отправка сообщения.
@@ -122,6 +148,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_APP_SHOW_PANEL => app::post(AppEvent::ShowPanel),
         WM_APP_TEST_NOTIFICATION => app::post(AppEvent::TestNotification),
+        // CLI изменил devices.toml — пересканировать и применить настройки.
+        WM_APP_SETTINGS_CHANGED => app::post(AppEvent::DevicesChanged),
+        WM_APP_QUIT => app::post(AppEvent::Menu(app::MenuCommand::Exit)),
         _ => {}
     }
     // SAFETY: стандартная обработка остальных сообщений.

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { DeviceCard, DeviceInfo, DeviceKind } from "cards/device_card.slint";
 
@@ -6,10 +7,26 @@ export { Theme, DeviceInfo, DeviceKind }
 
 export component Panel inherits Window {
     in property <[DeviceInfo]> devices;
-    // Высота по содержимому, не больше максимальной.
-    out property <length> content-height: min(layout.preferred-height, Theme.panel-max-height);
+    // Высота по содержимому, не больше максимальной; выше — карточки прокручиваются.
+    out property <length> content-height: min(
+        Theme.panel-padding * 2 + header.preferred-height + Theme.spacing-s + cards.preferred-height,
+        Theme.panel-max-height);
     // Esc — закрыть панель.
     callback dismiss();
+    // Высота по содержимому изменилась (раскрыли «Ещё») — пересчитать положение у панели задач.
+    callback resized();
+    changed content-height => {
+        root.resized();
+    }
+    // Действия карточек (мышь — DPI, клавиатура — яркость и подсветка).
+    callback select-dpi(int);
+    callback set-mouse-host(bool);
+    callback set-lift-off(int);
+    callback set-brightness(int);
+    callback set-effect(int);
+    callback pick-color(color);
+    callback set-sidetone(int);
+    callback set-auto-off(int);
 
     title: "Hubless";
     no-frame: true;
@@ -30,12 +47,11 @@ export component Panel inherits Window {
             reject
         }
 
-        layout := VerticalLayout {
-            alignment: start;
+        VerticalLayout {
             padding: Theme.panel-padding;
             spacing: Theme.spacing-s;
 
-            HorizontalLayout {
+            header := HorizontalLayout {
                 padding-bottom: Theme.spacing-xs;
                 Text {
                     text: "Hubless";
@@ -44,8 +60,44 @@ export component Panel inherits Window {
                 }
             }
 
-            for device in root.devices: DeviceCard {
-                info: device;
+            ScrollView {
+                vertical-stretch: 1;
+                content-width: self.visible-width;
+                content-height: cards.preferred-height;
+
+                cards := VerticalLayout {
+                    width: parent.width;
+                    alignment: start;
+                    spacing: Theme.spacing-s;
+
+                    for device in root.devices: DeviceCard {
+                        info: device;
+                        select-dpi(v) => {
+                            root.select-dpi(v);
+                        }
+                        set-mouse-host(on) => {
+                            root.set-mouse-host(on);
+                        }
+                        set-lift-off(i) => {
+                            root.set-lift-off(i);
+                        }
+                        set-brightness(v) => {
+                            root.set-brightness(v);
+                        }
+                        set-effect(i) => {
+                            root.set-effect(i);
+                        }
+                        pick-color(c) => {
+                            root.pick-color(c);
+                        }
+                        set-sidetone(v) => {
+                            root.set-sidetone(v);
+                        }
+                        set-auto-off(m) => {
+                            root.set-auto-off(m);
+                        }
+                    }
+                }
             }
         }
     }

@@ -15,15 +15,18 @@ use slint::winit_030::winit::window::{
     Theme as WinitTheme, Window as WinitWindow, WindowAttributes, WindowLevel,
 };
 use slint::winit_030::{EventResult, WinitWindowAccessor};
-use slint::{ComponentHandle, ModelRc, PhysicalPosition, TimerMode, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, PhysicalPosition, TimerMode, VecModel};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{
     GWL_EXSTYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
     SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 
+use crate::app::PanelAction;
 use crate::app::{self, AppEvent};
-use crate::state::{AppState, DeviceKind, DeviceState, Link};
+use crate::devices::manager::Controls;
+use crate::settings::LiftOff;
+use crate::state::{AppState, BatteryState, DeviceKind, DeviceState, Link};
 use crate::theme::{Fonts, SystemTheme};
 use crate::ui;
 
@@ -55,6 +58,8 @@ pub struct PanelController {
     fonts: Fonts,
     /// Момент начала открытия — до первого кадра (замер «быстрее 150 мс»).
     opening: Rc<Cell<Option<(Instant, bool)>>>,
+    /// Иконка, у которой открыта панель (для пересчёта положения при смене высоты).
+    tray_rect: Option<tray_icon::Rect>,
 }
 
 impl PanelController {
@@ -68,6 +73,7 @@ impl PanelController {
             theme,
             fonts: Fonts::detect(),
             opening: Rc::default(),
+            tray_rect: None,
         }
     }
 
@@ -90,6 +96,46 @@ impl PanelController {
             match ui::Panel::new() {
                 Ok(panel) => {
                     panel.on_dismiss(|| app::post(AppEvent::PanelDismiss));
+                    panel.on_resized(|| app::post(AppEvent::PanelResized));
+                    panel.on_select_dpi(|v| {
+                        app::post(AppEvent::Panel(PanelAction::Dpi(
+                            v.clamp(0, i32::from(u16::MAX)) as u16,
+                        )));
+                    });
+                    panel.on_set_brightness(|v| {
+                        app::post(AppEvent::Panel(PanelAction::Brightness(
+                            v.clamp(0, i32::from(u16::MAX)) as u16,
+                        )));
+                    });
+                    panel.on_set_mouse_host(|on| {
+                        app::post(AppEvent::Panel(PanelAction::MouseHost(on)));
+                    });
+                    panel.on_set_lift_off(|i| {
+                        let l = match i {
+                            0 => LiftOff::Low,
+                            1 => LiftOff::Medium,
+                            _ => LiftOff::High,
+                        };
+                        app::post(AppEvent::Panel(PanelAction::LiftOff(l)));
+                    });
+                    panel.on_set_sidetone(|v| {
+                        app::post(AppEvent::Panel(
+                            PanelAction::Sidetone(v.clamp(0, 100) as u8),
+                        ));
+                    });
+                    panel.on_set_auto_off(|m| {
+                        app::post(AppEvent::Panel(PanelAction::AutoOff(m.clamp(0, 255) as u8)));
+                    });
+                    panel.on_set_effect(|i| {
+                        app::post(AppEvent::Panel(PanelAction::Effect(i)));
+                    });
+                    panel.on_pick_color(|c| {
+                        app::post(AppEvent::Panel(PanelAction::Color([
+                            c.red(),
+                            c.green(),
+                            c.blue(),
+                        ])));
+                    });
                     self.ui = Some(panel);
                     self.window_ready = false;
                 }
@@ -103,21 +149,9 @@ impl PanelController {
             return;
         };
         apply_theme(panel, &self.theme, &self.fonts);
-        panel.set_devices(devices_model(state));
-
-        // Размер в физических px считаем по DPI монитора, на котором окажется панель.
-        let anchor = placement::anchor(tray_rect);
-        let mon = placement::monitor_for(anchor);
-        let edge = placement::taskbar_edge(&mon);
-        let theme = panel.global::<ui::Theme>();
-        let to_px = |v: f32| (v * mon.scale).round() as i32;
-        let margin = to_px(theme.get_panel_margin());
-        let size = (
-            to_px(theme.get_panel_width()),
-            to_px(panel.get_content_height()),
-        );
-        let (x, y) = placement::position(anchor, &mon, edge, size, margin);
-        panel.window().set_position(PhysicalPosition::new(x, y));
+        update_devices(panel, state);
+        self.tray_rect = tray_rect;
+        let placed = place(panel, tray_rect, None);
 
         if let Err(e) = panel.show() {
             tracing::error!("show: {e}");
@@ -165,17 +199,16 @@ impl PanelController {
         // Окно создано на другом мониторе и пересчитало масштаб — поправить позицию по факту.
         let actual = panel.window().size();
         let actual = (actual.width as i32, actual.height as i32);
-        if actual != size {
-            let (x, y) = placement::position(anchor, &mon, edge, actual, margin);
-            panel.window().set_position(PhysicalPosition::new(x, y));
-            tracing::debug!(?size, ?actual, "размер панели уточнён после показа");
+        if actual != placed.size {
+            place(panel, tray_rect, Some(actual));
+            tracing::debug!(size = ?placed.size, ?actual, "размер панели уточнён после показа");
         }
 
         tracing::info!(
             ms = started.elapsed().as_secs_f32() * 1000.0,
             created,
-            ?edge,
-            scale = mon.scale,
+            edge = ?placed.edge,
+            scale = placed.scale,
             "панель открыта"
         );
     }
@@ -209,10 +242,17 @@ impl PanelController {
         self.ui = None;
     }
 
+    /// Высота панели изменилась — вернуть её к краю панели задач.
+    pub fn reposition(&self) {
+        if let Some(panel) = self.ui.as_ref().filter(|_| self.visible) {
+            place(panel, self.tray_rect, None);
+        }
+    }
+
     /// Обновить данные открытой (или созданной) панели.
     pub fn refresh(&self, state: &AppState) {
         if let Some(panel) = &self.ui {
-            panel.set_devices(devices_model(state));
+            update_devices(panel, state);
         }
     }
 
@@ -231,6 +271,41 @@ impl PanelController {
     }
 }
 
+struct Placed {
+    size: (i32, i32),
+    edge: placement::Edge,
+    scale: f32,
+}
+
+/// Поставить панель у иконки трея с учётом текущей высоты (в физических px по DPI монитора).
+/// `size` — фактический размер окна, если он уже известен.
+fn place(
+    panel: &ui::Panel,
+    tray_rect: Option<tray_icon::Rect>,
+    size: Option<(i32, i32)>,
+) -> Placed {
+    let anchor = placement::anchor(tray_rect);
+    let mon = placement::monitor_for(anchor);
+    let edge = placement::taskbar_edge(&mon);
+    let theme = panel.global::<ui::Theme>();
+    let to_px = |v: f32| (v * mon.scale).round() as i32;
+    let margin = to_px(theme.get_panel_margin());
+    // Панель растёт по содержимому до высоты рабочей области; выше — карточки прокручиваются.
+    let work_height = mon.work.bottom - mon.work.top - 2 * margin;
+    theme.set_panel_max_height(work_height.max(0) as f32 / mon.scale);
+    let size = size.unwrap_or((
+        to_px(theme.get_panel_width()),
+        to_px(panel.get_content_height()),
+    ));
+    let (x, y) = placement::position(anchor, &mon, edge, size, margin);
+    panel.window().set_position(PhysicalPosition::new(x, y));
+    Placed {
+        size,
+        edge,
+        scale: mon.scale,
+    }
+}
+
 fn apply_theme(panel: &ui::Panel, theme: &SystemTheme, fonts: &Fonts) {
     let t = panel.global::<ui::Theme>();
     t.set_dark(theme.apps_dark);
@@ -240,8 +315,25 @@ fn apply_theme(panel: &ui::Panel, theme: &SystemTheme, fonts: &Fonts) {
     t.set_icon_font(fonts.icons.into());
 }
 
-fn devices_model(state: &AppState) -> ModelRc<ui::DeviceInfo> {
-    let items: Vec<_> = state
+/// Обновить карточки на месте: модель живёт, пока живёт окно, меняются только изменившиеся
+/// строки — раскрытые блоки и перетаскиваемый ползунок не сбрасываются.
+fn update_devices(panel: &ui::Panel, state: &AppState) {
+    let items = device_infos(state);
+    let model = panel.get_devices();
+    match model.as_any().downcast_ref::<VecModel<ui::DeviceInfo>>() {
+        Some(rows) if rows.row_count() == items.len() => {
+            for (i, item) in items.into_iter().enumerate() {
+                if rows.row_data(i).as_ref() != Some(&item) {
+                    rows.set_row_data(i, item);
+                }
+            }
+        }
+        _ => panel.set_devices(ModelRc::new(VecModel::from(items))),
+    }
+}
+
+fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
+    state
         .devices
         .iter()
         .map(|d| ui::DeviceInfo {
@@ -253,22 +345,79 @@ fn devices_model(state: &AppState) -> ModelRc<ui::DeviceInfo> {
             name: d.name.as_str().into(),
             connected: d.connected,
             link: link_text(d).into(),
+            error: d.error.as_deref().unwrap_or_default().into(),
+            dpi: -1,
+            dpi_presets: ModelRc::default(),
+            host: false,
+            lift_off: -1,
+            brightness: -1,
+            brightness_min: 0,
+            brightness_max: 100,
+            effect: 0,
+            sidetone: -1,
+            auto_off: -1,
+            color: slint::Color::default(),
+            battery: d.battery.map_or(-1, |b| i32::from(b.percent)),
+            charging: d.battery.is_some_and(|b| b.charging),
+            low: d.battery.is_some_and(BatteryState::is_low),
         })
-        .collect();
-    ModelRc::new(VecModel::from(items))
+        .zip(&state.devices)
+        .map(|(mut info, d)| {
+            fill_controls(&mut info, &d.controls);
+            info
+        })
+        .collect()
 }
 
-/// Подпись справа в карточке: тип связи и заряд.
-fn link_text(d: &DeviceState) -> String {
-    let link = match d.link {
+/// Значения контролов карточки из снимка устройства.
+fn fill_controls(info: &mut ui::DeviceInfo, c: &Controls) {
+    match c {
+        Controls::None => {}
+        Controls::Headset { sidetone, auto_off } => {
+            info.sidetone = sidetone.map_or(-1, i32::from);
+            info.auto_off = auto_off.map_or(-1, i32::from);
+        }
+        Controls::Mouse {
+            host,
+            dpi,
+            dpi_presets,
+            lift_off,
+        } => {
+            info.host = *host;
+            info.lift_off = match lift_off {
+                Some(LiftOff::Low) => 0,
+                Some(LiftOff::Medium) => 1,
+                Some(LiftOff::High) => 2,
+                None => -1,
+            };
+            info.dpi = dpi.map_or(-1, i32::from);
+            let presets: Vec<i32> = dpi_presets.iter().map(|&v| i32::from(v)).collect();
+            info.dpi_presets = ModelRc::new(VecModel::from(presets));
+        }
+        Controls::Keyboard {
+            brightness,
+            brightness_range,
+            lighting,
+        } => {
+            info.brightness = brightness.map_or(-1, i32::from);
+            if let Some((min, max)) = brightness_range {
+                info.brightness_min = i32::from(*min);
+                info.brightness_max = i32::from(*max);
+            }
+            info.effect = app::effect_index(*lighting);
+            if let Some([r, g, b]) = lighting.and_then(|l| l.color()) {
+                info.color = slint::Color::from_rgb_u8(r, g, b);
+            }
+        }
+    }
+}
+
+/// Подпись справа в карточке: тип связи (заряд — отдельной полоской).
+fn link_text(d: &DeviceState) -> &'static str {
+    match d.link {
         Some(Link::Usb) => "USB",
         Some(Link::Wireless) => "Lightspeed",
         None => "",
-    };
-    match d.battery_text() {
-        Some(b) if link.is_empty() => b,
-        Some(b) => format!("{link} · {b}"),
-        None => link.to_owned(),
     }
 }
 

@@ -250,16 +250,13 @@ impl Transport {
             if r.device() != device {
                 return None;
             }
-            let p = r.params();
             if r.sub_id() == feature_index && r.address() == address {
                 Some(Ok(r.clone()))
-            } else if r.sub_id() == ERROR_20 && p[0] == feature_index && p[1] == address {
-                Some(Err(Error::Hidpp20(p[2])))
-            } else if r.sub_id() == ERROR_10 && p[0] == feature_index && p[1] == address {
-                // Так отвечает HID++ 1.0 (ресивер) на запрос 2.0.
-                Some(Err(Error::Hidpp10(p[2])))
+            } else if let Some(code) = error_code(r, ERROR_20, feature_index, address) {
+                Some(Err(Error::Hidpp20(code)))
             } else {
-                None
+                // Так отвечает HID++ 1.0 (ресивер) на запрос 2.0.
+                error_code(r, ERROR_10, feature_index, address).map(|c| Err(Error::Hidpp10(c)))
             }
         })
     }
@@ -315,13 +312,10 @@ impl Transport {
             if r.device() != device {
                 return None;
             }
-            let p = r.params();
             if r.sub_id() == sub_id && r.address() == register {
                 Some(Ok(r.clone()))
-            } else if r.sub_id() == ERROR_10 && p[0] == sub_id && p[1] == register {
-                Some(Err(Error::Hidpp10(p[2])))
             } else {
-                None
+                error_code(r, ERROR_10, sub_id, register).map(|c| Err(Error::Hidpp10(c)))
             }
         })
     }
@@ -435,5 +429,34 @@ fn read_loop(dev: &HidDevice, tx: &Sender<Inbound>, stop: &AtomicBool) {
                 return;
             }
         }
+    }
+}
+
+/// Код ошибки из ответа-ошибки на наш запрос. Раскладка (и для 2.0 `0xFF`, и для 1.0 `0x8F`):
+/// `[report][device][marker][feature_index | sub_id][address][code]`.
+fn error_code(r: &Report, marker: u8, first: u8, address: u8) -> Option<u8> {
+    let p = r.params();
+    (r.sub_id() == marker && r.address() == first && p[0] == address).then_some(p[1])
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn hidpp20_error_matches_request() {
+        // Реальный ответ мыши на setDpi с lift-off 0 (2026-10-19): INVALID_ARGUMENT.
+        let mut b = vec![0x11, 0x01, 0xFF, 0x09, 0x6E, 0x02];
+        b.resize(LONG_LEN, 0);
+        let r = Report::from_bytes(&b).unwrap();
+        assert_eq!(error_code(&r, ERROR_20, 0x09, 0x6E), Some(0x02));
+        assert_eq!(error_code(&r, ERROR_20, 0x09, 0x6F), None);
+        assert_eq!(error_code(&r, ERROR_10, 0x09, 0x6E), None);
+    }
+
+    #[test]
+    fn hidpp10_error_matches_register() {
+        let r = Report::from_bytes(&[0x10, 0xFF, 0x8F, 0x83, 0xB5, 0x03, 0x00]).unwrap();
+        assert_eq!(error_code(&r, ERROR_10, 0x83, 0xB5), Some(0x03));
     }
 }

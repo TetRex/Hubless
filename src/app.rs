@@ -12,9 +12,10 @@ use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::{PCWSTR, w};
 
 use crate::config::log_dir;
-use crate::devices::manager::{self, Command, MouseSnapshot};
+use crate::devices::manager::{self, Command, Role, Snapshot};
 use crate::hidden_window::HiddenWindow;
 use crate::panel::PanelController;
+use crate::settings::{self, DeviceSettings, Lighting};
 use crate::state::{AppState, BatteryState, DeviceKind, LOW_BATTERY, Link};
 use crate::theme::SystemTheme;
 use crate::tray::{self, Tray, autostart};
@@ -27,6 +28,74 @@ pub enum MenuCommand {
     Exit,
 }
 
+/// Изменение настройки из панели.
+#[derive(Debug, Clone, Copy)]
+pub enum PanelAction {
+    /// DPI мыши (переводит мышь в режим host).
+    Dpi(u16),
+    /// `true` — настройки мыши применяет Hubless (host), `false` — из памяти мыши (onboard).
+    MouseHost(bool),
+    /// Lift-off мыши (в режиме host).
+    LiftOff(settings::LiftOff),
+    /// Яркость клавиатуры — применяется после паузы (debounce).
+    Brightness(u16),
+    /// Эффект подсветки по индексу списка в карточке (0 — управляет клавиатура).
+    Effect(i32),
+    /// Статичный цвет подсветки.
+    Color([u8; 3]),
+    /// Sidetone гарнитуры 0–100 — после паузы (debounce).
+    Sidetone(u8),
+    /// Автоотключение гарнитуры, минуты (0 — никогда).
+    AutoOff(u8),
+}
+
+/// Эффект для пункта списка в карточке клавиатуры (порядок — как в `device_card.slint`),
+/// параметры анимаций — по умолчанию (как в Solaar).
+fn effect_by_index(i: i32, color: [u8; 3]) -> Option<Lighting> {
+    use crate::hidpp::features::rgb_effects::{Direction, RIPPLE_PERIOD_DEFAULT};
+    const PERIOD_MS: u16 = 5000;
+    const INTENSITY: u8 = 100;
+    Some(match i {
+        1 => Lighting::Static { color },
+        2 => Lighting::Breathe {
+            color,
+            period_ms: PERIOD_MS,
+            intensity: INTENSITY,
+        },
+        3 => Lighting::Cycle {
+            period_ms: PERIOD_MS,
+            intensity: INTENSITY,
+        },
+        4 => Lighting::Wave {
+            period_ms: PERIOD_MS,
+            direction: Direction::Right,
+            intensity: INTENSITY,
+        },
+        5 => Lighting::Ripple {
+            color,
+            period: RIPPLE_PERIOD_DEFAULT,
+        },
+        _ => return None,
+    })
+}
+
+/// Индекс пункта списка эффектов для текущей подсветки (0 — управляет клавиатура).
+pub fn effect_index(l: Option<Lighting>) -> i32 {
+    match l {
+        None | Some(Lighting::Off) => 0,
+        Some(Lighting::Static { .. }) => 1,
+        Some(Lighting::Breathe { .. }) => 2,
+        Some(Lighting::Cycle { .. }) => 3,
+        Some(Lighting::Wave { .. }) => 4,
+        Some(Lighting::Ripple { .. }) => 5,
+    }
+}
+
+/// Пауза перед записью яркости: слайдер шлёт значения непрерывно.
+const SLIDER_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
+/// Цвет подсветки, когда свой цвет включают впервые.
+const DEFAULT_COLOR: [u8; 3] = [0xFF, 0x80, 0x00];
+
 #[derive(Debug)]
 pub enum AppEvent {
     /// Левый клик по иконке (прямоугольник иконки в физ. px).
@@ -37,14 +106,22 @@ pub enum AppEvent {
     /// Esc в панели.
     PanelDismiss,
     PanelFocusLost,
+    /// Высота панели изменилась.
+    PanelResized,
     /// Панель скрыта дольше порога — уничтожить окно.
     PanelIdle,
     ThemeChanged,
     DevicesChanged,
     /// `hubless --test-toast`: показать тестовое уведомление.
     TestNotification,
-    /// Состояние мыши от device manager (`None` — не найдена).
-    Mouse(Option<MouseSnapshot>),
+    /// Состояние устройства от device manager (`None` — не найдено).
+    Device(Role, Option<Snapshot>),
+    /// Действие в карточке панели.
+    Panel(PanelAction),
+    /// Яркость после паузы debounce.
+    BrightnessSettled(u16),
+    /// Sidetone после паузы debounce.
+    SidetoneSettled(u8),
 }
 
 struct App {
@@ -54,6 +131,9 @@ struct App {
     /// Уведомление о низком заряде уже показано (сбрасывается при зарядке или заряде ≥ порога).
     low_notified: bool,
     devices: manager::Handle,
+    /// Debounce слайдеров яркости и sidetone.
+    brightness_timer: slint::Timer,
+    sidetone_timer: slint::Timer,
     _hidden: HiddenWindow,
 }
 
@@ -69,7 +149,9 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
         panel: PanelController::new(theme),
         state: AppState::default(),
         low_notified: false,
-        devices: manager::spawn(|s| post(AppEvent::Mouse(s))),
+        devices: manager::spawn(|role, s| post(AppEvent::Device(role, s))),
+        brightness_timer: slint::Timer::default(),
+        sidetone_timer: slint::Timer::default(),
         _hidden: HiddenWindow::create()?,
     };
     APP.set(Some(app));
@@ -105,6 +187,7 @@ impl App {
             AppEvent::ShowPanel => self.panel.show(self.tray.rect(), &self.state),
             AppEvent::PanelDismiss | AppEvent::PanelFocusLost => self.panel.hide(),
             AppEvent::PanelIdle => self.panel.destroy_if_hidden(),
+            AppEvent::PanelResized => self.panel.reposition(),
             AppEvent::ThemeChanged => {
                 let theme = SystemTheme::read();
                 tracing::info!(?theme, "тема изменилась");
@@ -115,7 +198,14 @@ impl App {
                 tracing::debug!("HID hotplug");
                 self.devices.send(Command::Rescan);
             }
-            AppEvent::Mouse(s) => self.on_mouse(s),
+            AppEvent::Device(role, s) => self.on_device(role, s),
+            AppEvent::Panel(action) => self.on_panel(action),
+            AppEvent::SidetoneSettled(v) => {
+                self.devices.send_to(Role::Headset, Command::Sidetone(v));
+            }
+            AppEvent::BrightnessSettled(v) => {
+                self.change(Role::Keyboard, |s| s.keyboard.brightness = Some(v));
+            }
             AppEvent::TestNotification => self.tray.notify(
                 "Hubless: проверка уведомлений",
                 "Так выглядит предупреждение о низком заряде.",
@@ -124,9 +214,14 @@ impl App {
         }
     }
 
-    fn on_mouse(&mut self, s: Option<MouseSnapshot>) {
-        tracing::info!(?s, "мышь");
-        if let Some(m) = self.state.device_mut(DeviceKind::Mouse) {
+    fn on_device(&mut self, role: Role, s: Option<Snapshot>) {
+        tracing::info!(?role, ?s, "устройство");
+        let kind = match role {
+            Role::Mouse => DeviceKind::Mouse,
+            Role::Keyboard => DeviceKind::Keyboard,
+            Role::Headset => DeviceKind::Headset,
+        };
+        if let Some(m) = self.state.device_mut(kind) {
             m.connected = s.as_ref().is_some_and(|s| s.connected);
             m.link = s
                 .as_ref()
@@ -138,8 +233,73 @@ impl App {
             if let Some(s) = &s {
                 m.name.clone_from(&s.name);
             }
+            m.controls = s.as_ref().map(|s| s.controls.clone()).unwrap_or_default();
+            m.error = s.as_ref().and_then(|s| s.error.clone());
         }
         self.refresh_status();
+    }
+
+    fn on_panel(&mut self, action: PanelAction) {
+        match action {
+            PanelAction::Dpi(v) => self.change(Role::Mouse, |s| {
+                s.mouse.mode = Some(settings::Mode::Host);
+                s.mouse.dpi = Some(v);
+                s.mouse.dpi_y = Some(v);
+            }),
+            PanelAction::MouseHost(on) => self.change(Role::Mouse, |s| {
+                s.mouse.mode = Some(if on {
+                    settings::Mode::Host
+                } else {
+                    settings::Mode::Onboard
+                });
+            }),
+            PanelAction::LiftOff(l) => self.change(Role::Mouse, |s| {
+                s.mouse.mode = Some(settings::Mode::Host);
+                s.mouse.lift_off = Some(l);
+            }),
+            PanelAction::Brightness(v) => {
+                self.brightness_timer.start(
+                    slint::TimerMode::SingleShot,
+                    SLIDER_DEBOUNCE,
+                    move || {
+                        post(AppEvent::BrightnessSettled(v));
+                    },
+                );
+            }
+            PanelAction::Effect(i) => self.change(Role::Keyboard, |s| {
+                let color = s
+                    .keyboard
+                    .lighting
+                    .and_then(|l| l.color())
+                    .unwrap_or(DEFAULT_COLOR);
+                s.keyboard.lighting = effect_by_index(i, color);
+            }),
+            PanelAction::Color(color) => self.change(Role::Keyboard, |s| {
+                let current = s.keyboard.lighting.unwrap_or(Lighting::Static { color });
+                s.keyboard.lighting = Some(current.with_color(color));
+            }),
+            PanelAction::Sidetone(v) => {
+                self.sidetone_timer.start(
+                    slint::TimerMode::SingleShot,
+                    SLIDER_DEBOUNCE,
+                    move || {
+                        post(AppEvent::SidetoneSettled(v));
+                    },
+                );
+            }
+            PanelAction::AutoOff(m) => self.devices.send_to(Role::Headset, Command::AutoOff(m)),
+        }
+    }
+
+    /// Изменить `devices.toml` и попросить поток устройства применить его.
+    fn change(&mut self, role: Role, f: impl FnOnce(&mut DeviceSettings)) {
+        let mut s = DeviceSettings::load();
+        f(&mut s);
+        if let Err(e) = s.save() {
+            tracing::error!("devices.toml: {e}");
+            return;
+        }
+        self.devices.send_to(role, Command::Apply);
     }
 
     /// Трей, уведомление о низком заряде и панель по текущему состоянию.
@@ -199,5 +359,29 @@ fn open_folder(path: &std::path::Path) {
     // ShellExecuteW возвращает значение > 32 при успехе.
     if res.0 as isize <= 32 {
         tracing::warn!("ShellExecuteW: {}", res.0 as isize);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effect_list_roundtrip() {
+        assert_eq!(effect_index(effect_by_index(0, DEFAULT_COLOR)), 0);
+        for i in 1..=5 {
+            assert_eq!(effect_index(effect_by_index(i, DEFAULT_COLOR)), i);
+        }
+    }
+
+    #[test]
+    fn color_keeps_effect() {
+        let breathe = effect_by_index(2, DEFAULT_COLOR).unwrap();
+        let blue = breathe.with_color([0, 0xAA, 0xFF]);
+        assert_eq!(effect_index(Some(blue)), 2);
+        assert_eq!(blue.color(), Some([0, 0xAA, 0xFF]));
+        // У цикла нет цвета — выбор цвета делает статичный.
+        let cycle = effect_by_index(3, DEFAULT_COLOR).unwrap();
+        assert_eq!(effect_index(Some(cycle.with_color([1, 2, 3]))), 1);
     }
 }

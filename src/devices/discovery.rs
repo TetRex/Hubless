@@ -32,9 +32,22 @@ impl Found {
     }
 }
 
+/// Ресивер, у которого спарено устройство нужного типа, но оно не ответило (спит или выключено).
+/// Держим его открытым и ждём уведомления о связи (`0x41`) для этих слотов.
+pub struct Sleeping {
+    pub transport: Transport,
+    pub slots: Vec<u8>,
+}
+
 /// Найти устройства заданного типа (по `0x0005`). Только чтение.
 pub fn find(api: &HidApi, want_kind: u8) -> Vec<Found> {
+    find_or_sleeping(api, want_kind).0
+}
+
+/// Как [`find`], плюс ресивер со спящим устройством нужного типа, если ничего не нашлось.
+pub fn find_or_sleeping(api: &HidApi, want_kind: u8) -> (Vec<Found>, Option<Sleeping>) {
     let mut found = Vec::new();
+    let mut sleeping = None;
     for info in transport::enumerate(api)
         .into_iter()
         .filter(|i| i.is_hidpp())
@@ -43,7 +56,8 @@ pub fn find(api: &HidApi, want_kind: u8) -> Vec<Found> {
         let Ok(t) = Transport::open(api, &info) else {
             continue;
         };
-        let slots: Vec<u8> = if is_receiver {
+        // Слот и точно ли там устройство нужного типа (по pairing info).
+        let slots: Vec<(u8, bool)> = if is_receiver {
             // Только спаренные слоты; тип из pairing info отсекает чужие устройства без пинга.
             receiver::read_info(&t)
                 .iter()
@@ -52,27 +66,46 @@ pub fn find(api: &HidApi, want_kind: u8) -> Vec<Found> {
                     let raw = r.result.as_ref().ok()?;
                     match receiver::pairing_device_type(raw) {
                         Some(kind) if kind != want_kind => None,
-                        _ => Some(slot),
+                        kind => Some((slot, kind.is_some())),
                     }
                 })
                 .collect()
         } else {
-            vec![DEVICE_SELF]
+            vec![(DEVICE_SELF, false)]
         };
-        for index in slots {
-            if let Some((name, table)) = probe(&t, index, want_kind) {
-                found.push(Found {
-                    transport: t,
-                    index,
-                    pid: info.pid,
-                    name,
-                    table,
-                });
-                break;
+        let mut silent = Vec::new();
+        let mut hit = None;
+        for (index, typed) in slots {
+            match probe(&t, index, want_kind) {
+                Some((name, table)) => {
+                    hit = Some((index, name, table));
+                    break;
+                }
+                None if typed => silent.push(index),
+                None => {}
             }
         }
+        match hit {
+            Some((index, name, table)) => found.push(Found {
+                transport: t,
+                index,
+                pid: info.pid,
+                name,
+                table,
+            }),
+            None if !silent.is_empty() && sleeping.is_none() => {
+                sleeping = Some(Sleeping {
+                    transport: t,
+                    slots: silent,
+                });
+            }
+            None => {}
+        }
     }
-    found
+    if !found.is_empty() {
+        sleeping = None;
+    }
+    (found, sleeping)
 }
 
 fn probe(t: &Transport, index: u8, want_kind: u8) -> Option<(String, Vec<FeatureEntry>)> {

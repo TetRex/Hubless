@@ -36,6 +36,10 @@ pub struct DeviceState {
     pub connected: bool,
     pub link: Option<Link>,
     pub battery: Option<BatteryState>,
+    /// Текущие значения настроек (для контролов панели).
+    pub controls: crate::devices::manager::Controls,
+    /// Последняя ошибка записи — короткое сообщение в карточке.
+    pub error: Option<String>,
 }
 
 impl DeviceState {
@@ -60,6 +64,8 @@ impl Default for AppState {
             connected: false,
             link: None,
             battery: None,
+            controls: Default::default(),
+            error: None,
         };
         Self {
             devices: vec![

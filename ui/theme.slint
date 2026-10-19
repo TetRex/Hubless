@@ -11,7 +11,8 @@ export global Theme {
 
     // Окно
     out property <length> panel-width: 360px;
-    out property <length> panel-max-height: 560px;
+    // Задаётся из Rust: высота рабочей области монитора минус отступы (560px — до первого показа).
+    in property <length> panel-max-height: 560px;
     out property <length> panel-margin: 12px;        // от края панели задач и экрана
     out property <length> panel-padding: 12px;
 
@@ -36,6 +37,9 @@ export global Theme {
     out property <string> glyph-mouse: "\u{E962}";
     out property <string> glyph-keyboard: "\u{E765}";
     out property <string> glyph-headset: "\u{E7F6}";
+    out property <string> glyph-charging: "\u{E945}";
+    out property <string> glyph-chevron-right: "\u{E76C}";
+    out property <string> glyph-chevron-down: "\u{E70D}";
 
     // Цвета
     out property <color> background: dark ? #2c2c2c : #f9f9f9;
@@ -46,6 +50,17 @@ export global Theme {
     out property <color> text-secondary: dark ? #ffffffc8 : #0000009e;
     out property <color> text-disabled: dark ? #ffffff5d : #0000005c;
     out property <color> divider: dark ? #ffffff15 : #0000000f;
+    // Полоска заряда: дорожка, заполнение — акцент, низкий заряд — Fluent «critical».
+    out property <color> battery-track: dark ? #ffffff1a : #0000001a;
+    out property <color> battery-low: dark ? #ff99a4 : #c42b1c;
+    out property <length> battery-bar-height: 4px;
+    out property <length> radius-bar: 2px;
+    // Цвета подсветки в палитре карточки клавиатуры и размер кружка.
+    out property <[color]> swatches: [#ff8000, #ffffff, #ff0000, #00ff00, #0080ff, #8000ff];
+    out property <length> swatch-size: 20px;
+    out property <color> swatch-ring: dark ? #ffffff : #000000e4;
+    out property <color> focus-ring: dark ? #ffffff : #000000e4;
+    out property <color> error-text: dark ? #ff99a4 : #c42b1c;
 
     // Анимации
     out property <duration> anim-open: 150ms;

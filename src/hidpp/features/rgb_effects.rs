@@ -210,6 +210,223 @@ pub fn disabled(zone: &Zone) -> Option<Write> {
     ))
 }
 
+// --- Встроенные анимированные эффекты ---
+//
+// Раскладка 10 байт параметров — по Solaar `LEDEffects` (hidpp20.py), числа big-endian.
+// У эффектов две версии ID: старая и с насыщенностью (0x15/0x16/0x17); берём ту, что есть в зоне.
+//
+// | ID   | эффект  | раскладка                                                   |
+// |------|---------|-------------------------------------------------------------|
+// | 0x0A | Breathe | цвет 0..3, период 3..5, форма 5, интенсивность 6            |
+// | 0x03 | Cycle   | период 5..7, интенсивность 7                                |
+// | 0x15 | Cycle   | насыщенность 1, период 6..8, интенсивность 8                |
+// | 0x04 | Wave    | период 6..8, направление 9                                  |
+// | 0x16 | Wave    | насыщенность 1, период 6..8, интенсивность 8, направление 9 |
+// | 0x0B | Ripple  | цвет 0..3, период 4..6                                      |
+// | 0x17 | Ripple  | цвет 0..3, насыщенность 3, период 6..8                      |
+
+pub const EFFECT_CYCLE: u16 = 0x03;
+pub const EFFECT_WAVE: u16 = 0x04;
+pub const EFFECT_BREATHE: u16 = 0x0A;
+pub const EFFECT_RIPPLE: u16 = 0x0B;
+pub const EFFECT_CYCLE_S: u16 = 0x15;
+pub const EFFECT_WAVE_S: u16 = 0x16;
+pub const EFFECT_RIPPLE_S: u16 = 0x17;
+
+/// Период анимаций Breathe/Cycle/Wave, мс (диапазон Solaar).
+pub const PERIOD_MS: std::ops::RangeInclusive<u16> = 1000..=20000;
+/// Период Ripple — в своих единицах прошивки (диапазон и значение по умолчанию — Solaar).
+pub const RIPPLE_PERIOD: std::ops::RangeInclusive<u16> = 2..=200;
+pub const RIPPLE_PERIOD_DEFAULT: u16 = 20;
+/// Насыщенность для версий с насыщенностью: полная, как по умолчанию в Solaar.
+const SATURATION: u8 = 0xFF;
+
+/// Направление волны (значения — Solaar `LedDirectionChoices`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Direction {
+    Cycle = 0,
+    Right = 1,
+    Down = 2,
+    CenterOut = 3,
+    In = 4,
+    Out = 5,
+    Left = 6,
+    Up = 7,
+    CenterIn = 8,
+}
+
+impl Direction {
+    pub const ALL: [Direction; 9] = [
+        Self::Cycle,
+        Self::Right,
+        Self::Down,
+        Self::CenterOut,
+        Self::In,
+        Self::Out,
+        Self::Left,
+        Self::Up,
+        Self::CenterIn,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Cycle => "cycle",
+            Self::Right => "right",
+            Self::Down => "down",
+            Self::CenterOut => "center-out",
+            Self::In => "in",
+            Self::Out => "out",
+            Self::Left => "left",
+            Self::Up => "up",
+            Self::CenterIn => "center-in",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|d| d.name() == s)
+    }
+}
+
+/// Первый из `ids`, который есть в зоне: (ID, индекс эффекта).
+fn pick(zone: &Zone, ids: &[u16]) -> Option<(u16, u8)> {
+    ids.iter()
+        .find_map(|&id| effect_index(zone, id).map(|i| (id, i)))
+}
+
+fn zone_effect(zone: &Zone, index: u8, p: [u8; 10], what: String) -> Write {
+    let mut params = vec![zone.index, index];
+    params.extend_from_slice(&p);
+    params.push(0x01);
+    write(SET_ZONE_EFFECT, &params, what)
+}
+
+fn put_u16(p: &mut [u8; 10], at: usize, v: u16) {
+    p[at..at + 2].copy_from_slice(&v.to_be_bytes());
+}
+
+fn color_text(rgb: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2])
+}
+
+/// Дыхание цветом. Форма волны 0 — по умолчанию (прошивка 0x8071 её фиксирует).
+pub fn breathe(zone: &Zone, rgb: [u8; 3], period_ms: u16, intensity: u8) -> Option<Write> {
+    let (_, index) = pick(zone, &[EFFECT_BREATHE])?;
+    let mut p = [0; 10];
+    p[..3].copy_from_slice(&rgb);
+    put_u16(&mut p, 3, period_ms);
+    p[6] = intensity;
+    Some(zone_effect(
+        zone,
+        index,
+        p,
+        format!(
+            "зона {}: дыхание {}, период {period_ms} мс, интенсивность {intensity}",
+            zone.index,
+            color_text(rgb)
+        ),
+    ))
+}
+
+/// Смена цветов по кругу.
+pub fn cycle(zone: &Zone, period_ms: u16, intensity: u8) -> Option<Write> {
+    let (id, index) = pick(zone, &[EFFECT_CYCLE_S, EFFECT_CYCLE])?;
+    let mut p = [0; 10];
+    if id == EFFECT_CYCLE_S {
+        p[1] = SATURATION;
+        put_u16(&mut p, 6, period_ms);
+        p[8] = intensity;
+    } else {
+        put_u16(&mut p, 5, period_ms);
+        p[7] = intensity;
+    }
+    Some(zone_effect(
+        zone,
+        index,
+        p,
+        format!(
+            "зона {}: цикл цветов, период {period_ms} мс, интенсивность {intensity}",
+            zone.index
+        ),
+    ))
+}
+
+/// Цветная волна. Интенсивность есть только у версии 0x16.
+pub fn wave(zone: &Zone, period_ms: u16, direction: Direction, intensity: u8) -> Option<Write> {
+    let (id, index) = pick(zone, &[EFFECT_WAVE_S, EFFECT_WAVE])?;
+    let mut p = [0; 10];
+    if id == EFFECT_WAVE_S {
+        p[1] = SATURATION;
+        p[8] = intensity;
+    }
+    put_u16(&mut p, 6, period_ms);
+    p[9] = direction as u8;
+    Some(zone_effect(
+        zone,
+        index,
+        p,
+        format!(
+            "зона {}: волна {}, период {period_ms} мс, интенсивность {intensity}",
+            zone.index,
+            direction.name()
+        ),
+    ))
+}
+
+/// Рябь от нажатых клавиш.
+pub fn ripple(zone: &Zone, rgb: [u8; 3], period: u16) -> Option<Write> {
+    let (id, index) = pick(zone, &[EFFECT_RIPPLE_S, EFFECT_RIPPLE])?;
+    let mut p = [0; 10];
+    p[..3].copy_from_slice(&rgb);
+    if id == EFFECT_RIPPLE_S {
+        p[3] = SATURATION;
+        put_u16(&mut p, 6, period);
+    } else {
+        put_u16(&mut p, 4, period);
+    }
+    Some(zone_effect(
+        zone,
+        index,
+        p,
+        format!(
+            "зона {}: рябь {}, период {period}",
+            zone.index,
+            color_text(rgb)
+        ),
+    ))
+}
+
+/// Событие `onUserActivity` (fn1, sw_id 0): `Some(true)` — активность, `Some(false)` — простой.
+pub fn activity_event(dev: &Device, r: &crate::hidpp::message::Report) -> Option<bool> {
+    let f = dev.feature(ID)?;
+    (r.device() == dev.index && r.sub_id() == f.index && r.address() == SET_ZONE_EFFECT << 4)
+        .then(|| r.params()[0] != 0)
+}
+
+/// Запись эффекта для сохранённой настройки подсветки.
+pub fn effect_for(zone: &Zone, lighting: crate::settings::Lighting) -> Option<Write> {
+    use crate::settings::Lighting as L;
+    match lighting {
+        L::Off => disabled(zone),
+        L::Static { color } => static_color(zone, color),
+        L::Breathe {
+            color,
+            period_ms,
+            intensity,
+        } => breathe(zone, color, period_ms, intensity),
+        L::Cycle {
+            period_ms,
+            intensity,
+        } => cycle(zone, period_ms, intensity),
+        L::Wave {
+            period_ms,
+            direction,
+            intensity,
+        } => wave(zone, period_ms, direction, intensity),
+        L::Ripple { color, period } => ripple(zone, color, period),
+    }
+}
+
 /// Разбор цвета `RRGGBB` или `#RRGGBB`.
 pub fn parse_rgb(s: &str) -> Option<[u8; 3]> {
     let s = s.strip_prefix('#').unwrap_or(s);
@@ -253,6 +470,63 @@ mod tests {
             w.params,
             vec![0, 1, 0xFF, 0x80, 0x00, 0, 0, 0, 0, 0, 0, 0, 1]
         );
+    }
+
+    fn zone_with(ids: &[u16]) -> Zone {
+        Zone {
+            index: 0,
+            location: 1,
+            effects: ids
+                .iter()
+                .enumerate()
+                .map(|(i, &id)| Effect {
+                    index: i as u8,
+                    id,
+                    caps: 0,
+                    period: 0,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn animated_layouts() {
+        let z = zone_with(&[0x00, 0x01, 0x0A, 0x15, 0x16, 0x17]);
+        // 5000 мс = 0x1388
+        assert_eq!(
+            breathe(&z, [0xFF, 0x80, 0x00], 5000, 100).unwrap().params,
+            vec![0, 2, 0xFF, 0x80, 0x00, 0x13, 0x88, 0, 100, 0, 0, 0, 1]
+        );
+        assert_eq!(
+            cycle(&z, 5000, 100).unwrap().params,
+            vec![0, 3, 0, 0xFF, 0, 0, 0, 0, 0x13, 0x88, 100, 0, 1]
+        );
+        assert_eq!(
+            wave(&z, 5000, Direction::Left, 100).unwrap().params,
+            vec![0, 4, 0, 0xFF, 0, 0, 0, 0, 0x13, 0x88, 100, 6, 1]
+        );
+        assert_eq!(
+            ripple(&z, [0, 0, 0xFF], 20).unwrap().params,
+            vec![0, 5, 0, 0, 0xFF, 0xFF, 0, 0, 0, 20, 0, 0, 1]
+        );
+    }
+
+    #[test]
+    fn animated_layouts_old_ids() {
+        let z = zone_with(&[0x03, 0x04, 0x0B]);
+        assert_eq!(
+            cycle(&z, 5000, 100).unwrap().params,
+            vec![0, 0, 0, 0, 0, 0, 0, 0x13, 0x88, 100, 0, 0, 1]
+        );
+        assert_eq!(
+            wave(&z, 5000, Direction::Right, 100).unwrap().params,
+            vec![0, 1, 0, 0, 0, 0, 0, 0, 0x13, 0x88, 0, 1, 1]
+        );
+        assert_eq!(
+            ripple(&z, [0, 0, 0xFF], 20).unwrap().params,
+            vec![0, 2, 0, 0, 0xFF, 0, 0, 20, 0, 0, 0, 0, 1]
+        );
+        assert!(breathe(&z, [0; 3], 5000, 100).is_none());
     }
 
     #[test]
