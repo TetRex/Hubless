@@ -113,10 +113,15 @@ pub fn host_writes(dev: &Device, s: &MouseSettings) -> Vec<Write> {
             Err(e) => tracing::warn!("чтение DPI: {e}"),
         }
     }
-    // Частота опроса не применяется: запись 0x8061 принимается мышью, но значение не меняется
-    // (проверено 2026-10-19 через ресивер C54D) — до выяснения причины.
     if let Some(hz) = s.rate_hz {
-        tracing::info!(hz, "частота опроса в режиме host пока не применяется");
+        match report_rate::index_of_hz(hz) {
+            Some(i) if report_rate::supported(dev).is_ok_and(|l| l.contains(&i)) => {
+                if report_rate::current(dev).ok() != Some(i) {
+                    writes.push(report_rate::set(i));
+                }
+            }
+            _ => tracing::warn!(hz, "частота из devices.toml не поддерживается — пропуск"),
+        }
     }
     writes
 }

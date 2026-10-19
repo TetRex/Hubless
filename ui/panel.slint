@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { ScrollView } from "std-widgets.slint";
+import { ComboBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { DeviceCard, DeviceInfo, DeviceKind } from "cards/device_card.slint";
 
@@ -7,6 +7,10 @@ export { Theme, DeviceInfo, DeviceKind }
 
 export component Panel inherits Window {
     in property <[DeviceInfo]> devices;
+    // Профили настроек: имена и индекс действующего (список виден, если профилей больше одного).
+    in property <[string]> profiles;
+    in property <int> profile;
+    callback select-profile(int);
     // Высота по содержимому, не больше максимальной; выше — карточки прокручиваются.
     out property <length> content-height: min(
         Theme.panel-padding * 2 + header.preferred-height + Theme.spacing-s + cards.preferred-height,
@@ -20,6 +24,7 @@ export component Panel inherits Window {
     }
     // Действия карточек (мышь — DPI, клавиатура — яркость и подсветка).
     callback select-dpi(int);
+    callback select-rate(int);
     callback set-mouse-host(bool);
     callback set-lift-off(int);
     callback set-brightness(int);
@@ -53,10 +58,22 @@ export component Panel inherits Window {
 
             header := HorizontalLayout {
                 padding-bottom: Theme.spacing-xs;
+                spacing: Theme.spacing-s;
+
                 Text {
                     text: "Hubless";
                     font-weight: Theme.weight-semibold;
                     color: Theme.text-primary;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+
+                if root.profiles.length > 1: ComboBox {
+                    model: root.profiles;
+                    current-index: root.profile;
+                    selected => {
+                        root.select-profile(self.current-index);
+                    }
                 }
             }
 
@@ -74,6 +91,9 @@ export component Panel inherits Window {
                         info: device;
                         select-dpi(v) => {
                             root.select-dpi(v);
+                        }
+                        select-rate(hz) => {
+                            root.select-rate(hz);
                         }
                         set-mouse-host(on) => {
                             root.set-mouse-host(on);

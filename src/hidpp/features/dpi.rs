@@ -157,6 +157,7 @@ pub fn set_parameters(x: u16, y: u16, lift_off: LiftOff) -> Write {
         function: SET_PARAMETERS,
         params: vec![SENSOR, x_hi, x_lo, y_hi, y_lo, lift_off.to_byte()],
         what: format!("DPI X={x} Y={y}, lift-off {lift_off:?}"),
+        short: false,
     }
 }
 

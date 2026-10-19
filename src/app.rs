@@ -13,9 +13,10 @@ use windows::core::{PCWSTR, w};
 
 use crate::config::log_dir;
 use crate::devices::manager::{self, Command, Role, Snapshot};
+use crate::foreground::ForegroundHook;
 use crate::hidden_window::HiddenWindow;
 use crate::panel::PanelController;
-use crate::settings::{self, DeviceSettings, Lighting};
+use crate::settings::{self, DeviceSettings, Lighting, SettingsFile};
 use crate::state::{AppState, BatteryState, DeviceKind, LOW_BATTERY, Link};
 use crate::theme::SystemTheme;
 use crate::tray::{self, Tray, autostart};
@@ -33,6 +34,8 @@ pub enum MenuCommand {
 pub enum PanelAction {
     /// DPI мыши (переводит мышь в режим host).
     Dpi(u16),
+    /// Частота опроса мыши, Гц (переводит мышь в режим host).
+    Rate(u32),
     /// `true` — настройки мыши применяет Hubless (host), `false` — из памяти мыши (onboard).
     MouseHost(bool),
     /// Lift-off мыши (в режиме host).
@@ -47,6 +50,8 @@ pub enum PanelAction {
     Sidetone(u8),
     /// Автоотключение гарнитуры, минуты (0 — никогда).
     AutoOff(u8),
+    /// Профиль настроек по индексу в списке шапки панели.
+    Profile(i32),
 }
 
 /// Эффект для пункта списка в карточке клавиатуры (порядок — как в `device_card.slint`),
@@ -122,6 +127,8 @@ pub enum AppEvent {
     BrightnessSettled(u16),
     /// Sidetone после паузы debounce.
     SidetoneSettled(u8),
+    /// Сменилось активное окно (имя exe в нижнем регистре).
+    Foreground(String),
 }
 
 struct App {
@@ -134,6 +141,9 @@ struct App {
     /// Debounce слайдеров яркости и sidetone.
     brightness_timer: slint::Timer,
     sidetone_timer: slint::Timer,
+    /// Профиль, включённый по активному окну (`None` — выбранный вручную).
+    auto_profile: Option<String>,
+    _foreground: Option<ForegroundHook>,
     _hidden: HiddenWindow,
 }
 
@@ -152,9 +162,16 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
         devices: manager::spawn(|role, s| post(AppEvent::Device(role, s))),
         brightness_timer: slint::Timer::default(),
         sidetone_timer: slint::Timer::default(),
+        auto_profile: None,
+        _foreground: ForegroundHook::install(),
         _hidden: HiddenWindow::create()?,
     };
     APP.set(Some(app));
+    APP.with_borrow_mut(|app| {
+        if let Some(app) = app {
+            app.refresh_profiles();
+        }
+    });
     Ok(())
 }
 
@@ -197,7 +214,10 @@ impl App {
             AppEvent::DevicesChanged => {
                 tracing::debug!("HID hotplug");
                 self.devices.send(Command::Rescan);
+                // Сюда же приходит «настройки изменились» от CLI — профили могли поменяться.
+                self.refresh_profiles();
             }
+            AppEvent::Foreground(exe) => self.on_foreground(exe),
             AppEvent::Device(role, s) => self.on_device(role, s),
             AppEvent::Panel(action) => self.on_panel(action),
             AppEvent::SidetoneSettled(v) => {
@@ -246,6 +266,10 @@ impl App {
                 s.mouse.dpi = Some(v);
                 s.mouse.dpi_y = Some(v);
             }),
+            PanelAction::Rate(hz) => self.change(Role::Mouse, |s| {
+                s.mouse.mode = Some(settings::Mode::Host);
+                s.mouse.rate_hz = Some(hz);
+            }),
             PanelAction::MouseHost(on) => self.change(Role::Mouse, |s| {
                 s.mouse.mode = Some(if on {
                     settings::Mode::Host
@@ -288,14 +312,55 @@ impl App {
                 );
             }
             PanelAction::AutoOff(m) => self.devices.send_to(Role::Headset, Command::AutoOff(m)),
+            PanelAction::Profile(i) => {
+                let mut file = SettingsFile::load();
+                let Some(name) = file.names().get(i.max(0) as usize).cloned() else {
+                    return;
+                };
+                if let Err(e) = file.select(&name).and_then(|()| file.save()) {
+                    tracing::error!("профиль: {e}");
+                    return;
+                }
+                // Ручной выбор отменяет автопереключение до следующей смены окна.
+                self.auto_profile = None;
+                settings::set_auto_profile(None);
+                tracing::info!(profile = name, "профиль выбран вручную");
+                self.profile_changed();
+            }
         }
+    }
+
+    /// Активное окно сменилось: включить профиль, привязанный к его exe, или вернуться к ручному.
+    fn on_foreground(&mut self, exe: String) {
+        let target = SettingsFile::load()
+            .profile_for_exe(&exe)
+            .map(str::to_owned);
+        if target == self.auto_profile {
+            return;
+        }
+        tracing::info!(exe, profile = ?target, "профиль по активному окну");
+        self.auto_profile.clone_from(&target);
+        settings::set_auto_profile(target);
+        self.profile_changed();
+    }
+
+    /// Профиль сменился: применить его настройки и обновить шапку панели.
+    fn profile_changed(&mut self) {
+        self.devices.send_to(Role::Mouse, Command::Apply);
+        self.devices.send_to(Role::Keyboard, Command::Apply);
+        self.refresh_profiles();
+    }
+
+    fn refresh_profiles(&mut self) {
+        let file = SettingsFile::load();
+        self.state.profiles = file.names();
+        self.state.profile = file.current_name();
+        self.panel.refresh(&self.state);
     }
 
     /// Изменить `devices.toml` и попросить поток устройства применить его.
     fn change(&mut self, role: Role, f: impl FnOnce(&mut DeviceSettings)) {
-        let mut s = DeviceSettings::load();
-        f(&mut s);
-        if let Err(e) = s.save() {
+        if let Err(e) = DeviceSettings::update(f) {
             tracing::error!("devices.toml: {e}");
             return;
         }

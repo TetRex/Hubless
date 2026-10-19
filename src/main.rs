@@ -10,6 +10,7 @@ mod cli;
 mod config;
 mod devices;
 mod dump;
+mod foreground;
 mod hidden_window;
 mod hidpp;
 mod logging;
@@ -65,6 +66,10 @@ fn main() -> ExitCode {
             logging::init(&cfg);
             cli::keyboard(&args[1..])
         }
+        Some("profile") => {
+            attach_console();
+            cli::profile(&args[1..])
+        }
         Some("headset") => {
             attach_console();
             let (cfg, _) = config::Config::load();
@@ -94,10 +99,11 @@ fn main() -> ExitCode {
         Some("--help" | "-h") => {
             attach_console();
             println!(
-                "{USAGE}\n{}\n\nКлавиатура:\n{}\n\nГарнитура:\n{}",
+                "{USAGE}\n{}\n\nКлавиатура:\n{}\n\nГарнитура:\n{}\n\nПрофили:\n{}",
                 cli::MOUSE_USAGE,
                 cli::KEYBOARD_USAGE,
-                cli::HEADSET_USAGE
+                cli::HEADSET_USAGE,
+                cli::PROFILE_USAGE
             );
             ExitCode::SUCCESS
         }

@@ -107,6 +107,9 @@ impl PanelController {
                             v.clamp(0, i32::from(u16::MAX)) as u16,
                         )));
                     });
+                    panel.on_select_rate(|hz| {
+                        app::post(AppEvent::Panel(PanelAction::Rate(hz.max(0) as u32)));
+                    });
                     panel.on_set_mouse_host(|on| {
                         app::post(AppEvent::Panel(PanelAction::MouseHost(on)));
                     });
@@ -125,6 +128,9 @@ impl PanelController {
                     });
                     panel.on_set_auto_off(|m| {
                         app::post(AppEvent::Panel(PanelAction::AutoOff(m.clamp(0, 255) as u8)));
+                    });
+                    panel.on_select_profile(|i| {
+                        app::post(AppEvent::Panel(PanelAction::Profile(i)));
                     });
                     panel.on_set_effect(|i| {
                         app::post(AppEvent::Panel(PanelAction::Effect(i)));
@@ -150,6 +156,7 @@ impl PanelController {
         };
         apply_theme(panel, &self.theme, &self.fonts);
         update_devices(panel, state);
+        update_profiles(panel, state);
         self.tray_rect = tray_rect;
         let placed = place(panel, tray_rect, None);
 
@@ -253,6 +260,7 @@ impl PanelController {
     pub fn refresh(&self, state: &AppState) {
         if let Some(panel) = &self.ui {
             update_devices(panel, state);
+            update_profiles(panel, state);
         }
     }
 
@@ -332,6 +340,26 @@ fn update_devices(panel: &ui::Panel, state: &AppState) {
     }
 }
 
+/// Список профилей в шапке панели.
+fn update_profiles(panel: &ui::Panel, state: &AppState) {
+    let names: Vec<slint::SharedString> = state.profiles.iter().map(Into::into).collect();
+    let current = panel.get_profiles();
+    if current.row_count() != names.len()
+        || names
+            .iter()
+            .enumerate()
+            .any(|(i, n)| current.row_data(i).as_ref() != Some(n))
+    {
+        panel.set_profiles(ModelRc::new(VecModel::from(names)));
+    }
+    let index = state
+        .profiles
+        .iter()
+        .position(|n| *n == state.profile)
+        .unwrap_or(0);
+    panel.set_profile(index as i32);
+}
+
 fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
     state
         .devices
@@ -350,6 +378,8 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
             dpi_presets: ModelRc::default(),
             host: false,
             lift_off: -1,
+            rate: -1,
+            rate_presets: ModelRc::default(),
             brightness: -1,
             brightness_min: 0,
             brightness_max: 100,
@@ -382,7 +412,12 @@ fn fill_controls(info: &mut ui::DeviceInfo, c: &Controls) {
             dpi,
             dpi_presets,
             lift_off,
+            rate_hz,
+            rate_presets,
         } => {
+            info.rate = rate_hz.map_or(-1, |hz| hz as i32);
+            let rates: Vec<i32> = rate_presets.iter().map(|&hz| hz as i32).collect();
+            info.rate_presets = ModelRc::new(VecModel::from(rates));
             info.host = *host;
             info.lift_off = match lift_off {
                 Some(LiftOff::Low) => 0,

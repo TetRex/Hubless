@@ -41,6 +41,15 @@ pub fn mouse(args: &[String]) -> ExitCode {
             print_status(found);
             ExitCode::SUCCESS
         }
+        Some("raw") => match parse_raw(&args[1..]) {
+            Ok(writes) => run_sequence(found, &writes, dry_run),
+            Err(e) => {
+                eprintln!(
+                    "{e}\n  hubless mouse raw <фича>:<функция>[s] <байты…> [, …] [--dry-run]"
+                );
+                ExitCode::from(2)
+            }
+        },
         Some("backup") => match mouse::backup(found) {
             Ok(path) => {
                 println!("Бэкап: {}", path.display());
@@ -466,12 +475,16 @@ fn print_keyboard_status(found: &Found) {
 
 /// Изменить `devices.toml` и попросить запущенный Hubless применить настройки заново.
 fn save_settings(update: impl FnOnce(&mut DeviceSettings)) -> DeviceSettings {
-    let mut settings = DeviceSettings::load();
-    update(&mut settings);
-    match settings.save() {
-        Ok(()) => println!("  сохранено в {}", DeviceSettings::path().display()),
-        Err(e) => eprintln!("  не удалось сохранить настройки: {e}"),
-    }
+    let settings = match DeviceSettings::update(update) {
+        Ok(s) => {
+            println!("  сохранено в {}", DeviceSettings::path().display());
+            s
+        }
+        Err(e) => {
+            eprintln!("  не удалось сохранить настройки: {e}");
+            DeviceSettings::load()
+        }
+    };
     if crate::hidden_window::notify_settings_changed() {
         println!("  запущенный Hubless применит настройки");
     }
@@ -860,4 +873,93 @@ fn headset_frame_text(frame: &[u8]) -> String {
         s.push_str(&format!(" … ({} × 00)", frame.len() - used));
     }
     s
+}
+
+pub const PROFILE_USAGE: &str =
+    "  hubless profile [list]                       профили настроек мыши и клавиатуры
+  hubless profile add <имя>                    новый профиль — копия действующего
+  hubless profile use <имя>                    выбрать профиль
+  hubless profile bind <имя> <exe>             включать профиль, когда активно окно exe (например cs2.exe)
+  hubless profile remove <имя>                 удалить профиль";
+
+pub fn profile(args: &[String]) -> ExitCode {
+    let mut file = settings::SettingsFile::load();
+    let arg = |i: usize| args.get(i).map(String::as_str);
+    let result = match (arg(0), arg(1), arg(2)) {
+        (None | Some("list"), _, _) => {
+            let current = file.current_name();
+            for name in file.names() {
+                let exe = file
+                    .profiles
+                    .iter()
+                    .find(|p| p.name == name)
+                    .map(|p| p.exe.join(", "))
+                    .unwrap_or_default();
+                let mark = if name == current { "*" } else { " " };
+                if exe.is_empty() {
+                    println!("{mark} {name}");
+                } else {
+                    println!("{mark} {name}  ({exe})");
+                }
+            }
+            return ExitCode::SUCCESS;
+        }
+        (Some("add"), Some(name), _) => file.add(name),
+        (Some("use"), Some(name), _) => file.select(name),
+        (Some("remove"), Some(name), _) => file.remove(name),
+        (Some("bind"), Some(name), Some(exe)) => file.bind(name, exe),
+        _ => {
+            eprintln!("{PROFILE_USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    match result.and_then(|()| file.save()) {
+        Ok(()) => {
+            println!("Действующий профиль: {}", file.current_name());
+            if crate::hidden_window::notify_settings_changed() {
+                println!("  запущенный Hubless применит настройки");
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Отладочная последовательность записей (для повторения захватов G Hub):
+/// `2202:6 00 03 20 03 20 02 , 2202:7 00 01 , 8061:3s 02` — фича (hex), функция, `s` — short-отчёт,
+/// затем байты параметров. Записи уходят подряд за один запуск; DFU-фичи отвергает `Device`.
+fn parse_raw(args: &[String]) -> Result<Vec<Write>, String> {
+    let mut writes = Vec::new();
+    for group in args.split(|a| a == ",") {
+        let (head, bytes) = group.split_first().ok_or("пустая запись")?;
+        let (feature, function) = head
+            .split_once(':')
+            .ok_or_else(|| format!("ожидалось <фича>:<функция>, а не {head}"))?;
+        let (function, short) = match function.strip_suffix('s') {
+            Some(f) => (f, true),
+            None => (function, false),
+        };
+        let feature =
+            u16::from_str_radix(feature, 16).map_err(|_| format!("фича не hex: {feature}"))?;
+        let function: u8 = function
+            .parse()
+            .ok()
+            .filter(|f| *f < 16)
+            .ok_or_else(|| format!("функция 0–15: {function}"))?;
+        let params = bytes
+            .iter()
+            .map(|b| u8::from_str_radix(b, 16).map_err(|_| format!("байт не hex: {b}")))
+            .collect::<Result<Vec<u8>, String>>()?;
+        writes.push(Write {
+            feature,
+            function,
+            what: format!("{feature:#06x} функция {function}"),
+            params,
+            short,
+        });
+    }
+    Ok(writes)
 }

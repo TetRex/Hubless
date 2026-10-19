@@ -97,14 +97,16 @@ impl<'t> Device<'t> {
 
     /// Выполнить запись в устройство.
     pub fn apply(&self, w: &Write) -> Result<Report, Error> {
-        self.call(w.feature, w.function, &w.params)
+        let index = self.index_of(w.feature)?;
+        self.transport
+            .call_as(w.short, self.index, index, w.function, &w.params)
     }
 
     /// Пакет, который отправит [`Device::apply`] (sw_id показан как 0).
     pub fn preview(&self, w: &Write) -> Result<Report, Error> {
         let index = self.index_of(w.feature)?;
         self.transport
-            .preview(self.index, index, w.function, &w.params)
+            .preview(w.short, self.index, index, w.function, &w.params)
     }
 }
 
@@ -115,4 +117,6 @@ pub struct Write {
     pub function: u8,
     pub params: Vec<u8>,
     pub what: String,
+    /// Отправлять short-отчётом (как G Hub), если параметры помещаются.
+    pub short: bool,
 }

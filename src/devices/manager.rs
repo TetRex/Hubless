@@ -21,7 +21,7 @@ use crate::devices::discovery::{self, Found, TYPE_KEYBOARD, TYPE_MOUSE};
 use crate::devices::mouse;
 use crate::hidpp::Write;
 use crate::hidpp::features::battery::{self, Battery};
-use crate::hidpp::features::{brightness, dpi, onboard, rgb_effects};
+use crate::hidpp::features::{brightness, dpi, onboard, report_rate, rgb_effects};
 use crate::hidpp::message::Report;
 use crate::hidpp::root::{self, Protocol};
 use crate::hidpp::transport::{Event, Inbound};
@@ -77,6 +77,9 @@ pub enum Controls {
         dpi_presets: Vec<u16>,
         /// Lift-off (`None` — мышь не умеет или значение не распознано).
         lift_off: Option<crate::settings::LiftOff>,
+        /// Частота опроса, Гц, и быстрые кнопки из поддерживаемых в текущем подключении.
+        rate_hz: Option<u32>,
+        rate_presets: Vec<u32>,
     },
     Keyboard {
         brightness: Option<u16>,
@@ -91,8 +94,9 @@ pub enum Controls {
     },
 }
 
-/// Быстрые кнопки DPI в карточке мыши (раздел 7 плана).
+/// Быстрые кнопки DPI и частоты опроса в карточке мыши (раздел 7 плана).
 const DPI_PRESETS: [u16; 4] = [400, 800, 1600, 3200];
+const RATE_PRESETS: [u32; 4] = [1000, 2000, 4000, 8000];
 
 #[derive(Debug, Clone, Copy)]
 pub enum Command {
@@ -509,6 +513,17 @@ impl Worker {
                     lift_off: params
                         .filter(|_| lod_supported)
                         .and_then(|p| mouse::lift_off_from_device(p.lift_off)),
+                    rate_hz: report_rate::current(&dev).ok().and_then(report_rate::hz),
+                    rate_presets: {
+                        let supported = report_rate::supported(&dev).unwrap_or_default();
+                        RATE_PRESETS
+                            .into_iter()
+                            .filter(|hz| {
+                                report_rate::index_of_hz(*hz)
+                                    .is_some_and(|i| supported.contains(&i))
+                            })
+                            .collect()
+                    },
                     dpi_presets: DPI_PRESETS
                         .into_iter()
                         .filter(|v| supported.contains(v))

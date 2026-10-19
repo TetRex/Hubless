@@ -63,6 +63,9 @@ export struct DeviceInfo {
     // Мышь: настройки применяет Hubless (host) и lift-off: 0 low, 1 medium, 2 high, -1 — нет.
     host: bool,
     lift-off: int,
+    // Мышь: частота опроса, Гц (-1 — неизвестна), и быстрые кнопки.
+    rate: int,
+    rate-presets: [int],
     // Клавиатура: яркость (-1 — нет фичи) и её диапазон.
     brightness: int,
     brightness-min: int,
@@ -159,6 +162,7 @@ component Label inherits Text {
 export component DeviceCard inherits Rectangle {
     in property <DeviceInfo> info;
     callback select-dpi(int);
+    callback select-rate(int);
     callback set-mouse-host(bool);
     callback set-lift-off(int);
     callback set-brightness(int);
@@ -226,6 +230,24 @@ export component DeviceCard inherits Rectangle {
                 primary: v == info.dpi;
                 clicked => {
                     root.select-dpi(v);
+                }
+            }
+        }
+
+        // Мышь: частота опроса (переводит мышь в режим host).
+        if info.connected && info.kind == DeviceKind.mouse && info.rate-presets.length > 0: HorizontalLayout {
+            spacing: Theme.spacing-xs;
+
+            Label {
+                text: "Опрос";
+                min-width: self.preferred-width + Theme.spacing-s;
+            }
+
+            for hz in info.rate-presets: Button {
+                text: (hz / 1000) + "K";
+                primary: hz == info.rate;
+                clicked => {
+                    root.select-rate(hz);
                 }
             }
         }

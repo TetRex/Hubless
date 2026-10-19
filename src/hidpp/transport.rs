@@ -234,7 +234,7 @@ impl Transport {
         self.call_as(true, device, feature_index, function, params)
     }
 
-    fn call_as(
+    pub fn call_as(
         &self,
         short: bool,
         device: u8,
@@ -276,15 +276,16 @@ impl Transport {
         }
     }
 
-    /// Запрос, который отправил бы [`Transport::call`], — без отправки (sw_id = 0).
+    /// Запрос, который отправил бы [`Transport::call_as`], — без отправки (sw_id = 0).
     pub fn preview(
         &self,
+        short: bool,
         device: u8,
         feature_index: u8,
         function: u8,
         params: &[u8],
     ) -> Result<Report, Error> {
-        let report_id = self.pick_report(false, params.len())?;
+        let report_id = self.pick_report(short, params.len())?;
         Ok(Report::new(
             report_id,
             device,

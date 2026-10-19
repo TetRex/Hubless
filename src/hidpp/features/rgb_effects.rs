@@ -143,6 +143,7 @@ fn write(function: u8, params: &[u8], what: impl Into<String>) -> Write {
         function,
         params: params.to_vec(),
         what: what.into(),
+        short: false,
     }
 }
 

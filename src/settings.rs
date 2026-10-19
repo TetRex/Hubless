@@ -3,8 +3,15 @@
 //!
 //! Файл пишет само приложение (CLI-команды записи), отдельно от редактируемого вручную
 //! `config.toml`. В режиме host приложение применяет эти значения при каждом подключении мыши.
+//!
+//! Профили: `[mouse]`/`[keyboard]` в корне файла — профиль «Обычный», остальные — `[[profile]]`
+//! с именем и списком exe для автопереключения. `active` — профиль, выбранный вручную;
+//! автопереключение по активному окну живёт только в памяти трея ([`set_auto_profile`]).
+//! [`DeviceSettings::load`] возвращает настройки действующего профиля, [`DeviceSettings::update`]
+//! меняет его же.
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
@@ -105,11 +112,195 @@ pub struct KeyboardSettings {
     pub lighting: Option<Lighting>,
 }
 
+/// Настройки одного профиля.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DeviceSettings {
     pub mouse: MouseSettings,
     pub keyboard: KeyboardSettings,
+}
+
+/// Имя профиля из корня файла.
+pub const BASE_PROFILE: &str = "Обычный";
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Profile {
+    pub name: String,
+    /// Имена exe (без пути, без учёта регистра), при активном окне которых профиль включается сам.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exe: Vec<String>,
+    #[serde(flatten)]
+    pub settings: DeviceSettings,
+}
+
+/// Файл `devices.toml` целиком.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SettingsFile {
+    /// Профиль, выбранный вручную (`None` — «Обычный»).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub active: Option<String>,
+    #[serde(flatten)]
+    pub base: DeviceSettings,
+    #[serde(rename = "profile", skip_serializing_if = "Vec::is_empty")]
+    pub profiles: Vec<Profile>,
+}
+
+/// Профиль, включённый автопереключением по активному окну (только в процессе трея).
+static AUTO_PROFILE: Mutex<Option<String>> = Mutex::new(None);
+
+/// Включить профиль по активному окну (`None` — вернуться к выбранному вручную).
+pub fn set_auto_profile(name: Option<String>) {
+    *AUTO_PROFILE.lock().unwrap_or_else(|e| e.into_inner()) = name;
+}
+
+fn auto_profile() -> Option<String> {
+    AUTO_PROFILE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
+impl SettingsFile {
+    pub fn path() -> PathBuf {
+        config_dir().join("devices.toml")
+    }
+
+    /// Отсутствующий или повреждённый файл — пустые настройки (ошибка в лог).
+    pub fn load() -> Self {
+        match std::fs::read_to_string(Self::path()) {
+            Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
+                tracing::warn!("devices.toml: {e}");
+                Self::default()
+            }),
+            Err(_) => Self::default(),
+        }
+    }
+
+    pub fn save(&self) -> Result<(), String> {
+        let text = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
+        let header = "# Hubless: настройки устройств для режима host. Файл пишет приложение.\n\n";
+        std::fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
+        std::fs::write(Self::path(), format!("{header}{text}")).map_err(|e| e.to_string())
+    }
+
+    /// Имена всех профилей, «Обычный» первым.
+    pub fn names(&self) -> Vec<String> {
+        std::iter::once(BASE_PROFILE.to_owned())
+            .chain(self.profiles.iter().map(|p| p.name.clone()))
+            .collect()
+    }
+
+    /// Действующий профиль: автопереключение, иначе выбранный вручную (несуществующий — «Обычный»).
+    pub fn current_name(&self) -> String {
+        auto_profile()
+            .or_else(|| self.active.clone())
+            .filter(|n| self.find(n).is_some())
+            .unwrap_or_else(|| BASE_PROFILE.to_owned())
+    }
+
+    fn find(&self, name: &str) -> Option<&DeviceSettings> {
+        if name == BASE_PROFILE {
+            return Some(&self.base);
+        }
+        self.profiles
+            .iter()
+            .find(|p| p.name == name)
+            .map(|p| &p.settings)
+    }
+
+    fn find_mut(&mut self, name: &str) -> Option<&mut DeviceSettings> {
+        if name == BASE_PROFILE {
+            return Some(&mut self.base);
+        }
+        self.profiles
+            .iter_mut()
+            .find(|p| p.name == name)
+            .map(|p| &mut p.settings)
+    }
+
+    pub fn current(&self) -> &DeviceSettings {
+        let name = self.current_name();
+        self.find(&name).unwrap_or(&self.base)
+    }
+
+    pub fn current_mut(&mut self) -> &mut DeviceSettings {
+        let name = self.current_name();
+        if self.find(&name).is_none() {
+            return &mut self.base;
+        }
+        self.find_mut(&name).expect("профиль найден выше")
+    }
+
+    /// Новый профиль — копия действующего.
+    pub fn add(&mut self, name: &str) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("пустое имя профиля".into());
+        }
+        if self.find(name).is_some() {
+            return Err(format!("профиль «{name}» уже есть"));
+        }
+        let settings = self.current().clone();
+        self.profiles.push(Profile {
+            name: name.to_owned(),
+            exe: Vec::new(),
+            settings,
+        });
+        Ok(())
+    }
+
+    pub fn remove(&mut self, name: &str) -> Result<(), String> {
+        if name == BASE_PROFILE {
+            return Err(format!("профиль «{BASE_PROFILE}» удалить нельзя"));
+        }
+        let before = self.profiles.len();
+        self.profiles.retain(|p| p.name != name);
+        if self.profiles.len() == before {
+            return Err(format!("нет профиля «{name}»"));
+        }
+        if self.active.as_deref() == Some(name) {
+            self.active = None;
+        }
+        Ok(())
+    }
+
+    /// Выбрать профиль вручную.
+    pub fn select(&mut self, name: &str) -> Result<(), String> {
+        if self.find(name).is_none() {
+            return Err(format!("нет профиля «{name}»"));
+        }
+        self.active = (name != BASE_PROFILE).then(|| name.to_owned());
+        Ok(())
+    }
+
+    /// Привязать exe к профилю (имя файла без пути, например `cs2.exe`).
+    pub fn bind(&mut self, name: &str, exe: &str) -> Result<(), String> {
+        let exe = exe.trim().to_lowercase();
+        if exe.is_empty() {
+            return Err("пустое имя exe".into());
+        }
+        let profile = self
+            .profiles
+            .iter_mut()
+            .find(|p| p.name == name)
+            .ok_or_else(|| {
+                format!("нет профиля «{name}» (к «{BASE_PROFILE}» exe не привязывается)")
+            })?;
+        if !profile.exe.contains(&exe) {
+            profile.exe.push(exe);
+        }
+        Ok(())
+    }
+
+    /// Профиль, привязанный к exe (сравнение без учёта регистра).
+    pub fn profile_for_exe(&self, exe: &str) -> Option<&str> {
+        let exe = exe.to_lowercase();
+        self.profiles
+            .iter()
+            .find(|p| p.exe.contains(&exe))
+            .map(|p| p.name.as_str())
+    }
 }
 
 /// Цвет в файле как строка `"ff8000"`.
@@ -133,25 +324,20 @@ mod rgb_hex {
 
 impl DeviceSettings {
     pub fn path() -> PathBuf {
-        config_dir().join("devices.toml")
+        SettingsFile::path()
     }
 
-    /// Отсутствующий или повреждённый файл — пустые настройки (ошибка в лог).
+    /// Настройки действующего профиля.
     pub fn load() -> Self {
-        match std::fs::read_to_string(Self::path()) {
-            Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-                tracing::warn!("devices.toml: {e}");
-                Self::default()
-            }),
-            Err(_) => Self::default(),
-        }
+        SettingsFile::load().current().clone()
     }
 
-    pub fn save(&self) -> Result<(), String> {
-        let text = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
-        let header = "# Hubless: настройки устройств для режима host. Файл пишет приложение.\n\n";
-        std::fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
-        std::fs::write(Self::path(), format!("{header}{text}")).map_err(|e| e.to_string())
+    /// Изменить действующий профиль и сохранить файл; возвращает новые настройки профиля.
+    pub fn update(f: impl FnOnce(&mut DeviceSettings)) -> Result<DeviceSettings, String> {
+        let mut file = SettingsFile::load();
+        f(file.current_mut());
+        file.save()?;
+        Ok(file.current().clone())
     }
 }
 
@@ -201,5 +387,29 @@ mod tests {
         assert!(text.contains("effect = \"wave\""), "{text}");
         assert!(text.contains("direction = \"center-out\""), "{text}");
         assert_eq!(toml::from_str::<DeviceSettings>(&text).unwrap(), s);
+    }
+
+    #[test]
+    fn profiles_roundtrip_and_old_files() {
+        // Старый файл без профилей читается как профиль «Обычный».
+        let old: SettingsFile = toml::from_str("[mouse]\ndpi = 800\n").unwrap();
+        assert_eq!(old.current().mouse.dpi, Some(800));
+        assert_eq!(old.names(), vec![BASE_PROFILE.to_owned()]);
+
+        let mut f = old.clone();
+        f.add("CS2").unwrap();
+        f.bind("CS2", "CS2.exe").unwrap();
+        f.select("CS2").unwrap();
+        f.current_mut().mouse.dpi = Some(1600);
+        let text = toml::to_string_pretty(&f).unwrap();
+        let back: SettingsFile = toml::from_str(&text).unwrap();
+        assert_eq!(back, f, "{text}");
+        assert_eq!(back.current().mouse.dpi, Some(1600));
+        assert_eq!(back.base.mouse.dpi, Some(800));
+        assert_eq!(back.profile_for_exe("cs2.EXE"), Some("CS2"));
+        assert!(f.add("CS2").is_err());
+        assert!(f.remove(BASE_PROFILE).is_err());
+        f.remove("CS2").unwrap();
+        assert_eq!(f.current_name(), BASE_PROFILE);
     }
 }
