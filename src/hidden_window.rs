@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! Скрытое окно для системных уведомлений: смена темы (`WM_SETTINGCHANGE`),
+//! hotplug HID (`WM_DEVICECHANGE`) и сигнал от второго экземпляра.
+//!
+//! Окно top-level (а не message-only), иначе broadcast `WM_SETTINGCHANGE` до него не дойдёт.
+
+use std::ffi::c_void;
+
+use windows::Win32::Devices::HumanInterfaceDevice::GUID_DEVINTERFACE_HID;
+use windows::Win32::Foundation::{HANDLE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::WindowsAndMessaging::{
+    ASFW_ANY, AllowSetForegroundWindow, CreateWindowExW, DBT_DEVICEARRIVAL,
+    DBT_DEVICEREMOVECOMPLETE, DBT_DEVTYP_DEVICEINTERFACE, DEV_BROADCAST_DEVICEINTERFACE_W,
+    DEVICE_NOTIFY_WINDOW_HANDLE, DefWindowProcW, DestroyWindow, FindWindowW, HDEVNOTIFY,
+    PostMessageW, RegisterClassW, RegisterDeviceNotificationW, UnregisterDeviceNotification,
+    WINDOW_STYLE, WM_APP, WM_DEVICECHANGE, WM_SETTINGCHANGE, WNDCLASSW, WS_EX_TOOLWINDOW,
+};
+use windows::core::{PCWSTR, w};
+
+use crate::app::{self, AppEvent};
+
+const CLASS: PCWSTR = w!("ProTray.Hidden");
+const WM_APP_SHOW_PANEL: u32 = WM_APP + 1;
+
+pub struct HiddenWindow {
+    hwnd: HWND,
+    notify: Option<HDEVNOTIFY>,
+}
+
+impl HiddenWindow {
+    pub fn create() -> windows::core::Result<Self> {
+        // SAFETY: регистрация класса и создание окна на текущем (главном) потоке;
+        // wndproc — extern "system" функция со статическим временем жизни.
+        unsafe {
+            let instance = GetModuleHandleW(None)?;
+            let class = WNDCLASSW {
+                lpfnWndProc: Some(wndproc),
+                hInstance: instance.into(),
+                lpszClassName: CLASS,
+                ..Default::default()
+            };
+            RegisterClassW(&class);
+            let hwnd = CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                CLASS,
+                w!("ProTray"),
+                WINDOW_STYLE(0),
+                0,
+                0,
+                0,
+                0,
+                None,
+                None,
+                Some(instance.into()),
+                None,
+            )?;
+
+            let mut filter = DEV_BROADCAST_DEVICEINTERFACE_W {
+                dbcc_size: size_of::<DEV_BROADCAST_DEVICEINTERFACE_W>() as u32,
+                dbcc_devicetype: DBT_DEVTYP_DEVICEINTERFACE.0,
+                dbcc_classguid: GUID_DEVINTERFACE_HID,
+                ..Default::default()
+            };
+            let notify = RegisterDeviceNotificationW(
+                HANDLE(hwnd.0),
+                (&raw mut filter).cast::<c_void>(),
+                DEVICE_NOTIFY_WINDOW_HANDLE,
+            )
+            .inspect_err(|e| tracing::warn!("RegisterDeviceNotificationW: {e}"))
+            .ok();
+
+            Ok(Self { hwnd, notify })
+        }
+    }
+}
+
+impl Drop for HiddenWindow {
+    fn drop(&mut self) {
+        // SAFETY: handle'ы созданы в `create` и освобождаются один раз.
+        unsafe {
+            if let Some(n) = self.notify.take() {
+                let _ = UnregisterDeviceNotification(n);
+            }
+            let _ = DestroyWindow(self.hwnd);
+        }
+    }
+}
+
+/// Попросить уже запущенный экземпляр открыть панель.
+pub fn notify_running_instance() {
+    // SAFETY: поиск окна по имени класса и асинхронная отправка сообщения.
+    unsafe {
+        if let Ok(hwnd) = FindWindowW(CLASS, None) {
+            let _ = AllowSetForegroundWindow(ASFW_ANY);
+            let _ = PostMessageW(Some(hwnd), WM_APP_SHOW_PANEL, WPARAM(0), LPARAM(0));
+        }
+    }
+}
+
+unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match msg {
+        WM_SETTINGCHANGE if is_color_set_change(lparam) => app::post(AppEvent::ThemeChanged),
+        WM_DEVICECHANGE
+            if matches!(
+                wparam.0 as u32,
+                DBT_DEVICEARRIVAL | DBT_DEVICEREMOVECOMPLETE
+            ) =>
+        {
+            app::post(AppEvent::DevicesChanged)
+        }
+        WM_APP_SHOW_PANEL => app::post(AppEvent::ShowPanel),
+        _ => {}
+    }
+    // SAFETY: стандартная обработка остальных сообщений.
+    unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+}
+
+/// Смена темы/акцента приходит как `WM_SETTINGCHANGE` с lParam = "ImmersiveColorSet".
+fn is_color_set_change(lparam: LPARAM) -> bool {
+    if lparam.0 == 0 {
+        return false;
+    }
+    // SAFETY: для WM_SETTINGCHANGE ненулевой lParam — нуль-терминированная UTF-16 строка.
+    let s = unsafe { PCWSTR(lparam.0 as *const u16).to_string() };
+    s.is_ok_and(|s| s == "ImmersiveColorSet")
+}

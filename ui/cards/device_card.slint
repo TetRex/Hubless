@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+import { Theme } from "../theme.slint";
+
+export enum DeviceKind { mouse, keyboard, headset }
+
+export struct DeviceInfo {
+    kind: DeviceKind,
+    name: string,
+    connected: bool,
+    link: string,
+}
+
+// Карточка устройства. Отключённое устройство — свёрнутая серая карточка без контролов.
+export component DeviceCard inherits Rectangle {
+    in property <DeviceInfo> info;
+
+    background: info.connected ? Theme.card : Theme.card-disabled;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-stroke;
+
+    HorizontalLayout {
+        padding: Theme.spacing-m;
+        spacing: Theme.spacing-m;
+
+        Text {
+            text: info.kind == DeviceKind.mouse ? Theme.glyph-mouse
+                : info.kind == DeviceKind.keyboard ? Theme.glyph-keyboard
+                : Theme.glyph-headset;
+            font-family: Theme.icon-font;
+            font-size: Theme.font-icon;
+            color: info.connected ? Theme.text-primary : Theme.text-disabled;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: info.name;
+            font-weight: Theme.weight-semibold;
+            color: info.connected ? Theme.text-primary : Theme.text-disabled;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+
+        Text {
+            text: info.connected ? info.link : "не подключено";
+            font-size: Theme.font-caption;
+            color: info.connected ? Theme.text-secondary : Theme.text-disabled;
+            vertical-alignment: center;
+        }
+    }
+}

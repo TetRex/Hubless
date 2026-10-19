@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+import { Theme } from "theme.slint";
+import { DeviceCard, DeviceInfo, DeviceKind } from "cards/device_card.slint";
+
+export { Theme, DeviceInfo, DeviceKind }
+
+export component Panel inherits Window {
+    in property <[DeviceInfo]> devices;
+    // Высота по содержимому, не больше максимальной.
+    out property <length> content-height: min(layout.preferred-height, Theme.panel-max-height);
+    // Esc — закрыть панель.
+    callback dismiss();
+
+    title: "ProTray";
+    no-frame: true;
+    always-on-top: true;
+    width: Theme.panel-width;
+    height: content-height;
+    background: Theme.background;
+    default-font-family: Theme.font-family;
+    default-font-size: Theme.font-body;
+    forward-focus: keys;
+
+    keys := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.dismiss();
+                return accept;
+            }
+            reject
+        }
+
+        layout := VerticalLayout {
+            alignment: start;
+            padding: Theme.panel-padding;
+            spacing: Theme.spacing-s;
+
+            HorizontalLayout {
+                padding-bottom: Theme.spacing-xs;
+                Text {
+                    text: "ProTray";
+                    font-weight: Theme.weight-semibold;
+                    color: Theme.text-primary;
+                }
+            }
+
+            for device in root.devices: DeviceCard {
+                info: device;
+            }
+        }
+    }
+}

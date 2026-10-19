@@ -1,0 +1,55 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Единственный источник цветов, отступов, радиусов и длительностей анимаций.
+// Цвета — по токенам Windows 11 (Fluent) для флайаутов.
+
+export global Theme {
+    // Задаются из Rust по системным настройкам.
+    in property <bool> dark: false;
+    in property <color> accent: #0078d4;
+    in property <string> font-family: "Segoe UI";
+    in property <string> icon-font: "Segoe MDL2 Assets";
+
+    // Окно
+    out property <length> panel-width: 360px;
+    out property <length> panel-max-height: 560px;
+    out property <length> panel-margin: 12px;        // от края панели задач и экрана
+    out property <length> panel-padding: 12px;
+
+    // Отступы
+    out property <length> spacing-xs: 4px;
+    out property <length> spacing-s: 8px;
+    out property <length> spacing-m: 12px;
+    out property <length> spacing-l: 16px;
+
+    // Радиусы
+    out property <length> radius-card: 6px;
+    out property <length> radius-control: 4px;
+
+    // Типографика
+    out property <length> font-body: 14px;
+    out property <length> font-caption: 12px;
+    out property <length> font-icon: 16px;
+    out property <int> weight-regular: 400;
+    out property <int> weight-semibold: 600;
+
+    // Глифы Segoe Fluent Icons / MDL2
+    out property <string> glyph-mouse: "\u{E962}";
+    out property <string> glyph-keyboard: "\u{E765}";
+    out property <string> glyph-headset: "\u{E7F6}";
+
+    // Цвета
+    out property <color> background: dark ? #2c2c2c : #f9f9f9;
+    out property <color> card: dark ? #ffffff0f : #ffffffb3;
+    out property <color> card-disabled: dark ? #ffffff08 : #f9f9f94d;
+    out property <color> card-stroke: dark ? #0000001a : #0000000f;
+    out property <color> text-primary: dark ? #ffffff : #000000e4;
+    out property <color> text-secondary: dark ? #ffffffc8 : #0000009e;
+    out property <color> text-disabled: dark ? #ffffff5d : #0000005c;
+    out property <color> divider: dark ? #ffffff15 : #0000000f;
+
+    // Анимации
+    out property <duration> anim-open: 150ms;
+    out property <duration> anim-close: 100ms;
+    out property <duration> anim-fast: 83ms;
+    out property <length> anim-open-offset: 10px;
+}

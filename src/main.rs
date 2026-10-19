@@ -1,0 +1,103 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ProTray — лёгкая замена G Hub для Windows.
+// Copyright (C) 2026 TetRex
+
+#![windows_subsystem = "windows"]
+
+mod app;
+mod config;
+mod hidden_window;
+mod logging;
+mod panel;
+mod single_instance;
+mod state;
+mod theme;
+mod tray;
+mod win;
+
+mod ui {
+    slint::include_modules!();
+}
+
+use std::process::ExitCode;
+
+use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+
+const USAGE: &str = "\
+ProTray — лёгкая замена G Hub
+
+Использование:
+  protray            запустить в трее
+  protray --help     эта справка
+  protray --version  версия";
+
+fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        None => run_tray(),
+        Some("--help" | "-h") => {
+            attach_console();
+            println!("{USAGE}");
+            ExitCode::SUCCESS
+        }
+        Some("--version" | "-V") => {
+            attach_console();
+            println!("protray {}", env!("CARGO_PKG_VERSION"));
+            ExitCode::SUCCESS
+        }
+        Some(other) => {
+            attach_console();
+            eprintln!("Неизвестный аргумент: {other}\n\n{USAGE}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// GUI-подсистема не получает консоль; для CLI подключаемся к консоли родителя.
+fn attach_console() {
+    // SAFETY: без побочных эффектов, если консоли у родителя нет.
+    let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+}
+
+fn run_tray() -> ExitCode {
+    let (cfg, cfg_err) = config::Config::load();
+    logging::init(&cfg);
+    if let Some(e) = cfg_err {
+        tracing::warn!("конфиг: {e}");
+    }
+    tracing::info!(version = env!("CARGO_PKG_VERSION"), "старт");
+
+    let Some(_instance) = single_instance::acquire() else {
+        tracing::info!("уже запущен — открываю панель существующего экземпляра");
+        hidden_window::notify_running_instance();
+        return ExitCode::SUCCESS;
+    };
+
+    if let Err(e) = slint::BackendSelector::new()
+        .backend_name("winit".into())
+        .renderer_name("software".into())
+        .with_winit_window_attributes_hook(panel::window_attributes)
+        .select()
+    {
+        tracing::error!("Slint backend: {e}");
+        return ExitCode::FAILURE;
+    }
+
+    if let Err(e) = app::init() {
+        tracing::error!("инициализация: {e}");
+        return ExitCode::FAILURE;
+    }
+    let result = slint::run_event_loop_until_quit();
+    app::shutdown();
+
+    match result {
+        Ok(()) => {
+            tracing::info!("завершено");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            tracing::error!("event loop: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
