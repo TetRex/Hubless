@@ -5,6 +5,7 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod centurion;
 mod config;
 mod devices;
 mod dump;

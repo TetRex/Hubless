@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use hidapi::HidApi;
 use serde_json::{Value, json};
 
+use crate::centurion;
 use crate::devices::registry::{self, KnownKind};
 use crate::hidpp::features::{self, device_info, device_name};
 use crate::hidpp::message::{DEVICE_SELF, hex};
@@ -84,6 +85,15 @@ fn dump_interface(api: &HidApi, info: Interface) -> Value {
         "usb_serial": info.serial.as_ref().map(|_| MASK),
         "collections": collections,
     });
+    if known.is_some_and(|k| k.kind == KnownKind::Headset)
+        && let Some(c) = info
+            .collections
+            .iter()
+            .find(|c| c.usage_page == centurion::USAGE_PAGE)
+    {
+        j["centurion"] = dump_centurion(api, &c.path);
+        return j;
+    }
     if !info.is_hidpp() {
         println!("  нет HID++ коллекций (page FF00) — пропуск");
         return j;
@@ -328,4 +338,108 @@ fn utc_now() -> String {
         rem % 3600 / 60,
         rem % 60
     )
+}
+
+/// Гарнитура на протоколе Centurion: только чтение (мост, таблицы фич, батарея).
+fn dump_centurion(api: &HidApi, path: &std::ffi::CStr) -> Value {
+    let mut a = match centurion::Adapter::open(api, path) {
+        Ok(a) => a,
+        Err(e) => {
+            println!("  Centurion: не удалось открыть: {e}");
+            return json!({ "error": e.to_string() });
+        }
+    };
+    let mut j = json!({});
+    let mut errors = Vec::new();
+    let features_json = |list: &[centurion::Feature]| -> Vec<Value> {
+        list.iter()
+            .map(|f| {
+                let name = centurion::feature_name(f.id);
+                println!(
+                    "      {:>3}  {:04X}  {:>3}  {:02X}     {}",
+                    f.index,
+                    f.id,
+                    f.version,
+                    f.flags,
+                    name.unwrap_or("?")
+                );
+                json!({
+                    "index": f.index,
+                    "id": format!("{:04X}", f.id),
+                    "name": name,
+                    "version": f.version,
+                    "flags": format!("{:02X}", f.flags),
+                })
+            })
+            .collect()
+    };
+
+    match a.adapter_features() {
+        Ok(list) => {
+            println!("  Centurion, фичи адаптера ({}):", list.len());
+            println!("      idx  id    ver  флаги  имя");
+            j["adapter_features"] = json!(features_json(&list));
+        }
+        Err(e) => errors.push(format!("adapter features: {e}")),
+    }
+    match a.find_bridge() {
+        Ok(index) => {
+            println!("  мост (0x0003): индекс {index}");
+            j["bridge_index"] = json!(index);
+        }
+        Err(e) => {
+            println!("  мост (0x0003): {e}");
+            errors.push(format!("bridge: {e}"));
+            j["errors"] = json!(errors);
+            j["frames"] = json!(a.log);
+            return j;
+        }
+    }
+    match a.bridge_status() {
+        Ok(s) => {
+            println!("  состояние моста: {}", hex(&s));
+            j["bridge_status"] = json!(hex(&s));
+        }
+        Err(e) => errors.push(format!("bridge status: {e}")),
+    }
+    match a.headset_features() {
+        Ok(list) => {
+            println!("  фичи гарнитуры ({}):", list.len());
+            println!("      idx  id    ver  флаги  имя");
+            j["headset_features"] = json!(features_json(&list));
+        }
+        Err(e) => {
+            println!("  фичи гарнитуры: {e}");
+            errors.push(format!("headset features: {e}"));
+        }
+    }
+    match a.battery() {
+        Ok(b) => {
+            let charging = matches!(b.charging_state, 1 | 2);
+            println!(
+                "  батарея: {}%{} (raw {})",
+                b.percent,
+                if charging {
+                    ", заряжается"
+                } else {
+                    ""
+                },
+                hex(&b.raw)
+            );
+            j["battery"] = json!({
+                "percent": b.percent,
+                "charging_state": b.charging_state,
+                "raw": hex(&b.raw),
+            });
+        }
+        Err(e) => {
+            println!("  батарея: {e}");
+            errors.push(format!("battery: {e}"));
+        }
+    }
+    if !errors.is_empty() {
+        j["errors"] = json!(errors);
+    }
+    j["frames"] = json!(a.log);
+    j
 }
