@@ -17,9 +17,18 @@ use slint::winit_030::winit::window::{
 use slint::winit_030::{EventResult, WinitWindowAccessor};
 use slint::{ComponentHandle, Model, ModelRc, PhysicalPosition, TimerMode, VecModel};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::Graphics::Dwm::{
+    DWMSBT_MAINWINDOW, DWMWA_SYSTEMBACKDROP_TYPE, DwmExtendFrameIntoClientArea,
+    DwmSetWindowAttribute,
+};
+use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::WindowsAndMessaging::{
-    GWL_EXSTYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-    SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    WS_SYSMENU,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    SPI_GETCLIENTAREAANIMATION, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
 };
 
 use crate::app::PanelAction;
@@ -31,6 +40,11 @@ use crate::theme::{Fonts, SystemTheme};
 use crate::ui;
 
 const DESTROY_AFTER: Duration = Duration::from_secs(60);
+/// Анимации открытия и закрытия (раздел 7 плана; совпадают с `Theme.anim-open/close`).
+const OPEN_ANIMATION: Duration = Duration::from_millis(150);
+const CLOSE_ANIMATION: Duration = Duration::from_millis(100);
+/// Шаг сдвига окна при открытии (~60 кадров/с, только на время анимации).
+const SLIDE_TICK: Duration = Duration::from_millis(16);
 /// Клик по иконке сначала снимает фокус с панели (и скрывает её), затем приходит сам клик.
 /// Такой клик не должен открывать панель заново.
 const REOPEN_GUARD: Duration = Duration::from_millis(400);
@@ -60,6 +74,10 @@ pub struct PanelController {
     opening: Rc<Cell<Option<(Instant, bool)>>>,
     /// Иконка, у которой открыта панель (для пересчёта положения при смене высоты).
     tray_rect: Option<tray_icon::Rect>,
+    /// Сдвиг окна при открытии (тикает только ~150 мс анимации).
+    slide_timer: Rc<slint::Timer>,
+    /// Скрыть окно после анимации закрытия.
+    close_timer: slint::Timer,
 }
 
 impl PanelController {
@@ -74,6 +92,8 @@ impl PanelController {
             fonts: Fonts::detect(),
             opening: Rc::default(),
             tray_rect: None,
+            slide_timer: Rc::default(),
+            close_timer: slint::Timer::default(),
         }
     }
 
@@ -160,10 +180,19 @@ impl PanelController {
         self.tray_rect = tray_rect;
         let placed = place(panel, tray_rect, None);
 
+        // Окно ещё гаснет после закрытия — просто вернуть его, без сдвига.
+        let closing = self.close_timer.running();
+        self.close_timer.stop();
+        let animated = client_area_animation();
+        panel.set_animated(animated);
+        if animated && !closing {
+            self.slide_in(panel, placed.edge);
+        }
         if let Err(e) = panel.show() {
             tracing::error!("show: {e}");
             return;
         }
+        panel.set_shown(true);
         self.visible = true;
 
         let dark = self.theme.apps_dark;
@@ -181,10 +210,22 @@ impl PanelController {
         });
         if first {
             let opening = self.opening.clone();
+            let weak = panel.as_weak();
+            let backdrop_done = Cell::new(false);
             panel.window().on_winit_window_event(move |window, ev| {
                 match ev {
                     WindowEvent::Focused(false) => app::post(AppEvent::PanelFocusLost),
                     WindowEvent::RedrawRequested => {
+                        // Фон Acrylic — один раз на окно, когда winit-окно уже точно создано
+                        // (при первом `show()` его ещё нет).
+                        if !backdrop_done.replace(true) {
+                            let backdrop =
+                                window.with_winit_window(apply_backdrop).unwrap_or(false);
+                            tracing::info!(backdrop, "фон панели");
+                            if let Some(panel) = weak.upgrade() {
+                                panel.set_backdrop(backdrop);
+                            }
+                        }
                         if let Some((t, created)) = opening.take() {
                             // При создании winit применяет флаги окна позже `show()` —
                             // повторяем стиль, когда окно уже точно настроено.
@@ -224,8 +265,21 @@ impl PanelController {
         if !self.visible {
             return;
         }
+        self.slide_timer.stop();
         if let Some(panel) = &self.ui {
-            let _ = panel.hide();
+            panel.set_shown(false);
+            if panel.get_animated() {
+                // Окно прячется, когда погаснет содержимое.
+                let weak = panel.as_weak();
+                self.close_timer
+                    .start(TimerMode::SingleShot, CLOSE_ANIMATION, move || {
+                        if let Some(panel) = weak.upgrade() {
+                            let _ = panel.hide();
+                        }
+                    });
+            } else {
+                let _ = panel.hide();
+            }
         }
         self.visible = false;
         self.hidden_at = Some(Instant::now());
@@ -247,6 +301,43 @@ impl PanelController {
         self.hide();
         self.destroy_timer.stop();
         self.ui = None;
+    }
+
+    /// Въезд окна от края панели задач к месту, куда его поставил [`place`]: ease-out по
+    /// кубу за [`OPEN_ANIMATION`]. Таймер тикает только на время анимации.
+    fn slide_in(&self, panel: &ui::Panel, edge: placement::Edge) {
+        let end = panel.window().position();
+        let offset = (panel.global::<ui::Theme>().get_anim_open_offset()
+            * panel.window().scale_factor())
+        .round() as i32;
+        let (dx, dy) = match edge {
+            placement::Edge::Bottom => (0, offset),
+            placement::Edge::Top => (0, -offset),
+            placement::Edge::Left => (-offset, 0),
+            placement::Edge::Right => (offset, 0),
+        };
+        let start = PhysicalPosition::new(end.x + dx, end.y + dy);
+        panel.window().set_position(start);
+        let weak = panel.as_weak();
+        let began = Instant::now();
+        let timer = Rc::clone(&self.slide_timer);
+        self.slide_timer
+            .start(TimerMode::Repeated, SLIDE_TICK, move || {
+                let Some(panel) = weak.upgrade() else {
+                    timer.stop();
+                    return;
+                };
+                let t = (began.elapsed().as_secs_f32() / OPEN_ANIMATION.as_secs_f32()).min(1.0);
+                let eased = 1.0 - (1.0 - t).powi(3);
+                let k = 1.0 - eased;
+                panel.window().set_position(PhysicalPosition::new(
+                    end.x + (dx as f32 * k).round() as i32,
+                    end.y + (dy as f32 * k).round() as i32,
+                ));
+                if t >= 1.0 {
+                    timer.stop();
+                }
+            });
     }
 
     /// Высота панели изменилась — вернуть её к краю панели задач.
@@ -456,20 +547,73 @@ fn link_text(d: &DeviceState) -> &'static str {
     }
 }
 
+/// Системная настройка «Эффекты анимации» (`SPI_GETCLIENTAREAANIMATION`).
+fn client_area_animation() -> bool {
+    let mut on = windows::core::BOOL(1);
+    // SAFETY: запись BOOL в локальную переменную.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETCLIENTAREAANIMATION,
+            0,
+            Some((&raw mut on).cast()),
+            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+        )
+    };
+    ok.is_err() || on.as_bool()
+}
+
+fn hwnd_of(w: &WinitWindow) -> Option<HWND> {
+    let handle = w.window_handle().ok()?;
+    let RawWindowHandle::Win32(h) = handle.as_raw() else {
+        return None;
+    };
+    Some(HWND(h.hwnd.get() as *mut _))
+}
+
+/// Системный фон Mica (`DWMSBT_MAINWINDOW`, Windows 11 22H2+).
+/// Рамка DWM расширяется на всё окно: тогда DWM берёт альфу пикселей, которые рисует
+/// программный рендер Slint (premultiplied ARGB), и прозрачный фон панели показывает Acrylic.
+/// `false` — система не умеет, остаётся сплошной фон из темы.
+fn apply_backdrop(w: &WinitWindow) -> bool {
+    let Some(hwnd) = hwnd_of(w) else {
+        return false;
+    };
+    // Acrylic (`DWMSBT_TRANSIENTWINDOW`) на этом окне DWM не рисует — фон просто прозрачный
+    // (проверено 2026-10-20); Mica рисуется и дешевле: тон берётся из обоев, без живого размытия.
+    let kind = DWMSBT_MAINWINDOW;
+    let margins = MARGINS {
+        cxLeftWidth: -1,
+        cxRightWidth: -1,
+        cyTopHeight: -1,
+        cyBottomHeight: -1,
+    };
+    // SAFETY: hwnd принадлежит живому окну этого потока; атрибут и поля — локальные значения.
+    unsafe {
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE,
+            (&raw const kind).cast(),
+            size_of_val(&kind) as u32,
+        )
+        .and_then(|()| DwmExtendFrameIntoClientArea(hwnd, &margins))
+        .inspect_err(|e| tracing::info!("Mica недоступен, сплошной фон: {e}"))
+        .is_ok()
+    }
+}
+
 /// `WS_EX_TOOLWINDOW`: без кнопки на панели задач и без Alt+Tab.
 fn make_tool_window(w: &WinitWindow) {
-    let Ok(handle) = w.window_handle() else {
+    let Some(hwnd) = hwnd_of(w) else {
         return;
     };
-    let RawWindowHandle::Win32(h) = handle.as_raw() else {
-        return;
-    };
-    let hwnd = HWND(h.hwnd.get() as *mut _);
     // SAFETY: hwnd принадлежит живому окну этого потока.
     unsafe {
         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         let style = (style | WS_EX_TOOLWINDOW.0 as isize) & !(WS_EX_APPWINDOW.0 as isize);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
+        // Без системного меню: иначе DWM рисует кнопку «×» в рамке, расширенной под фон Mica.
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) & !(WS_SYSMENU.0 as isize);
+        SetWindowLongPtrW(hwnd, GWL_STYLE, style);
         let _ = SetWindowPos(
             hwnd,
             None,

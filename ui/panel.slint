@@ -7,6 +7,11 @@ export { Theme, DeviceInfo, DeviceKind }
 
 export component Panel inherits Window {
     in property <[DeviceInfo]> devices;
+    // Фон Mica от DWM: окно прозрачное, иначе — сплошной цвет темы.
+    in property <bool> backdrop;
+    // Панель показана (содержимое проявляется) и включены ли системные «Эффекты анимации».
+    in property <bool> shown;
+    in-out property <bool> animated: true;
     // Профили настроек: имена и индекс действующего (список виден, если профилей больше одного).
     in property <[string]> profiles;
     in property <int> profile;
@@ -38,12 +43,18 @@ export component Panel inherits Window {
     always-on-top: true;
     width: Theme.panel-width;
     height: content-height;
-    background: Theme.background;
+    background: root.backdrop ? transparent : Theme.background;
     default-font-family: Theme.font-family;
     default-font-size: Theme.font-body;
     forward-focus: keys;
 
     keys := FocusScope {
+        opacity: root.shown ? 1 : 0;
+        animate opacity {
+            duration: !root.animated ? 0ms : root.shown ? Theme.anim-open : Theme.anim-close;
+            easing: ease-out;
+        }
+
         key-pressed(event) => {
             if (event.text == Key.Escape) {
                 root.dismiss();
