@@ -80,14 +80,39 @@ impl<'t> Device<'t> {
         self.features.get(&id)
     }
 
-    /// Вызов функции фичи по её ID (индекс берётся из кеша).
-    pub fn call(&self, feature_id: u16, function: u8, params: &[u8]) -> Result<Report, Error> {
+    fn index_of(&self, feature_id: u16) -> Result<u8, Error> {
         if features::is_forbidden(feature_id) {
             return Err(Error::Forbidden(feature_id));
         }
-        let f = self
-            .feature(feature_id)
-            .ok_or(Error::FeatureMissing(feature_id))?;
-        self.transport.call(self.index, f.index, function, params)
+        self.feature(feature_id)
+            .map(|f| f.index)
+            .ok_or(Error::FeatureMissing(feature_id))
     }
+
+    /// Вызов функции фичи по её ID (индекс берётся из кеша).
+    pub fn call(&self, feature_id: u16, function: u8, params: &[u8]) -> Result<Report, Error> {
+        let index = self.index_of(feature_id)?;
+        self.transport.call(self.index, index, function, params)
+    }
+
+    /// Выполнить запись в устройство.
+    pub fn apply(&self, w: &Write) -> Result<Report, Error> {
+        self.call(w.feature, w.function, &w.params)
+    }
+
+    /// Пакет, который отправит [`Device::apply`] (sw_id показан как 0).
+    pub fn preview(&self, w: &Write) -> Result<Report, Error> {
+        let index = self.index_of(w.feature)?;
+        self.transport
+            .preview(self.index, index, w.function, &w.params)
+    }
+}
+
+/// Запись в устройство: строится заранее, чтобы её можно было показать до отправки.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Write {
+    pub feature: u16,
+    pub function: u8,
+    pub params: Vec<u8>,
+    pub what: String,
 }

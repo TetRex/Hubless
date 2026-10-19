@@ -23,7 +23,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::app::{self, AppEvent};
-use crate::state::{AppState, DeviceKind};
+use crate::state::{AppState, DeviceKind, DeviceState, Link};
 use crate::theme::{Fonts, SystemTheme};
 use crate::ui;
 
@@ -209,6 +209,13 @@ impl PanelController {
         self.ui = None;
     }
 
+    /// Обновить данные открытой (или созданной) панели.
+    pub fn refresh(&self, state: &AppState) {
+        if let Some(panel) = &self.ui {
+            panel.set_devices(devices_model(state));
+        }
+    }
+
     pub fn set_theme(&mut self, theme: SystemTheme) {
         self.theme = theme;
         if let Some(panel) = &self.ui {
@@ -245,10 +252,24 @@ fn devices_model(state: &AppState) -> ModelRc<ui::DeviceInfo> {
             },
             name: d.name.as_str().into(),
             connected: d.connected,
-            link: Default::default(),
+            link: link_text(d).into(),
         })
         .collect();
     ModelRc::new(VecModel::from(items))
+}
+
+/// Подпись справа в карточке: тип связи и заряд.
+fn link_text(d: &DeviceState) -> String {
+    let link = match d.link {
+        Some(Link::Usb) => "USB",
+        Some(Link::Wireless) => "Lightspeed",
+        None => "",
+    };
+    match d.battery_text() {
+        Some(b) if link.is_empty() => b,
+        Some(b) => format!("{link} · {b}"),
+        None => link.to_owned(),
+    }
 }
 
 /// `WS_EX_TOOLWINDOW`: без кнопки на панели задач и без Alt+Tab.

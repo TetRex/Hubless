@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Фичи HID++ 2.0: по файлу на фичу, плюс справочник имён.
 
+pub mod battery;
 pub mod device_info;
 pub mod device_name;
+pub mod dpi;
+pub mod onboard;
+pub mod report_rate;
 
 /// DFU и обновление прошивки — никогда не вызывать.
 pub fn is_forbidden(id: u16) -> bool {

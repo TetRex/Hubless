@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -122,15 +122,37 @@ fn interface_key(info: &DeviceInfo) -> String {
     format!("{ids}#{instance}")
 }
 
+/// Что приходит в канал транспорта.
+#[derive(Debug)]
+pub enum Inbound {
+    Report(Report),
+    /// Разбудить поток, ждущий событий (есть команда для него).
+    Wake,
+    /// Поток чтения завершился: устройство отключено.
+    Closed,
+}
+
+/// Результат ожидания событий устройства.
+#[derive(Debug)]
+pub enum Event {
+    Report(Report),
+    Wake,
+    Closed,
+    Timeout,
+}
+
 pub struct Transport {
     writers: Vec<(u8, HidDevice)>,
-    rx: Receiver<Report>,
+    rx: Receiver<Inbound>,
+    tx: Sender<Inbound>,
     stop: Arc<AtomicBool>,
     readers: Vec<JoinHandle<()>>,
     /// Асинхронные сообщения устройства, пришедшие во время ожидания ответа.
     notifications: RefCell<Vec<Report>>,
     next_sw_id: Cell<u8>,
     quick: Cell<bool>,
+    woken: Cell<bool>,
+    closed: Cell<bool>,
 }
 
 impl Transport {
@@ -155,11 +177,14 @@ impl Transport {
         Ok(Self {
             writers,
             rx,
+            tx,
             stop,
             readers,
             notifications: RefCell::default(),
             next_sw_id: Cell::new(0x0A),
             quick: Cell::new(false),
+            woken: Cell::new(false),
+            closed: Cell::new(false),
         })
     }
 
@@ -220,18 +245,7 @@ impl Transport {
         function: u8,
         params: &[u8],
     ) -> Result<Report, Error> {
-        let fits_short = params.len() <= SHORT_LEN - 4 && self.supports(SHORT);
-        let report_id = if short && fits_short {
-            SHORT
-        } else if params.len() <= LONG_LEN - 4 && self.supports(LONG) {
-            LONG
-        } else if fits_short {
-            SHORT
-        } else if params.len() <= VERY_LONG_LEN - 4 && self.supports(VERY_LONG) {
-            VERY_LONG
-        } else {
-            return Err(Error::NoHidppCollection);
-        };
+        let report_id = self.pick_report(short, params.len())?;
         let sw_id = self.sw_id();
         let address = (function << 4) | sw_id;
         let request = Report::new(report_id, device, feature_index, address, params);
@@ -251,6 +265,39 @@ impl Transport {
                 None
             }
         })
+    }
+
+    fn pick_report(&self, short: bool, params_len: usize) -> Result<u8, Error> {
+        let fits_short = params_len <= SHORT_LEN - 4 && self.supports(SHORT);
+        if short && fits_short {
+            Ok(SHORT)
+        } else if params_len <= LONG_LEN - 4 && self.supports(LONG) {
+            Ok(LONG)
+        } else if fits_short {
+            Ok(SHORT)
+        } else if params_len <= VERY_LONG_LEN - 4 && self.supports(VERY_LONG) {
+            Ok(VERY_LONG)
+        } else {
+            Err(Error::NoHidppCollection)
+        }
+    }
+
+    /// Запрос, который отправил бы [`Transport::call`], — без отправки (sw_id = 0).
+    pub fn preview(
+        &self,
+        device: u8,
+        feature_index: u8,
+        function: u8,
+        params: &[u8],
+    ) -> Result<Report, Error> {
+        let report_id = self.pick_report(false, params.len())?;
+        Ok(Report::new(
+            report_id,
+            device,
+            feature_index,
+            function << 4,
+            params,
+        ))
     }
 
     /// Чтение регистра HID++ 1.0 (только чтение — запись регистров не используется).
@@ -304,12 +351,16 @@ impl Transport {
             loop {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 match self.rx.recv_timeout(remaining) {
-                    Ok(r) => match matches(&r) {
+                    Ok(Inbound::Report(r)) => match matches(&r) {
                         Some(result) => return result,
                         None => self.notifications.borrow_mut().push(r),
                     },
+                    Ok(Inbound::Wake) => self.woken.set(true),
+                    Ok(Inbound::Closed) | Err(RecvTimeoutError::Disconnected) => {
+                        self.closed.set(true);
+                        return Err(Error::Disconnected);
+                    }
                     Err(RecvTimeoutError::Timeout) => break,
-                    Err(RecvTimeoutError::Disconnected) => return Err(Error::Disconnected),
                 }
             }
             tracing::debug!(target: "hubless::hidpp", attempt, "таймаут");
@@ -319,8 +370,40 @@ impl Transport {
 
     /// Перенести накопившиеся отчёты в уведомления, чтобы не спутать их с ответом.
     fn drain(&self) {
-        while let Ok(r) = self.rx.try_recv() {
-            self.notifications.borrow_mut().push(r);
+        while let Ok(msg) = self.rx.try_recv() {
+            match msg {
+                Inbound::Report(r) => self.notifications.borrow_mut().push(r),
+                Inbound::Wake => self.woken.set(true),
+                Inbound::Closed => self.closed.set(true),
+            }
+        }
+    }
+
+    /// Отправитель, которым другой поток может разбудить [`Transport::next_event`].
+    pub fn waker(&self) -> Sender<Inbound> {
+        self.tx.clone()
+    }
+
+    /// Ждать следующего события устройства (уведомления, пробуждения или отключения).
+    pub fn next_event(&self, timeout: Duration) -> Event {
+        self.drain();
+        if self.closed.get() {
+            return Event::Closed;
+        }
+        if self.woken.replace(false) {
+            return Event::Wake;
+        }
+        if !self.notifications.borrow().is_empty() {
+            return Event::Report(self.notifications.borrow_mut().remove(0));
+        }
+        match self.rx.recv_timeout(timeout) {
+            Ok(Inbound::Report(r)) => Event::Report(r),
+            Ok(Inbound::Wake) => Event::Wake,
+            Ok(Inbound::Closed) | Err(RecvTimeoutError::Disconnected) => {
+                self.closed.set(true);
+                Event::Closed
+            }
+            Err(RecvTimeoutError::Timeout) => Event::Timeout,
         }
     }
 
@@ -339,7 +422,7 @@ impl Drop for Transport {
     }
 }
 
-fn read_loop(dev: &HidDevice, tx: &mpsc::Sender<Report>, stop: &AtomicBool) {
+fn read_loop(dev: &HidDevice, tx: &Sender<Inbound>, stop: &AtomicBool) {
     let mut buf = [0u8; VERY_LONG_LEN];
     while !stop.load(Ordering::Relaxed) {
         match dev.read_timeout(&mut buf, READ_TIMEOUT_MS) {
@@ -347,13 +430,14 @@ fn read_loop(dev: &HidDevice, tx: &mpsc::Sender<Report>, stop: &AtomicBool) {
             Ok(n) => {
                 if let Some(r) = Report::from_bytes(&buf[..n]) {
                     tracing::debug!(target: "hubless::hidpp", "← {}", hex(r.as_bytes()));
-                    if tx.send(r).is_err() {
+                    if tx.send(Inbound::Report(r)).is_err() {
                         return;
                     }
                 }
             }
             Err(e) => {
                 tracing::debug!(target: "hubless::hidpp", "read: {e}");
+                let _ = tx.send(Inbound::Closed);
                 return;
             }
         }

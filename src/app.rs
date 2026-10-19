@@ -12,11 +12,12 @@ use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::{PCWSTR, w};
 
 use crate::config::log_dir;
+use crate::devices::manager::{self, Command, MouseSnapshot};
 use crate::hidden_window::HiddenWindow;
 use crate::panel::PanelController;
-use crate::state::AppState;
+use crate::state::{AppState, BatteryState, DeviceKind, LOW_BATTERY, Link};
 use crate::theme::SystemTheme;
-use crate::tray::{self, Tray, autostart};
+use crate::tray::{self, Tray, autostart, toast};
 use crate::win::wide;
 
 #[derive(Debug, Clone, Copy)]
@@ -40,12 +41,17 @@ pub enum AppEvent {
     PanelIdle,
     ThemeChanged,
     DevicesChanged,
+    /// Состояние мыши от device manager (`None` — не найдена).
+    Mouse(Option<MouseSnapshot>),
 }
 
 struct App {
     tray: Tray,
     panel: PanelController,
     state: AppState,
+    /// Уведомление о низком заряде уже показано (сбрасывается при зарядке или заряде ≥ порога).
+    low_notified: bool,
+    devices: manager::Handle,
     _hidden: HiddenWindow,
 }
 
@@ -60,6 +66,8 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
         tray: Tray::new(theme.taskbar_light)?,
         panel: PanelController::new(theme),
         state: AppState::default(),
+        low_notified: false,
+        devices: manager::spawn(|s| post(AppEvent::Mouse(s))),
         _hidden: HiddenWindow::create()?,
     };
     APP.set(Some(app));
@@ -101,10 +109,49 @@ impl App {
                 self.tray.set_taskbar_light(theme.taskbar_light);
                 self.panel.set_theme(theme);
             }
-            // HID-ядро появится в фазе 1.
-            AppEvent::DevicesChanged => tracing::debug!("HID hotplug"),
+            AppEvent::DevicesChanged => {
+                tracing::debug!("HID hotplug");
+                self.devices.send(Command::Rescan);
+            }
+            AppEvent::Mouse(s) => self.on_mouse(s),
             AppEvent::Menu(cmd) => self.menu(cmd),
         }
+    }
+
+    fn on_mouse(&mut self, s: Option<MouseSnapshot>) {
+        tracing::info!(?s, "мышь");
+        if let Some(m) = self.state.device_mut(DeviceKind::Mouse) {
+            m.connected = s.as_ref().is_some_and(|s| s.connected);
+            m.link = s
+                .as_ref()
+                .map(|s| if s.wired { Link::Usb } else { Link::Wireless });
+            m.battery = s.as_ref().and_then(|s| s.battery).map(|b| BatteryState {
+                percent: b.percent,
+                charging: b.charging.is_charging() || b.external_power,
+            });
+            if let Some(s) = &s {
+                m.name.clone_from(&s.name);
+            }
+        }
+        self.refresh_status();
+    }
+
+    /// Трей, уведомление о низком заряде и панель по текущему состоянию.
+    fn refresh_status(&mut self) {
+        let low = self.state.any_low_battery();
+        self.tray.set_status(&self.state.tray_lines(), low);
+        if low && !self.low_notified {
+            let names: Vec<String> = self
+                .state
+                .devices
+                .iter()
+                .filter(|d| d.connected && d.battery.is_some_and(BatteryState::is_low))
+                .map(|d| format!("{} — {}", d.name, d.battery_text().unwrap_or_default()))
+                .collect();
+            toast::show(&format!("Заряд ниже {LOW_BATTERY}%"), &names.join("\n"));
+        }
+        self.low_notified = low;
+        self.panel.refresh(&self.state);
     }
 
     fn menu(&mut self, cmd: MenuCommand) {

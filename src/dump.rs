@@ -4,7 +4,6 @@
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use hidapi::HidApi;
 use serde_json::{Value, json};
@@ -40,7 +39,7 @@ pub fn run(out: Option<PathBuf>) -> ExitCode {
 
     let doc = json!({
         "tool": format!("hubless {}", env!("CARGO_PKG_VERSION")),
-        "generated_utc": utc_now(),
+        "generated_utc": crate::timeutil::iso_utc(),
         "interfaces": json_ifaces,
     });
     let path = out.unwrap_or_else(|| PathBuf::from(DEFAULT_FILE));
@@ -314,30 +313,6 @@ fn feature_json(f: &FeatureEntry) -> Value {
         "version": f.version,
         "flags": flags,
     })
-}
-
-/// Текущее время UTC в формате ISO 8601 без внешних зависимостей.
-fn utc_now() -> String {
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    let (days, rem) = (secs / 86_400, secs % 86_400);
-    // Алгоритм civil_from_days (Howard Hinnant).
-    let z = days as i64 + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let day = doy - (153 * mp + 2) / 5 + 1;
-    let month = if mp < 10 { mp + 3 } else { mp - 9 };
-    let year = yoe + era * 400 + i64::from(month <= 2);
-    format!(
-        "{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z",
-        rem / 3600,
-        rem % 3600 / 60,
-        rem % 60
-    )
 }
 
 /// Гарнитура на протоколе Centurion: только чтение (мост, таблицы фич, батарея).

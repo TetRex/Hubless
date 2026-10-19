@@ -6,6 +6,7 @@
 
 mod app;
 mod centurion;
+mod cli;
 mod config;
 mod devices;
 mod dump;
@@ -16,6 +17,7 @@ mod panel;
 mod single_instance;
 mod state;
 mod theme;
+mod timeutil;
 mod tray;
 mod win;
 
@@ -33,7 +35,9 @@ Hubless — лёгкая замена G Hub
 Использование:
   hubless                   запустить в трее
   hubless --dump [файл]     устройства и таблицы HID++ фич (по умолчанию hubless-dump.json)
-  hubless --help            эта справка
+  hubless mouse [status]    состояние мыши: батарея, DPI, частота опроса, lift-off, onboard
+  hubless mouse backup      полный бэкап onboard-памяти в %APPDATA%\\Hubless\\backups
+  hubless --help           эта справка
   hubless --version         версия";
 
 fn main() -> ExitCode {
@@ -45,6 +49,12 @@ fn main() -> ExitCode {
             let (cfg, _) = config::Config::load();
             logging::init(&cfg);
             dump::run(args.get(1).map(Into::into))
+        }
+        Some("mouse") => {
+            attach_console();
+            let (cfg, _) = config::Config::load();
+            logging::init(&cfg);
+            cli::mouse(&args[1..])
         }
         Some("--help" | "-h") => {
             attach_console();
