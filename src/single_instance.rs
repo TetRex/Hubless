@@ -20,7 +20,7 @@ impl Drop for InstanceGuard {
 pub fn acquire() -> Option<InstanceGuard> {
     // SAFETY: обычный вызов Win32 с константным именем.
     unsafe {
-        match CreateMutexW(None, true, w!("Local\\ProTray.SingleInstance")) {
+        match CreateMutexW(None, true, w!("Local\\Hubless.SingleInstance")) {
             Ok(handle) if GetLastError() == ERROR_ALREADY_EXISTS => {
                 let _ = CloseHandle(handle);
                 None

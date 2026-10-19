@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Пути приложения и конфиг `%APPDATA%\ProTray\config.toml`.
+//! Пути приложения и конфиг `%APPDATA%\Hubless\config.toml`.
 
 use std::path::PathBuf;
 use std::{env, fs, io};
 
 use serde::{Deserialize, Serialize};
 
-pub const APP_DIR: &str = "ProTray";
+pub const APP_DIR: &str = "Hubless";
 
-/// `%APPDATA%\ProTray` — конфиг, бэкапы onboard-памяти.
+/// `%APPDATA%\Hubless` — конфиг, бэкапы onboard-памяти.
 pub fn config_dir() -> PathBuf {
     known_dir("APPDATA").join(APP_DIR)
 }
 
-/// `%LOCALAPPDATA%\ProTray\logs`.
+/// `%LOCALAPPDATA%\Hubless\logs`.
 pub fn log_dir() -> PathBuf {
     known_dir("LOCALAPPDATA").join(APP_DIR).join("logs")
 }
@@ -42,7 +42,7 @@ impl Default for Config {
     }
 }
 
-const DEFAULT_FILE: &str = r#"# ProTray
+const DEFAULT_FILE: &str = r#"# Hubless
 # Уровень логирования: error | warn | info | debug | trace
 log_level = "info"
 

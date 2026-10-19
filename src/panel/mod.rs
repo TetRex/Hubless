@@ -41,7 +41,7 @@ pub fn window_attributes(attrs: WindowAttributes) -> WindowAttributes {
         .with_skip_taskbar(true)
         .with_corner_preference(CornerPreference::Round)
         .with_undecorated_shadow(true)
-        .with_class_name("ProTray.Panel")
+        .with_class_name("Hubless.Panel")
 }
 
 pub struct PanelController {

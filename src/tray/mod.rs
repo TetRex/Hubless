@@ -38,7 +38,7 @@ impl Tray {
 
         let icon = TrayIconBuilder::new()
             .with_icon(icon::render(taskbar_light, false))
-            .with_tooltip("ProTray\nНет подключённых устройств")
+            .with_tooltip("Hubless\nНет подключённых устройств")
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)
             .build()?;

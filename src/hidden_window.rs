@@ -20,7 +20,7 @@ use windows::core::{PCWSTR, w};
 
 use crate::app::{self, AppEvent};
 
-const CLASS: PCWSTR = w!("ProTray.Hidden");
+const CLASS: PCWSTR = w!("Hubless.Hidden");
 const WM_APP_SHOW_PANEL: u32 = WM_APP + 1;
 
 pub struct HiddenWindow {
@@ -44,7 +44,7 @@ impl HiddenWindow {
             let hwnd = CreateWindowExW(
                 WS_EX_TOOLWINDOW,
                 CLASS,
-                w!("ProTray"),
+                w!("Hubless"),
                 WINDOW_STYLE(0),
                 0,
                 0,

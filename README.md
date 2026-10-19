@@ -1,7 +1,7 @@
-# L-Hub
-Libre hub open-source alternative of Logitech G Hub
+# Hubless
+Hubless open-source alternative of Logitech G Hub
 
-Лёгкая трей-замена G Hub для Windows (рабочее название — ProTray): PRO X Superlight 2, PRO X TKL Lightspeed, PRO X Wireless.
+Лёгкая трей-замена G Hub для Windows: PRO X Superlight 2, PRO X TKL Lightspeed, PRO X Wireless.
 
 В разработке — см. [Plan.md](Plan.md).
 
@@ -13,7 +13,7 @@ Libre hub open-source alternative of Logitech G Hub
 cargo build --release
 ```
 
-Результат — `target/release/protray.exe`. Конфиг: `%APPDATA%\ProTray\config.toml`, логи: `%LOCALAPPDATA%\ProTray\logs`.
+Результат — `target/release/hubless.exe`. Конфиг: `%APPDATA%\Hubless\config.toml`, логи: `%LOCALAPPDATA%\Hubless\logs`.
 
 ## Лицензия
 

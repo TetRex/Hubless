@@ -4,7 +4,7 @@
 use crate::win::{hkcu_delete_value, hkcu_read_string, hkcu_write_string};
 
 const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-const VALUE: &str = "ProTray";
+const VALUE: &str = "Hubless";
 
 fn command() -> Option<String> {
     let exe = std::env::current_exe().ok()?;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// ProTray — лёгкая замена G Hub для Windows.
+// Hubless — лёгкая замена G Hub для Windows.
 // Copyright (C) 2026 TetRex
 
 #![windows_subsystem = "windows"]
@@ -24,12 +24,12 @@ use std::process::ExitCode;
 use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
 
 const USAGE: &str = "\
-ProTray — лёгкая замена G Hub
+Hubless — лёгкая замена G Hub
 
 Использование:
-  protray            запустить в трее
-  protray --help     эта справка
-  protray --version  версия";
+  hubless            запустить в трее
+  hubless --help     эта справка
+  hubless --version  версия";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -42,7 +42,7 @@ fn main() -> ExitCode {
         }
         Some("--version" | "-V") => {
             attach_console();
-            println!("protray {}", env!("CARGO_PKG_VERSION"));
+            println!("hubless {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
         Some(other) => {

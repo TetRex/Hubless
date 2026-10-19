@@ -1779,6 +1779,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48ce8546b993eaf241d69ded33b1be6d205dd9857ec879d9d18bd05d3676e144"
 
 [[package]]
+name = "hubless"
+version = "0.1.0"
+dependencies = [
+ "embed-resource",
+ "serde",
+ "slint",
+ "slint-build",
+ "toml 1.1.8+spec-1.1.0",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+ "tray-icon",
+ "windows",
+]
+
+[[package]]
 name = "i-slint-backend-linuxkms"
 version = "1.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3635,22 +3651,6 @@ name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d595e54a326bc53c1c197b32d295e14b169e3cfeaa8dc82b529f947fba6bcf5"
-
-[[package]]
-name = "protray"
-version = "0.1.0"
-dependencies = [
- "embed-resource",
- "serde",
- "slint",
- "slint-build",
- "toml 1.1.8+spec-1.1.0",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
- "tray-icon",
- "windows",
-]
 
 [[package]]
 name = "pulldown-cmark"
