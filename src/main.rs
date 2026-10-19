@@ -58,6 +58,12 @@ fn main() -> ExitCode {
             logging::init(&cfg);
             cli::mouse(&args[1..])
         }
+        Some("keyboard") => {
+            attach_console();
+            let (cfg, _) = config::Config::load();
+            logging::init(&cfg);
+            cli::keyboard(&args[1..])
+        }
         Some("--test-toast") => {
             attach_console();
             if hidden_window::request_test_notification() {
@@ -70,7 +76,11 @@ fn main() -> ExitCode {
         }
         Some("--help" | "-h") => {
             attach_console();
-            println!("{USAGE}\n{}", cli::MOUSE_USAGE);
+            println!(
+                "{USAGE}\n{}\n\nКлавиатура:\n{}",
+                cli::MOUSE_USAGE,
+                cli::KEYBOARD_USAGE
+            );
             ExitCode::SUCCESS
         }
         Some("--version" | "-V") => {

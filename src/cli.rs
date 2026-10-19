@@ -6,8 +6,8 @@ use std::process::ExitCode;
 use hidapi::HidApi;
 
 use crate::devices::discovery::{self, Found, TYPE_MOUSE};
-use crate::devices::mouse;
-use crate::hidpp::features::{battery, dpi, onboard, report_rate};
+use crate::devices::{keyboard, mouse};
+use crate::hidpp::features::{battery, brightness, dpi, onboard, report_rate, rgb_effects};
 use crate::hidpp::message::hex;
 use crate::hidpp::{Error, Write};
 use crate::settings::{self, DeviceSettings, MouseSettings};
@@ -231,26 +231,28 @@ fn show<T>(r: &Result<T, Error>, f: impl FnOnce(&T) -> String) -> String {
     }
 }
 
-fn print_status(found: &Found) {
-    let dev = found.device();
-    let s = mouse::status(&dev);
-    let link = if found.via_receiver() {
+fn link_text(found: &Found) -> String {
+    if found.via_receiver() {
         format!("ресивер {:04X}, слот {}", found.pid, found.index)
     } else {
         format!("кабель, PID {:04X}", found.pid)
+    }
+}
+
+fn battery_text(b: &battery::Battery) -> String {
+    let state = match b.charging {
+        battery::ChargeState::Discharging => String::new(),
+        c if c.is_charging() => ", заряжается".into(),
+        c => format!(", {c:?}"),
     };
-    println!("{} ({link})", found.name);
-    println!(
-        "  батарея:     {}",
-        show(&s.battery, |b| {
-            let state = match b.charging {
-                battery::ChargeState::Discharging => String::new(),
-                c if c.is_charging() => ", заряжается".into(),
-                c => format!(", {c:?}"),
-            };
-            format!("{}%{state}", b.percent)
-        })
-    );
+    format!("{}%{state}", b.percent)
+}
+
+fn print_status(found: &Found) {
+    let dev = found.device();
+    let s = mouse::status(&dev);
+    println!("{} ({})", found.name, link_text(found));
+    println!("  батарея:     {}", show(&s.battery, battery_text));
     println!(
         "  DPI:         {}",
         show(&s.dpi, |p| {
@@ -310,4 +312,275 @@ fn print_status(found: &Found) {
 
 fn yes(b: bool) -> &'static str {
     if b { "да" } else { "нет" }
+}
+
+pub const KEYBOARD_USAGE: &str =
+    "  hubless keyboard [status]                    батарея, яркость, подсветка, Game Mode
+  hubless keyboard brightness <N> [--dry-run]  яркость подсветки
+  hubless keyboard lighting static <RRGGBB> | off | release [--dry-run]
+                                               эффект подсветки (Hubless забирает управление) / вернуть клавиатуре";
+
+pub fn keyboard(args: &[String]) -> ExitCode {
+    let dry_run = args.iter().any(|a| a == "--dry-run");
+    let args: Vec<String> = args.iter().filter(|a| *a != "--dry-run").cloned().collect();
+    let api = match HidApi::new() {
+        Ok(api) => api,
+        Err(e) => {
+            eprintln!("hidapi: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let keyboards = discovery::find(&api, discovery::TYPE_KEYBOARD);
+    let Some(found) = keyboards.first() else {
+        eprintln!("Клавиатура не найдена (выключена или спит?).");
+        return ExitCode::FAILURE;
+    };
+    match args.first().map(String::as_str) {
+        None | Some("status") => {
+            print_keyboard_status(found);
+            ExitCode::SUCCESS
+        }
+        Some("lighting") => match plan_lighting(found, &args[1..]) {
+            Ok(writes) => run_sequence(found, &writes, dry_run),
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(2)
+            }
+        },
+        Some("brightness") => {
+            let dev = found.device();
+            let info = match brightness::info(&dev) {
+                Ok(i) => i,
+                Err(e) => {
+                    eprintln!("яркость: {e}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let Some(value) = args.get(1).and_then(|s| s.parse::<u16>().ok()) else {
+                eprintln!("укажите яркость числом от {} до {}", info.min, info.max);
+                return ExitCode::from(2);
+            };
+            if !(info.min..=info.max).contains(&value) {
+                eprintln!("яркость {value} вне диапазона {}–{}", info.min, info.max);
+                return ExitCode::from(2);
+            }
+            run_keyboard_write(found, &brightness::set(value), dry_run)
+        }
+        Some(other) => {
+            eprintln!("Неизвестная команда: keyboard {other}\n\n{KEYBOARD_USAGE}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn print_keyboard_status(found: &Found) {
+    let dev = found.device();
+    let s = keyboard::status(&dev);
+    println!("{} ({})", found.name, link_text(found));
+    println!("  батарея:     {}", show(&s.battery, battery_text));
+    println!(
+        "  яркость:     {}",
+        show(&s.brightness, |v| match &s.brightness_info {
+            Ok(i) => format!("{v} (диапазон {}–{}, ступеней {})", i.min, i.max, i.steps),
+            Err(_) => v.to_string(),
+        })
+    );
+    if let Some(on) = &s.illumination {
+        println!(
+            "  подсветка:   {}",
+            show(on, |on| if *on { "вкл" } else { "выкл" }.into())
+        );
+    }
+    match &s.rgb {
+        Ok(info) => {
+            println!(
+                "  зоны подсветки: {} (caps {:#06x})",
+                info.zones.len(),
+                info.caps
+            );
+            for z in &info.zones {
+                let effects: Vec<String> = z
+                    .effects
+                    .iter()
+                    .map(|e| {
+                        rgb_effects::effect_name(e.id)
+                            .map_or(format!("{:#04x}", e.id), str::to_owned)
+                    })
+                    .collect();
+                println!(
+                    "    зона {} ({}): {}",
+                    z.index,
+                    rgb_effects::location_name(z.location),
+                    effects.join(", ")
+                );
+            }
+        }
+        Err(e) => println!("  зоны подсветки: ошибка: {e}"),
+    }
+    if let Ok(raw) = rgb_effects::sw_control(&dev) {
+        println!(
+            "  управление:  {} (сырые байты {})",
+            if raw.get(1).copied().unwrap_or(0) == 0 {
+                "у клавиатуры"
+            } else {
+                "у приложения"
+            },
+            hex(&raw)
+        );
+    }
+    if let Ok((idle, sleep)) = rgb_effects::timers(&dev) {
+        println!("  таймеры:     простой {idle} с, сон {sleep} с");
+    }
+    println!("  per-key:     {}", yes(s.has_per_key));
+    println!(
+        "  опрос:       {}",
+        show(&s.rate_ms, |ms| format!("{ms} мс"))
+    );
+    println!(
+        "  режим:       {}",
+        show(&s.onboard_mode, |m| format!("{m:?}"))
+    );
+    println!(
+        "  Game Mode:   {}",
+        if s.has_disable_controls {
+            "0x4523 есть, протокол не описан — нужен захват трафика G Hub"
+        } else {
+            "нет 0x4523"
+        }
+    );
+}
+
+/// Запись в клавиатуру: печать пакета, отправка, проверка чтением (настройки пока не сохраняются).
+fn run_keyboard_write(found: &Found, w: &Write, dry_run: bool) -> ExitCode {
+    let dev = found.device();
+    let packet = match dev.preview(w) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    println!("{}: {}", found.name, w.what);
+    println!("  пакет: {}", packet_text(packet.as_bytes()));
+    if dry_run {
+        println!("  --dry-run: не отправлено");
+        return ExitCode::SUCCESS;
+    }
+    match dev.apply(w) {
+        Ok(r) => {
+            println!("  ответ: {}", hex(r.as_bytes()));
+            let applied = match w.feature {
+                brightness::ID => brightness::current(&dev)
+                    .ok()
+                    .map(|v| v.to_be_bytes().as_slice() == w.params.as_slice()),
+                _ => None,
+            };
+            if applied == Some(false) {
+                eprintln!("  устройство приняло запись, но значение не изменилось");
+                return ExitCode::FAILURE;
+            }
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("  ошибка: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Последовательность записей для подсветки (как в Solaar: режим host + перехват управления).
+fn plan_lighting(found: &Found, args: &[String]) -> Result<Vec<Write>, String> {
+    let dev = found.device();
+    let info = rgb_effects::info(&dev).map_err(|e| format!("подсветка: {e}"))?;
+    let zone = info.zones.first().ok_or("у клавиатуры нет зон подсветки")?;
+    let take = || vec![onboard::set_mode(onboard::Mode::Host), rgb_effects::claim()];
+    match args.first().map(String::as_str) {
+        Some("static") => {
+            let rgb = args
+                .get(1)
+                .and_then(|s| rgb_effects::parse_rgb(s))
+                .ok_or("укажите цвет RRGGBB, например: hubless keyboard lighting static ff8000")?;
+            let mut w = take();
+            w.push(rgb_effects::static_color(zone, rgb).ok_or("зона не поддерживает Static")?);
+            Ok(w)
+        }
+        Some("off") => {
+            let mut w = take();
+            w.push(rgb_effects::disabled(zone).ok_or("зона не поддерживает Disabled")?);
+            Ok(w)
+        }
+        Some("release") => Ok(vec![
+            rgb_effects::release(),
+            onboard::set_mode(onboard::Mode::Onboard),
+        ]),
+        _ => Err("укажите: static <RRGGBB> | off | release".into()),
+    }
+}
+
+/// Напечатать все пакеты последовательности, затем (без --dry-run) отправить по порядку.
+fn run_sequence(found: &Found, writes: &[Write], dry_run: bool) -> ExitCode {
+    let dev = found.device();
+    println!("{}:", found.name);
+    for (i, w) in writes.iter().enumerate() {
+        match dev.preview(w) {
+            Ok(r) => println!(
+                "  {}. {}\n     пакет: {}",
+                i + 1,
+                w.what,
+                packet_text(r.as_bytes())
+            ),
+            Err(e) => {
+                eprintln!("  {}. {}: {e}", i + 1, w.what);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    if dry_run {
+        if writes
+            .iter()
+            .any(|w| w.feature == rgb_effects::ID && w.params == rgb_effects::claim().params)
+        {
+            print_idle_packets(&dev);
+        }
+        println!("  --dry-run: не отправлено");
+        return ExitCode::SUCCESS;
+    }
+    for (i, w) in writes.iter().enumerate() {
+        match dev.apply(w) {
+            Ok(r) => println!("  {}. ответ: {}", i + 1, hex(r.as_bytes())),
+            Err(e) => {
+                eprintln!("  {}. ошибка: {e} — остальные записи не отправлены", i + 1);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// Пакеты, которые Hubless в трее отправляет, пока держит управление подсветкой.
+fn print_idle_packets(dev: &crate::hidpp::Device) {
+    println!("  Пока подсветкой управляет Hubless, при простое и активности он отправляет:");
+    let steps = [
+        ("клавиатура сообщила о простое", rgb_effects::idle_mode()),
+        (
+            "через «сон − простой» секунд после простоя",
+            rgb_effects::power_off(),
+        ),
+        (
+            "клавиатура сообщила об активности (после сна)",
+            rgb_effects::power_on(),
+        ),
+        ("затем снова", rgb_effects::claim()),
+    ];
+    for (when, w) in steps {
+        if let Ok(r) = dev.preview(&w) {
+            println!(
+                "   - {when}: {}
+       пакет: {}",
+                w.what,
+                packet_text(r.as_bytes())
+            );
+        }
+    }
+    println!("   - после пробуждения повторяется эффект зоны (пакет 3 выше)");
 }

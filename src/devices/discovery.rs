@@ -10,7 +10,8 @@ use crate::hidpp::root::{self, FeatureEntry, Protocol};
 use crate::hidpp::transport::{self, Transport};
 use crate::hidpp::{Device, receiver};
 
-/// Тип устройства «мышь» из `0x0005`.
+/// Типы устройств из `0x0005`.
+pub const TYPE_KEYBOARD: u8 = 0;
 pub const TYPE_MOUSE: u8 = 3;
 
 pub struct Found {
