@@ -135,3 +135,25 @@ msgstr "Открыть папку"
 
 msgid "Open GitHub issue"
 msgstr "Открыть issue на GitHub"
+
+# Окно настроек: устройства
+msgid "Devices"
+msgstr "Устройства"
+
+msgid "Drag devices to set their order in the panel, and choose which ones it shows. Hidden devices keep working with their settings."
+msgstr "Перетащите устройства, чтобы задать их порядок в панели, и выберите, какие показывать. Скрытые устройства продолжают работать со своими настройками."
+
+msgid "Connected"
+msgstr "Подключено"
+
+msgid "Not connected"
+msgstr "Не подключено"
+
+msgid "Reorder: drag, or use the arrow keys"
+msgstr "Порядок: перетащите или нажимайте стрелки"
+
+msgid "Show in the panel"
+msgstr "Показывать в панели"
+
+msgid "All devices are hidden. Choose which to show in Settings → Devices."
+msgstr "Все устройства скрыты. Выбрать, какие показывать, — в «Настройки → Устройства»."

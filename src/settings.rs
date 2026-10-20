@@ -133,6 +133,44 @@ pub struct Profile {
     pub settings: DeviceSettings,
 }
 
+/// Карточки панели: порядок и скрытые устройства (общие для всех профилей).
+/// Устройства — по ключу [`DeviceKind::key`](crate::state::DeviceKind::key).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PanelLayout {
+    /// Порядок карточек; не перечисленные идут следом в обычном порядке.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub order: Vec<String>,
+    /// Устройства, которых нет в панели.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub hidden: Vec<String>,
+}
+
+impl PanelLayout {
+    pub fn is_empty(&self) -> bool {
+        self.order.is_empty() && self.hidden.is_empty()
+    }
+
+    pub fn is_hidden(&self, key: &str) -> bool {
+        self.hidden.iter().any(|k| k == key)
+    }
+
+    pub fn set_hidden(&mut self, key: &str, hidden: bool) {
+        self.hidden.retain(|k| k != key);
+        if hidden {
+            self.hidden.push(key.to_owned());
+        }
+    }
+
+    /// Место устройства в порядке (не перечисленные — после всех перечисленных).
+    pub fn rank(&self, key: &str) -> usize {
+        self.order
+            .iter()
+            .position(|k| k == key)
+            .unwrap_or(self.order.len())
+    }
+}
+
 /// Файл `devices.toml` целиком.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -140,6 +178,9 @@ pub struct SettingsFile {
     /// Профиль, выбранный вручную (`None` — «Обычный»).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active: Option<String>,
+    /// Порядок и видимость карточек панели.
+    #[serde(skip_serializing_if = "PanelLayout::is_empty")]
+    pub panel: PanelLayout,
     #[serde(flatten)]
     pub base: DeviceSettings,
     #[serde(rename = "profile", skip_serializing_if = "Vec::is_empty")]
@@ -456,5 +497,25 @@ mod tests {
         assert_eq!(f.profile_for_exe("cs2.exe"), None);
         f.remove("Игры").unwrap();
         assert_eq!(f.current_name(), BASE_PROFILE);
+    }
+
+    #[test]
+    fn panel_layout_roundtrip() {
+        let mut f: SettingsFile = toml::from_str("[mouse]\ndpi = 800\n").unwrap();
+        assert!(f.panel.is_empty());
+        assert!(!toml::to_string_pretty(&f).unwrap().contains("panel"));
+        f.panel.order = vec!["headset".into(), "mouse".into()];
+        f.panel.set_hidden("keyboard", true);
+        f.panel.set_hidden("keyboard", true);
+        assert_eq!(f.panel.hidden, vec!["keyboard".to_owned()]);
+        let text = toml::to_string_pretty(&f).unwrap();
+        let back: SettingsFile = toml::from_str(&text).unwrap();
+        assert_eq!(back, f, "{text}");
+        assert_eq!(back.base.mouse.dpi, Some(800));
+        assert_eq!(back.panel.rank("headset"), 0);
+        assert_eq!(back.panel.rank("keyboard"), 2, "не перечисленные — в конце");
+        assert!(back.panel.is_hidden("keyboard"));
+        f.panel.set_hidden("keyboard", false);
+        assert!(!f.panel.is_hidden("keyboard"));
     }
 }

@@ -3,9 +3,9 @@ import { ComboBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { IconButton } from "widgets.slint";
 import { DeviceCard, DeviceInfo, DeviceKind } from "cards/device_card.slint";
-import { ProfileRow, SettingsWindow } from "settings.slint";
+import { DeviceRow, ProfileRow, SettingsWindow } from "settings.slint";
 
-export { Theme, DeviceInfo, DeviceKind, ProfileRow, SettingsWindow }
+export { Theme, DeviceInfo, DeviceKind, DeviceRow, ProfileRow, SettingsWindow }
 
 export component Panel inherits Window {
     in property <[DeviceInfo]> devices;
@@ -111,6 +111,14 @@ export component Panel inherits Window {
                     width: parent.width;
                     alignment: start;
                     spacing: Theme.spacing-s;
+
+                    // Все устройства скрыты в настройках.
+                    if root.devices.length == 0: Text {
+                        text: @tr("All devices are hidden. Choose which to show in Settings → Devices.");
+                        font-size: Theme.font-caption;
+                        color: Theme.text-secondary;
+                        wrap: word-wrap;
+                    }
 
                     for device in root.devices: DeviceCard {
                         info: device;

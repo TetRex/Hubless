@@ -1,10 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Окно настроек: слева меню разделов, справа страница раздела.
-// «Общие» — язык и автозапуск; «Профили» — карточки профилей, раскрывается выбранная.
+// «Общие» — язык и автозапуск; «Устройства» — порядок и видимость карточек панели;
+// «Профили» — карточки профилей, раскрывается выбранная.
 // Создаётся по требованию и уничтожается при закрытии.
 import { Button, ComboBox, LineEdit, ScrollView, Switch, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { IconButton } from "widgets.slint";
+import { DeviceKind } from "cards/device_card.slint";
+
+// Устройство в разделе «Устройства» (готовит Rust, в порядке панели).
+export struct DeviceRow {
+    kind: DeviceKind,
+    name: string,
+    connected: bool,
+    // Карточка видна в панели.
+    shown: bool,
+}
 
 // Профиль для карточки (готовит Rust).
 export struct ProfileRow {
@@ -108,6 +119,134 @@ component SettingRow inherits Rectangle {
         }
 
         @children
+    }
+}
+
+// Строка устройства: ручка, значок, имя и состояние, видимость в панели.
+// Порядок меняется перетаскиванием за любое место карточки, кроме переключателя,
+// или стрелками ↑/↓, когда ручка в фокусе (Tab).
+component DeviceRowCard inherits Rectangle {
+    in property <DeviceRow> device;
+    // Привязан к строке модели в обе стороны: переключатель не теряет связь с данными,
+    // когда строки меняются местами.
+    in-out property <bool> shown;
+    // Карточку сейчас тащат мышью.
+    in property <bool> dragged;
+    // Вернуть фокус на ручку: карточку передвинули с клавиатуры, и она теперь на этом месте.
+    in property <bool> want-focus;
+    callback drag-start();
+    // Сдвиг указателя по вертикали с прошлого события.
+    callback drag-move(length);
+    callback drag-end();
+    // Стрелка на ручке: -1 — выше, 1 — ниже.
+    callback step(int);
+    callback show(bool);
+
+    height: Theme.settings-device-row-height;
+    background: Theme.card;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: root.dragged || grip.has-focus ? Theme.accent : Theme.card-stroke;
+    drop-shadow-blur: root.dragged ? Theme.drag-shadow-blur : 0;
+    drop-shadow-color: Theme.drag-shadow;
+
+    changed want-focus => {
+        if (root.want-focus) {
+            grip.focus();
+        }
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.spacing-s;
+        padding-right: Theme.spacing-l;
+        spacing: Theme.spacing-m;
+
+        // Ручка, значок и имя; поверх них — область перетаскивания.
+        Rectangle {
+            horizontal-stretch: 1;
+
+            HorizontalLayout {
+                spacing: Theme.spacing-s;
+
+                grip := FocusScope {
+                    width: Theme.icon-button-size;
+                    accessible-role: button;
+                    accessible-label: @tr("Reorder: drag, or use the arrow keys");
+                    key-pressed(event) => {
+                        if (event.text == Key.UpArrow) {
+                            root.step(-1);
+                            return accept;
+                        }
+                        if (event.text == Key.DownArrow) {
+                            root.step(1);
+                            return accept;
+                        }
+                        reject
+                    }
+
+                    Text {
+                        text: Theme.glyph-gripper;
+                        font-family: Theme.icon-font;
+                        font-size: Theme.font-icon;
+                        color: Theme.text-secondary;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+
+                Text {
+                    text: root.device.kind == DeviceKind.mouse ? Theme.glyph-mouse
+                        : root.device.kind == DeviceKind.keyboard ? Theme.glyph-keyboard
+                        : Theme.glyph-headset;
+                    font-family: Theme.icon-font;
+                    font-size: Theme.font-icon;
+                    color: root.shown ? Theme.text-primary : Theme.text-disabled;
+                    vertical-alignment: center;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+                    horizontal-stretch: 1;
+                    padding-left: Theme.spacing-xs;
+
+                    Text {
+                        text: root.device.name;
+                        color: root.shown ? Theme.text-primary : Theme.text-secondary;
+                        overflow: elide;
+                    }
+
+                    Caption {
+                        text: root.device.connected ? @tr("Connected") : @tr("Not connected");
+                    }
+                }
+            }
+
+            TouchArea {
+                mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+                pointer-event(event) => {
+                    if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                        root.drag-start();
+                    } else if ((event.button == PointerEventButton.left && event.kind == PointerEventKind.up)
+                        || event.kind == PointerEventKind.cancel) {
+                        root.drag-end();
+                    }
+                }
+                // Карточка едет за указателем: `mouse-y` считается от её нового места.
+                moved => {
+                    if (self.pressed) {
+                        root.drag-move(self.mouse-y - self.pressed-y);
+                    }
+                }
+            }
+        }
+
+        Switch {
+            checked <=> root.shown;
+            accessible-label: @tr("Show in the panel");
+            toggled => {
+                root.show(self.checked);
+            }
+        }
     }
 }
 
@@ -284,11 +423,13 @@ component ProfileCard inherits Rectangle {
 }
 
 export component SettingsWindow inherits Window {
-    // Раздел: 0 — «Общие», 1 — «Профили», 2 — «Отчёт об устройствах».
+    // Раздел: 0 — «Общие», 1 — «Устройства», 2 — «Профили», 3 — «Отчёт об устройствах».
     in-out property <int> page;
     // Общие
     in-out property <int> language;           // 0 — английский, 1 — русский
     in-out property <bool> autostart;
+    // Устройства в порядке панели.
+    in property <[DeviceRow]> devices;
     // Профили: карточки, раскрытая и варианты для добавления программы (первый — подсказка).
     in property <[ProfileRow]> profiles;
     in-out property <int> selected;
@@ -305,6 +446,10 @@ export component SettingsWindow inherits Window {
 
     callback set-language(int);
     callback set-autostart(bool);
+    // Устройство по индексу в списке: переставить на новое место, показать или скрыть в панели.
+    // После перестановки Rust присылает новый порядок и вызывает finish-drop().
+    callback move-device(int, int);
+    callback show-device(int, bool);
     callback select-profile(int);
     callback create-profile();
     callback rename-profile(int, string);
@@ -317,6 +462,50 @@ export component SettingsWindow inherits Window {
     callback open-reports();
     callback copy-report();
     callback open-issue();
+
+    // Перетаскивание в разделе «Устройства»: шаг строк, какая строка тащится (-1 — никакая),
+    // её сдвиг от своего места и место, куда она встанет.
+    property <length> device-pitch: Theme.settings-device-row-height + Theme.spacing-s;
+    property <int> drag-from: -1;
+    property <length> drag-dy;
+    property <int> drag-to: root.drag-from < 0 ? -1
+        : max(0, min(root.devices.length - 1,
+            round((root.drag-from * root.device-pitch + root.drag-dy) / root.device-pitch)));
+    // Строку отпустили, ждём новый порядок от Rust (строки стоят, как при отпускании).
+    property <bool> dropping;
+    // Строки встают на места без анимации (новый порядок пришёл — данные уже в строках).
+    property <bool> instant;
+    // Строка, которой вернуть фокус после перестановки с клавиатуры.
+    property <int> focus-request: -1;
+
+    // Место строки `i`, пока тащат другую: строки между старым и новым местом сдвигаются на одно.
+    pure function device-slot(i: int) -> int {
+        if (root.drag-from < 0) {
+            return i;
+        }
+        if (root.drag-from < i && i <= root.drag-to) {
+            return i - 1;
+        }
+        if (root.drag-to <= i && i < root.drag-from) {
+            return i + 1;
+        }
+        return i;
+    }
+
+    // Строка `from` встаёт на место `to` (с анимацией), новый порядок — в Rust.
+    function drop(from: int, to: int) {
+        root.dropping = true;
+        root.drag-dy = (to - from) * root.device-pitch;
+        root.move-device(from, to);
+    }
+
+    // Rust прислал новый порядок: строки уже с новыми данными, сбросить сдвиги без анимации.
+    public function finish-drop() {
+        root.instant = true;
+        root.dropping = false;
+        root.drag-from = -1;
+        root.drag-dy = 0;
+    }
 
     title: @tr("Hubless — Settings");
     preferred-width: Theme.settings-width;
@@ -345,8 +534,8 @@ export component SettingsWindow inherits Window {
             }
 
             NavItem {
-                glyph: Theme.glyph-profiles;
-                label: @tr("Profiles");
+                glyph: Theme.glyph-devices;
+                label: @tr("Devices");
                 selected: root.page == 1;
                 clicked => {
                     root.page = 1;
@@ -354,11 +543,20 @@ export component SettingsWindow inherits Window {
             }
 
             NavItem {
-                glyph: Theme.glyph-report;
-                label: @tr("Device report");
+                glyph: Theme.glyph-profiles;
+                label: @tr("Profiles");
                 selected: root.page == 2;
                 clicked => {
                     root.page = 2;
+                }
+            }
+
+            NavItem {
+                glyph: Theme.glyph-report;
+                label: @tr("Device report");
+                selected: root.page == 3;
+                clicked => {
+                    root.page = 3;
                 }
             }
         }
@@ -415,6 +613,96 @@ export component SettingsWindow inherits Window {
             }
 
             if root.page == 1: VerticalLayout {
+                spacing: Theme.spacing-s;
+
+                Text {
+                    text: @tr("Devices");
+                    font-size: Theme.font-title;
+                    font-weight: Theme.weight-semibold;
+                    color: Theme.text-primary;
+                }
+
+                Caption {
+                    text: @tr("Drag devices to set their order in the panel, and choose which ones it shows. Hidden devices keep working with their settings.");
+                    wrap: word-wrap;
+                }
+
+                ScrollView {
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        alignment: start;
+                        padding-top: Theme.spacing-xs;
+
+                        // Строки стоят на местах по индексу; во время перетаскивания остальные
+                        // раздвигаются, освобождая место, куда упадёт перетаскиваемая.
+                        Rectangle {
+                            height: max(0, root.devices.length * root.device-pitch - Theme.spacing-s);
+
+                            for item[i] in root.devices: DeviceRowCard {
+                                x: 0;
+                                width: parent.width;
+                                y: i == root.drag-from ? i * root.device-pitch + root.drag-dy
+                                    : root.device-slot(i) * root.device-pitch;
+                                z: i == root.drag-from ? 1 : 0;
+                                // Тащимая мышью карточка идёт за указателем без задержки.
+                                animate y {
+                                    duration: root.instant || (i == root.drag-from && !root.dropping)
+                                        ? 0ms : Theme.anim-open;
+                                    easing: ease-out;
+                                }
+                                device: item;
+                                shown <=> item.shown;
+                                dragged: i == root.drag-from && !root.dropping;
+                                want-focus: i == root.focus-request;
+                                drag-start => {
+                                    if (root.dropping) {
+                                        return;
+                                    }
+                                    root.instant = false;
+                                    root.focus-request = -1;
+                                    root.drag-from = i;
+                                    root.drag-dy = 0;
+                                }
+                                drag-move(delta) => {
+                                    if (root.dropping || root.drag-from != i) {
+                                        return;
+                                    }
+                                    root.drag-dy = max(-i * root.device-pitch,
+                                        min((root.devices.length - 1 - i) * root.device-pitch,
+                                            root.drag-dy + delta));
+                                }
+                                drag-end => {
+                                    if (root.dropping || root.drag-from != i) {
+                                        return;
+                                    }
+                                    if (root.drag-to == i) {
+                                        // Не сдвинули: карточка возвращается на место.
+                                        root.drag-from = -1;
+                                        root.drag-dy = 0;
+                                        return;
+                                    }
+                                    root.drop(i, root.drag-to);
+                                }
+                                step(delta) => {
+                                    if (root.dropping || i + delta < 0 || i + delta >= root.devices.length) {
+                                        return;
+                                    }
+                                    root.instant = false;
+                                    root.drag-from = i;
+                                    root.focus-request = i + delta;
+                                    root.drop(i, i + delta);
+                                }
+                                show(on) => {
+                                    root.show-device(i, on);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.page == 2: VerticalLayout {
                 spacing: Theme.spacing-s;
 
                 HorizontalLayout {
@@ -481,7 +769,7 @@ export component SettingsWindow inherits Window {
                 }
             }
 
-            if root.page == 2: VerticalLayout {
+            if root.page == 3: VerticalLayout {
                 spacing: Theme.spacing-s;
 
                 Text {

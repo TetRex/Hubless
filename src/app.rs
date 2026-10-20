@@ -19,7 +19,7 @@ use crate::hidden_window::HiddenWindow;
 use crate::i18n::{self, tr};
 use crate::panel::PanelController;
 use crate::report;
-use crate::settings::{self, DeviceSettings, Lighting, SettingsFile};
+use crate::settings::{self, DeviceSettings, Lighting, PanelLayout, SettingsFile};
 use crate::settings_window::{self, SettingsAction, SettingsController};
 use crate::state::{AppState, BatteryState, DeviceKind, LOW_BATTERY, Link};
 use crate::theme::SystemTheme;
@@ -398,8 +398,13 @@ impl App {
         self.refresh_profiles();
     }
 
+    /// Перечитать профили и раскладку панели из `devices.toml`.
     fn refresh_profiles(&mut self) {
         let file = SettingsFile::load();
+        if file.panel != self.state.layout {
+            self.state.layout = file.panel.clone();
+            self.refresh_status();
+        }
         let names = file.names();
         let current = file.current_name();
         self.state.profile = names.iter().position(|n| *n == current).unwrap_or(0);
@@ -414,7 +419,21 @@ impl App {
 
     fn open_settings(&mut self, page: Option<usize>) {
         self.panel.hide();
-        self.settings.open(self.panel.theme(), page);
+        self.settings.open(self.panel.theme(), &self.state, page);
+    }
+
+    /// Изменить порядок или видимость карточек в `devices.toml` и показать результат.
+    fn edit_layout(&mut self, f: impl FnOnce(&mut PanelLayout)) {
+        let mut file = SettingsFile::load();
+        f(&mut file.panel);
+        if let Err(e) = file.save() {
+            tracing::error!("devices.toml: {e}");
+            self.settings.set_error(&e);
+            return;
+        }
+        tracing::info!(order = ?file.panel.order, hidden = ?file.panel.hidden, "раскладка панели");
+        self.state.layout = file.panel;
+        self.refresh_status();
     }
 
     fn on_settings(&mut self, action: SettingsAction) {
@@ -452,6 +471,24 @@ impl App {
                     tracing::error!("автозапуск: {e}");
                 }
                 self.tray.set_autostart_checked(autostart::is_enabled());
+            }
+            SettingsAction::MoveDevice(from, to) => {
+                if let Some(order) = self.state.moved(from.max(0) as usize, to.max(0) as usize) {
+                    self.edit_layout(|l| l.order = order);
+                }
+                // Строки уже с новым порядком (или со старым при ошибке) — сбросить перетаскивание.
+                self.settings.finish_drop();
+            }
+            SettingsAction::ShowDevice(i, shown) => {
+                let Some(key) = self
+                    .state
+                    .ordered()
+                    .get(i.max(0) as usize)
+                    .map(|d| d.kind.key())
+                else {
+                    return;
+                };
+                self.edit_layout(|l| l.set_hidden(key, !shown));
             }
             SettingsAction::Language(i) => {
                 let choice = settings_window::choice_of(i);
@@ -589,6 +626,7 @@ impl App {
         }
         self.low_notified = low;
         self.panel.refresh(&self.state);
+        self.settings.update_devices(&self.state);
     }
 
     fn menu(&mut self, cmd: MenuCommand) {

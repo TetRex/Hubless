@@ -42,7 +42,8 @@ Usage:
   hubless --dump [file]     devices and HID++ feature tables (default hubless-dump.json)
   hubless --report          save a device report to send as a GitHub issue
   hubless --test-toast      show a test notification (Hubless must be running)
-  hubless --settings [profiles]  open the settings window of the running Hubless
+  hubless --settings [devices|profiles|report]
+                            open the settings window of the running Hubless
   hubless --quit            quit the running Hubless (like Exit in the menu)
   hubless --help            this help
   hubless --version         version
@@ -109,7 +110,12 @@ fn main() -> ExitCode {
         }
         Some("--settings") => {
             attach_console();
-            let page = usize::from(args.get(1).is_some_and(|a| a == "profiles"));
+            let page = match args.get(1).map(String::as_str) {
+                Some("devices") => 1,
+                Some("profiles") => 2,
+                Some("report") => 3,
+                _ => 0,
+            };
             if hidden_window::request_settings(page) {
                 ExitCode::SUCCESS
             } else {

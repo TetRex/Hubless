@@ -486,8 +486,8 @@ fn update_profiles(panel: &ui::Panel, state: &AppState) {
 }
 
 fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
-    state
-        .devices
+    let devices = state.panel_devices();
+    devices
         .iter()
         .map(|d| ui::DeviceInfo {
             kind: match d.kind {
@@ -523,7 +523,7 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
             charging: d.battery.is_some_and(|b| b.charging),
             low: d.battery.is_some_and(BatteryState::is_low),
         })
-        .zip(&state.devices)
+        .zip(&devices)
         .map(|(mut info, d)| {
             fill_controls(&mut info, &d.controls);
             info

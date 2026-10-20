@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Окно настроек: язык интерфейса, автозапуск, профили и их привязка к программам.
+//! Окно настроек: язык интерфейса, автозапуск, порядок и видимость устройств в панели,
+//! профили и их привязка к программам.
 //!
 //! Создаётся при открытии (меню трея или шестерёнка в панели) и уничтожается при закрытии —
 //! пока окна нет, оно не держит ресурсов. Все действия уходят в [`App`](crate::app) как
@@ -7,12 +8,13 @@
 
 use slint::winit_030::WinitWindowAccessor;
 use slint::winit_030::winit::window::Theme as WinitTheme;
-use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::app::{self, AppEvent};
 use crate::config::Config;
 use crate::i18n::{self, Choice, Lang};
 use crate::settings::SettingsFile;
+use crate::state::{AppState, DeviceKind};
 use crate::theme::{Fonts, SystemTheme};
 use crate::tray::autostart;
 use crate::ui;
@@ -23,6 +25,10 @@ pub enum SettingsAction {
     /// Индекс в списке языков: 0 — английский, 1 — русский.
     Language(i32),
     Autostart(bool),
+    /// Переставить устройство в разделе «Устройства»: с места и на место (индексы в списке).
+    MoveDevice(i32, i32),
+    /// Показать (`true`) или скрыть устройство в панели.
+    ShowDevice(i32, bool),
     Select(i32),
     /// Новый профиль — копия действующего, имя «Профиль N» подбирается само.
     Create,
@@ -83,8 +89,9 @@ pub struct SettingsController {
 }
 
 impl SettingsController {
-    /// Открыть (или поднять) окно; `page` — раздел: 0 «Общие», 1 «Профили».
-    pub fn open(&mut self, theme: SystemTheme, page: Option<usize>) {
+    /// Открыть (или поднять) окно; `page` — раздел: 0 «Общие», 1 «Устройства», 2 «Профили»,
+    /// 3 «Отчёт об устройствах».
+    pub fn open(&mut self, theme: SystemTheme, state: &AppState, page: Option<usize>) {
         if self.ui.is_none() {
             match ui::SettingsWindow::new() {
                 Ok(w) => {
@@ -101,11 +108,12 @@ impl SettingsController {
         }
         let Some(w) = &self.ui else { return };
         if let Some(page) = page {
-            w.set_page(page.min(2) as i32);
+            w.set_page(page.min(3) as i32);
         }
         w.set_ghub_running(crate::report::ghub_running());
         self.set_theme(theme);
         self.refresh(None);
+        self.update_devices(state);
         if let Err(e) = w.show() {
             tracing::error!("окно настроек: {e}");
             return;
@@ -230,12 +238,52 @@ impl SettingsController {
             w.set_error(message.into());
         }
     }
+
+    /// Раздел «Устройства»: все устройства в порядке панели. Строки меняются на месте —
+    /// модель живёт, и перетаскивание не обрывается, если в это время пришёл заряд.
+    pub fn update_devices(&self, state: &AppState) {
+        let Some(w) = &self.ui else { return };
+        let rows: Vec<ui::DeviceRow> = state
+            .ordered()
+            .into_iter()
+            .map(|d| ui::DeviceRow {
+                kind: match d.kind {
+                    DeviceKind::Mouse => ui::DeviceKind::Mouse,
+                    DeviceKind::Keyboard => ui::DeviceKind::Keyboard,
+                    DeviceKind::Headset => ui::DeviceKind::Headset,
+                },
+                name: d.name.as_str().into(),
+                connected: d.connected,
+                shown: !state.layout.is_hidden(d.kind.key()),
+            })
+            .collect();
+        let model = w.get_devices();
+        match model.as_any().downcast_ref::<VecModel<ui::DeviceRow>>() {
+            Some(current) if current.row_count() == rows.len() => {
+                for (i, row) in rows.into_iter().enumerate() {
+                    if current.row_data(i).as_ref() != Some(&row) {
+                        current.set_row_data(i, row);
+                    }
+                }
+            }
+            _ => w.set_devices(ModelRc::new(VecModel::from(rows))),
+        }
+    }
+
+    /// Перестановка устройства обработана: строки списка встают на места.
+    pub fn finish_drop(&self) {
+        if let Some(w) = &self.ui {
+            w.invoke_finish_drop();
+        }
+    }
 }
 
 fn wire(w: &ui::SettingsWindow) {
     let post = |a: SettingsAction| app::post(AppEvent::Settings(a));
     w.on_set_language(move |i| post(SettingsAction::Language(i)));
     w.on_set_autostart(move |on| post(SettingsAction::Autostart(on)));
+    w.on_move_device(move |from, to| post(SettingsAction::MoveDevice(from, to)));
+    w.on_show_device(move |i, on| post(SettingsAction::ShowDevice(i, on)));
     w.on_select_profile(move |i| post(SettingsAction::Select(i)));
     w.on_create_profile(move || post(SettingsAction::Create));
     w.on_rename_profile(move |i, name| post(SettingsAction::Rename(i, name.into())));

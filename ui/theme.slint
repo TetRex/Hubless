@@ -27,6 +27,8 @@ export global Theme {
     out property <length> settings-nav-item-height: 36px;
     out property <length> settings-exe-field-width: 200px;
     out property <length> settings-combo-width: 160px;
+    // Строка устройства в разделе «Устройства» (высота постоянная — от неё считается перетаскивание).
+    out property <length> settings-device-row-height: 56px;
     out property <length> nav-indicator-width: 3px;
     out property <length> nav-indicator-height: 16px;
     out property <length> font-title: 20px;
@@ -65,6 +67,8 @@ export global Theme {
     out property <string> glyph-report: "\u{E9D9}";
     out property <string> glyph-chevron-right: "\u{E76C}";
     out property <string> glyph-chevron-down: "\u{E70D}";
+    out property <string> glyph-devices: "\u{E772}";
+    out property <string> glyph-gripper: "\u{E76F}";
 
     // Цвета
     out property <color> background: dark ? #2c2c2c : #f9f9f9;
@@ -86,6 +90,9 @@ export global Theme {
     out property <color> swatch-ring: dark ? #ffffff : #000000e4;
     out property <color> focus-ring: dark ? #ffffff : #000000e4;
     out property <color> error-text: dark ? #ff99a4 : #c42b1c;
+    // Тень перетаскиваемой карточки.
+    out property <color> drag-shadow: dark ? #00000099 : #00000040;
+    out property <length> drag-shadow-blur: 12px;
 
     // Анимации
     out property <duration> anim-open: 150ms;
