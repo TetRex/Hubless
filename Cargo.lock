@@ -1793,7 +1793,7 @@ checksum = "48ce8546b993eaf241d69ded33b1be6d205dd9857ec879d9d18bd05d3676e144"
 
 [[package]]
 name = "hubless"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "embed-resource",
  "hidapi",
