@@ -13,9 +13,11 @@ mod dump;
 mod foreground;
 mod hidden_window;
 mod hidpp;
+mod i18n;
 mod logging;
 mod panel;
 mod settings;
+mod settings_window;
 mod single_instance;
 mod state;
 mod theme;
@@ -32,17 +34,18 @@ use std::process::ExitCode;
 use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
 
 const USAGE: &str = "\
-Hubless — лёгкая замена G Hub
+Hubless — a lightweight G Hub replacement
 
-Использование:
-  hubless                   запустить в трее
-  hubless --dump [файл]     устройства и таблицы HID++ фич (по умолчанию hubless-dump.json)
-  hubless --test-toast      показать тестовое уведомление (Hubless должен быть запущен)
-  hubless --quit            завершить запущенный Hubless (как «Выход» в меню)
-  hubless --help            эта справка
-  hubless --version         версия
+Usage:
+  hubless                   run in the tray
+  hubless --dump [file]     devices and HID++ feature tables (default hubless-dump.json)
+  hubless --test-toast      show a test notification (Hubless must be running)
+  hubless --settings [profiles]  open the settings window of the running Hubless
+  hubless --quit            quit the running Hubless (like Exit in the menu)
+  hubless --help            this help
+  hubless --version         version
 
-Мышь:";
+Mouse:";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -79,27 +82,37 @@ fn main() -> ExitCode {
         Some("--test-toast") => {
             attach_console();
             if hidden_window::request_test_notification() {
-                println!("Запрос отправлен запущенному Hubless.");
+                println!("Sent to the running Hubless.");
                 ExitCode::SUCCESS
             } else {
-                eprintln!("Hubless не запущен: уведомления показывает приложение в трее.");
+                eprintln!("Hubless is not running: notifications are shown by the tray app.");
+                ExitCode::FAILURE
+            }
+        }
+        Some("--settings") => {
+            attach_console();
+            let page = usize::from(args.get(1).is_some_and(|a| a == "profiles"));
+            if hidden_window::request_settings(page) {
+                ExitCode::SUCCESS
+            } else {
+                eprintln!("Hubless is not running.");
                 ExitCode::FAILURE
             }
         }
         Some("--quit") => {
             attach_console();
             if hidden_window::request_quit() {
-                println!("Запущенный Hubless завершается.");
+                println!("The running Hubless is quitting.");
                 ExitCode::SUCCESS
             } else {
-                eprintln!("Hubless не запущен.");
+                eprintln!("Hubless is not running.");
                 ExitCode::FAILURE
             }
         }
         Some("--help" | "-h") => {
             attach_console();
             println!(
-                "{USAGE}\n{}\n\nКлавиатура:\n{}\n\nГарнитура:\n{}\n\nПрофили:\n{}",
+                "{USAGE}\n{}\n\nKeyboard:\n{}\n\nHeadset:\n{}\n\nProfiles:\n{}",
                 cli::MOUSE_USAGE,
                 cli::KEYBOARD_USAGE,
                 cli::HEADSET_USAGE,
@@ -114,10 +127,7 @@ fn main() -> ExitCode {
         }
         Some(other) => {
             attach_console();
-            eprintln!(
-                "Неизвестный аргумент: {other}\n\n{USAGE}\n{}",
-                cli::MOUSE_USAGE
-            );
+            eprintln!("Unknown argument: {other}\n\n{USAGE}\n{}", cli::MOUSE_USAGE);
             ExitCode::from(2)
         }
     }
@@ -136,6 +146,8 @@ fn run_tray() -> ExitCode {
         tracing::warn!("конфиг: {e}");
     }
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "старт");
+    // Язык строк из Rust — сразу; переводы Slint выбираются после создания первого окна.
+    i18n::set(i18n::Choice::parse(&cfg.language).resolve());
 
     let Some(_instance) = single_instance::acquire() else {
         tracing::info!("уже запущен — открываю панель существующего экземпляра");

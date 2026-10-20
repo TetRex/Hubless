@@ -11,12 +11,15 @@ use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::{PCWSTR, w};
 
+use crate::config::Config;
 use crate::config::log_dir;
 use crate::devices::manager::{self, Command, Role, Snapshot};
 use crate::foreground::ForegroundHook;
 use crate::hidden_window::HiddenWindow;
+use crate::i18n::{self, tr};
 use crate::panel::PanelController;
 use crate::settings::{self, DeviceSettings, Lighting, SettingsFile};
+use crate::settings_window::{self, SettingsAction, SettingsController};
 use crate::state::{AppState, BatteryState, DeviceKind, LOW_BATTERY, Link};
 use crate::theme::SystemTheme;
 use crate::tray::{self, Tray, autostart};
@@ -24,6 +27,7 @@ use crate::win::wide;
 
 #[derive(Debug, Clone, Copy)]
 pub enum MenuCommand {
+    Settings,
     ToggleAutostart,
     OpenLogs,
     Exit,
@@ -34,6 +38,10 @@ pub enum MenuCommand {
 pub enum PanelAction {
     /// DPI мыши (переводит мышь в режим host).
     Dpi(u16),
+    /// Любое значение DPI с ползунка — применяется после паузы, подгоняется к допустимому.
+    DpiDrag(f32),
+    /// Любое значение DPI из поля ввода — сразу, подгоняется к допустимому.
+    DpiExact(f32),
     /// Частота опроса мыши, Гц (переводит мышь в режим host).
     Rate(u32),
     /// `true` — настройки мыши применяет Hubless (host), `false` — из памяти мыши (onboard).
@@ -96,6 +104,18 @@ pub fn effect_index(l: Option<Lighting>) -> i32 {
     }
 }
 
+/// Ближайшее к `value` значение DPI из списка допустимых (список по возрастанию).
+fn nearest_dpi(supported: &[u16], value: f32) -> Option<u16> {
+    if !value.is_finite() {
+        return None;
+    }
+    supported.iter().copied().min_by(|a, b| {
+        let da = (f32::from(*a) - value).abs();
+        let db = (f32::from(*b) - value).abs();
+        da.total_cmp(&db)
+    })
+}
+
 /// Пауза перед записью яркости: слайдер шлёт значения непрерывно.
 const SLIDER_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
 /// Цвет подсветки, когда свой цвет включают впервые.
@@ -127,8 +147,14 @@ pub enum AppEvent {
     BrightnessSettled(u16),
     /// Sidetone после паузы debounce.
     SidetoneSettled(u8),
+    /// DPI с ползунка после паузы debounce.
+    DpiSettled(f32),
     /// Сменилось активное окно (имя exe в нижнем регистре).
     Foreground(String),
+    /// Открыть окно настроек (шестерёнка в панели); `Some` — на разделе с этим номером.
+    OpenSettings(Option<usize>),
+    /// Действие в окне настроек.
+    Settings(SettingsAction),
 }
 
 struct App {
@@ -141,8 +167,10 @@ struct App {
     /// Debounce слайдеров яркости и sidetone.
     brightness_timer: slint::Timer,
     sidetone_timer: slint::Timer,
+    dpi_timer: slint::Timer,
     /// Профиль, включённый по активному окну (`None` — выбранный вручную).
     auto_profile: Option<String>,
+    settings: SettingsController,
     _foreground: Option<ForegroundHook>,
     _hidden: HiddenWindow,
 }
@@ -162,7 +190,9 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
         devices: manager::spawn(|role, s| post(AppEvent::Device(role, s))),
         brightness_timer: slint::Timer::default(),
         sidetone_timer: slint::Timer::default(),
+        dpi_timer: slint::Timer::default(),
         auto_profile: None,
+        settings: SettingsController::default(),
         _foreground: ForegroundHook::install(),
         _hidden: HiddenWindow::create()?,
     };
@@ -218,8 +248,11 @@ impl App {
                 self.refresh_profiles();
             }
             AppEvent::Foreground(exe) => self.on_foreground(exe),
+            AppEvent::OpenSettings(page) => self.open_settings(page),
+            AppEvent::Settings(action) => self.on_settings(action),
             AppEvent::Device(role, s) => self.on_device(role, s),
             AppEvent::Panel(action) => self.on_panel(action),
+            AppEvent::DpiSettled(v) => self.set_free_dpi(v),
             AppEvent::SidetoneSettled(v) => {
                 self.devices.send_to(Role::Headset, Command::Sidetone(v));
             }
@@ -227,8 +260,8 @@ impl App {
                 self.change(Role::Keyboard, |s| s.keyboard.brightness = Some(v));
             }
             AppEvent::TestNotification => self.tray.notify(
-                "Hubless: проверка уведомлений",
-                "Так выглядит предупреждение о низком заряде.",
+                tr("Hubless: notification test"),
+                tr("This is what the low battery warning looks like."),
             ),
             AppEvent::Menu(cmd) => self.menu(cmd),
         }
@@ -266,6 +299,16 @@ impl App {
                 s.mouse.dpi = Some(v);
                 s.mouse.dpi_y = Some(v);
             }),
+            PanelAction::DpiDrag(v) => {
+                self.dpi_timer
+                    .start(slint::TimerMode::SingleShot, SLIDER_DEBOUNCE, move || {
+                        post(AppEvent::DpiSettled(v));
+                    });
+            }
+            PanelAction::DpiExact(v) => {
+                self.dpi_timer.stop();
+                self.set_free_dpi(v);
+            }
             PanelAction::Rate(hz) => self.change(Role::Mouse, |s| {
                 s.mouse.mode = Some(settings::Mode::Host);
                 s.mouse.rate_hz = Some(hz);
@@ -353,9 +396,142 @@ impl App {
 
     fn refresh_profiles(&mut self) {
         let file = SettingsFile::load();
-        self.state.profiles = file.names();
-        self.state.profile = file.current_name();
+        let names = file.names();
+        let current = file.current_name();
+        self.state.profile = names.iter().position(|n| *n == current).unwrap_or(0);
+        self.state.profiles = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| settings_window::display_name(i, n))
+            .collect();
         self.panel.refresh(&self.state);
+        self.settings.refresh(None);
+    }
+
+    fn open_settings(&mut self, page: Option<usize>) {
+        self.panel.hide();
+        self.settings.open(self.panel.theme(), page);
+    }
+
+    fn on_settings(&mut self, action: SettingsAction) {
+        let names = SettingsFile::load().names();
+        let name_at = |i: i32| names.get(i.max(0) as usize).cloned();
+        match action {
+            SettingsAction::Closed => self.settings.close(),
+            SettingsAction::Select(i) => self.settings.refresh(Some(i.max(0) as usize)),
+            SettingsAction::RefreshRunning => self.settings.refresh_running(),
+            SettingsAction::Autostart(on) => {
+                if let Err(e) = autostart::set_enabled(on) {
+                    tracing::error!("автозапуск: {e}");
+                }
+                self.tray.set_autostart_checked(autostart::is_enabled());
+            }
+            SettingsAction::Language(i) => {
+                let choice = settings_window::choice_of(i);
+                if let Err(e) = Config::save_language(choice.as_str()) {
+                    tracing::error!("config.toml: {e}");
+                }
+                i18n::set(choice.resolve());
+                tracing::info!(language = choice.as_str(), "язык интерфейса");
+                self.tray.relabel();
+                self.refresh_status();
+                self.refresh_profiles();
+            }
+            SettingsAction::Create => {
+                let name = settings_window::new_profile_name(&names);
+                let index = names.len();
+                if self.edit_profiles(|f| f.add(&name)) {
+                    self.refresh_profiles();
+                    self.settings.refresh(Some(index));
+                }
+            }
+            SettingsAction::Rename(i, new) => {
+                let Some(old) = name_at(i) else { return };
+                let new = new.trim().to_owned();
+                if new != old && (names.contains(&new) || new == tr("Default")) {
+                    self.settings
+                        .set_error(tr("A profile with this name already exists"));
+                    return;
+                }
+                if self.edit_profiles(|f| f.rename(&old, &new)) {
+                    if self.auto_profile.as_deref() == Some(old.as_str()) {
+                        self.auto_profile = Some(new.clone());
+                        settings::set_auto_profile(Some(new));
+                    }
+                    self.refresh_profiles();
+                }
+            }
+            SettingsAction::Delete(i) => {
+                let Some(name) = name_at(i) else { return };
+                if self.edit_profiles(|f| f.remove(&name)) {
+                    if self.auto_profile.as_deref() == Some(name.as_str()) {
+                        self.auto_profile = None;
+                        settings::set_auto_profile(None);
+                    }
+                    self.profile_changed();
+                    self.settings.refresh(Some(0));
+                }
+            }
+            SettingsAction::Use(i) => {
+                let Some(name) = name_at(i) else { return };
+                if self.edit_profiles(|f| f.select(&name)) {
+                    // Ручной выбор отменяет автопереключение до следующей смены окна.
+                    self.auto_profile = None;
+                    settings::set_auto_profile(None);
+                    tracing::info!(profile = name, "профиль выбран вручную");
+                    self.profile_changed();
+                }
+            }
+            SettingsAction::AddProgram(i, exe) => {
+                let Some(name) = name_at(i) else { return };
+                if exe.trim().is_empty() {
+                    return;
+                }
+                if self.edit_profiles(|f| f.bind(&name, &exe)) {
+                    self.settings.refresh(None);
+                }
+            }
+            SettingsAction::RemoveProgram(i, exe) => {
+                let Some(name) = name_at(i) else { return };
+                if self.edit_profiles(|f| f.unbind(&name, &exe)) {
+                    self.settings.refresh(None);
+                }
+            }
+        }
+    }
+
+    /// Изменить профили в `devices.toml`; ошибка — сообщением в окне настроек.
+    fn edit_profiles(&mut self, f: impl FnOnce(&mut SettingsFile) -> Result<(), String>) -> bool {
+        let mut file = SettingsFile::load();
+        match f(&mut file).and_then(|()| file.save()) {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!("профили: {e}");
+                self.settings.set_error(&e);
+                false
+            }
+        }
+    }
+
+    /// Любое значение DPI: подогнать к ближайшему, которое принимает мышь, и применить (host).
+    fn set_free_dpi(&mut self, value: f32) {
+        let supported = self
+            .state
+            .devices
+            .iter()
+            .find_map(|d| match &d.controls {
+                manager::Controls::Mouse { dpi_supported, .. } => Some(dpi_supported.clone()),
+                _ => None,
+            })
+            .unwrap_or_default();
+        let Some(v) = nearest_dpi(&supported, value) else {
+            return;
+        };
+        self.change(Role::Mouse, |s| {
+            s.mouse.mode = Some(settings::Mode::Host);
+            s.mouse.dpi = Some(v);
+            s.mouse.dpi_y = Some(v);
+        });
     }
 
     /// Изменить `devices.toml` и попросить поток устройства применить его.
@@ -379,8 +555,10 @@ impl App {
                 .filter(|d| d.connected && d.battery.is_some_and(BatteryState::is_low))
                 .map(|d| format!("{} — {}", d.name, d.battery_text().unwrap_or_default()))
                 .collect();
-            self.tray
-                .notify(&format!("Заряд ниже {LOW_BATTERY}%"), &names.join("\n"));
+            self.tray.notify(
+                &tr("Battery below {}%").replace("{}", &LOW_BATTERY.to_string()),
+                &names.join("\n"),
+            );
         }
         self.low_notified = low;
         self.panel.refresh(&self.state);
@@ -388,6 +566,7 @@ impl App {
 
     fn menu(&mut self, cmd: MenuCommand) {
         match cmd {
+            MenuCommand::Settings => self.open_settings(None),
             MenuCommand::ToggleAutostart => {
                 let enable = !autostart::is_enabled();
                 if let Err(e) = autostart::set_enabled(enable) {
@@ -430,6 +609,17 @@ fn open_folder(path: &std::path::Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dpi_snaps_to_nearest_supported() {
+        let list = [100, 101, 102, 5000, 5050, 5100];
+        assert_eq!(nearest_dpi(&list, 5030.0), Some(5050));
+        assert_eq!(nearest_dpi(&list, 5010.0), Some(5000));
+        assert_eq!(nearest_dpi(&list, 50.0), Some(100));
+        assert_eq!(nearest_dpi(&list, 99999.0), Some(5100));
+        assert_eq!(nearest_dpi(&list, f32::NAN), None);
+        assert_eq!(nearest_dpi(&[], 800.0), None);
+    }
 
     #[test]
     fn effect_list_roundtrip() {

@@ -49,8 +49,18 @@ const SLIDE_TICK: Duration = Duration::from_millis(16);
 /// Такой клик не должен открывать панель заново.
 const REOPEN_GUARD: Duration = Duration::from_millis(400);
 
-/// Хук атрибутов winit для окна панели (вызывается при его создании).
+thread_local! {
+    /// Следующее создаваемое окно Slint — панель. Хук атрибутов общий для всех окон и
+    /// вызывается при создании компонента, когда заголовка ещё нет, — различаем по флагу.
+    static NEXT_IS_PANEL: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Хук атрибутов winit для окон Slint (вызывается при создании компонента): панель —
+/// без рамки, поверх окон и без кнопки на панели задач; остальные окна — обычные.
 pub fn window_attributes(attrs: WindowAttributes) -> WindowAttributes {
+    if !NEXT_IS_PANEL.replace(false) {
+        return attrs.with_class_name("Hubless.Settings");
+    }
     attrs
         .with_decorations(false)
         .with_resizable(false)
@@ -76,6 +86,9 @@ pub struct PanelController {
     tray_rect: Option<tray_icon::Rect>,
     /// Сдвиг окна при открытии (тикает только ~150 мс анимации).
     slide_timer: Rc<slint::Timer>,
+    /// Куда въезжает окно. Обновляется при каждой расстановке: высота панели может измениться
+    /// уже во время сдвига (при создании окна вёрстка готова только после показа).
+    slide_target: Rc<Cell<PhysicalPosition>>,
     /// Скрыть окно после анимации закрытия.
     close_timer: slint::Timer,
 }
@@ -93,6 +106,7 @@ impl PanelController {
             opening: Rc::default(),
             tray_rect: None,
             slide_timer: Rc::default(),
+            slide_target: Rc::new(Cell::new(PhysicalPosition::default())),
             close_timer: slint::Timer::default(),
         }
     }
@@ -113,10 +127,18 @@ impl PanelController {
         let created = self.ui.is_none();
         self.opening.set(Some((started, created)));
         if created {
+            NEXT_IS_PANEL.set(true);
             match ui::Panel::new() {
                 Ok(panel) => {
                     panel.on_dismiss(|| app::post(AppEvent::PanelDismiss));
+                    panel.on_open_settings(|| app::post(AppEvent::OpenSettings(None)));
                     panel.on_resized(|| app::post(AppEvent::PanelResized));
+                    panel.on_drag_dpi(|v| {
+                        app::post(AppEvent::Panel(PanelAction::DpiDrag(v)));
+                    });
+                    panel.on_enter_dpi(|v| {
+                        app::post(AppEvent::Panel(PanelAction::DpiExact(v)));
+                    });
                     panel.on_select_dpi(|v| {
                         app::post(AppEvent::Panel(PanelAction::Dpi(
                             v.clamp(0, i32::from(u16::MAX)) as u16,
@@ -164,6 +186,8 @@ impl PanelController {
                     });
                     self.ui = Some(panel);
                     self.window_ready = false;
+                    // Переводы Slint выбираются после создания компонента.
+                    crate::i18n::apply_to_slint();
                 }
                 Err(e) => {
                     tracing::error!("не удалось создать панель: {e}");
@@ -179,6 +203,7 @@ impl PanelController {
         update_profiles(panel, state);
         self.tray_rect = tray_rect;
         let placed = place(panel, tray_rect, None);
+        self.slide_target.set(placed.pos);
 
         // Окно ещё гаснет после закрытия — просто вернуть его, без сдвига.
         let closing = self.close_timer.running();
@@ -248,7 +273,8 @@ impl PanelController {
         let actual = panel.window().size();
         let actual = (actual.width as i32, actual.height as i32);
         if actual != placed.size {
-            place(panel, tray_rect, Some(actual));
+            self.slide_target
+                .set(place(panel, tray_rect, Some(actual)).pos);
             tracing::debug!(size = ?placed.size, ?actual, "размер панели уточнён после показа");
         }
 
@@ -306,7 +332,7 @@ impl PanelController {
     /// Въезд окна от края панели задач к месту, куда его поставил [`place`]: ease-out по
     /// кубу за [`OPEN_ANIMATION`]. Таймер тикает только на время анимации.
     fn slide_in(&self, panel: &ui::Panel, edge: placement::Edge) {
-        let end = panel.window().position();
+        let end = self.slide_target.get();
         let offset = (panel.global::<ui::Theme>().get_anim_open_offset()
             * panel.window().scale_factor())
         .round() as i32;
@@ -321,6 +347,7 @@ impl PanelController {
         let weak = panel.as_weak();
         let began = Instant::now();
         let timer = Rc::clone(&self.slide_timer);
+        let target = Rc::clone(&self.slide_target);
         self.slide_timer
             .start(TimerMode::Repeated, SLIDE_TICK, move || {
                 let Some(panel) = weak.upgrade() else {
@@ -330,6 +357,7 @@ impl PanelController {
                 let t = (began.elapsed().as_secs_f32() / OPEN_ANIMATION.as_secs_f32()).min(1.0);
                 let eased = 1.0 - (1.0 - t).powi(3);
                 let k = 1.0 - eased;
+                let end = target.get();
                 panel.window().set_position(PhysicalPosition::new(
                     end.x + (dx as f32 * k).round() as i32,
                     end.y + (dy as f32 * k).round() as i32,
@@ -343,7 +371,8 @@ impl PanelController {
     /// Высота панели изменилась — вернуть её к краю панели задач.
     pub fn reposition(&self) {
         if let Some(panel) = self.ui.as_ref().filter(|_| self.visible) {
-            place(panel, self.tray_rect, None);
+            self.slide_target
+                .set(place(panel, self.tray_rect, None).pos);
         }
     }
 
@@ -353,6 +382,10 @@ impl PanelController {
             update_devices(panel, state);
             update_profiles(panel, state);
         }
+    }
+
+    pub fn theme(&self) -> SystemTheme {
+        self.theme
     }
 
     pub fn set_theme(&mut self, theme: SystemTheme) {
@@ -371,6 +404,7 @@ impl PanelController {
 }
 
 struct Placed {
+    pos: PhysicalPosition,
     size: (i32, i32),
     edge: placement::Edge,
     scale: f32,
@@ -399,6 +433,7 @@ fn place(
     let (x, y) = placement::position(anchor, &mon, edge, size, margin);
     panel.window().set_position(PhysicalPosition::new(x, y));
     Placed {
+        pos: PhysicalPosition::new(x, y),
         size,
         edge,
         scale: mon.scale,
@@ -406,7 +441,11 @@ fn place(
 }
 
 fn apply_theme(panel: &ui::Panel, theme: &SystemTheme, fonts: &Fonts) {
-    let t = panel.global::<ui::Theme>();
+    apply_theme_global(&panel.global::<ui::Theme>(), theme, fonts);
+}
+
+/// Системная тема в глобал `Theme` окна (у каждого окна Slint свои глобалы).
+pub fn apply_theme_global(t: &ui::Theme<'_>, theme: &SystemTheme, fonts: &Fonts) {
     t.set_dark(theme.apps_dark);
     let (r, g, b) = theme.accent;
     t.set_accent(slint::Color::from_rgb_u8(r, g, b));
@@ -443,12 +482,7 @@ fn update_profiles(panel: &ui::Panel, state: &AppState) {
     {
         panel.set_profiles(ModelRc::new(VecModel::from(names)));
     }
-    let index = state
-        .profiles
-        .iter()
-        .position(|n| *n == state.profile)
-        .unwrap_or(0);
-    panel.set_profile(index as i32);
+    panel.set_profile(state.profile as i32);
 }
 
 fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
@@ -464,9 +498,16 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
             name: d.name.as_str().into(),
             connected: d.connected,
             link: link_text(d).into(),
-            error: d.error.as_deref().unwrap_or_default().into(),
+            // Подробность ошибки — в логе; в карточке короткое сообщение на языке интерфейса.
+            error: if d.error.is_some() {
+                crate::i18n::tr("Couldn't apply the setting").into()
+            } else {
+                slint::SharedString::new()
+            },
             dpi: -1,
             dpi_presets: ModelRc::default(),
+            dpi_min: 0,
+            dpi_max: 0,
             host: false,
             lift_off: -1,
             rate: -1,
@@ -502,10 +543,13 @@ fn fill_controls(info: &mut ui::DeviceInfo, c: &Controls) {
             host,
             dpi,
             dpi_presets,
+            dpi_supported,
             lift_off,
             rate_hz,
             rate_presets,
         } => {
+            info.dpi_min = dpi_supported.first().map_or(0, |&v| i32::from(v));
+            info.dpi_max = dpi_supported.last().map_or(0, |&v| i32::from(v));
             info.rate = rate_hz.map_or(-1, |hz| hz as i32);
             let rates: Vec<i32> = rate_presets.iter().map(|&hz| hz as i32).collect();
             info.rate_presets = ModelRc::new(VecModel::from(rates));

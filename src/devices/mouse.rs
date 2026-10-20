@@ -55,7 +55,7 @@ pub fn describe_dpi_list(list: &[u16]) -> String {
             j += 1;
         }
         if j - i >= 2 {
-            parts.push(format!("{start}–{} шаг {step}", list[j]));
+            parts.push(format!("{start}–{} step {step}", list[j]));
             i = j;
             if i + 1 == list.len() {
                 break;
@@ -219,7 +219,7 @@ mod tests {
     fn describes_dpi_lists() {
         let mut list: Vec<u16> = (100..=200).collect();
         list.extend((202..=500).step_by(2));
-        assert_eq!(describe_dpi_list(&list), "100–200 шаг 1, 200–500 шаг 2");
+        assert_eq!(describe_dpi_list(&list), "100–200 step 1, 200–500 step 2");
         assert_eq!(describe_dpi_list(&[400, 800, 1600]), "400, 800, 1600");
         assert_eq!(describe_dpi_list(&[]), "—");
     }

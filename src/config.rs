@@ -31,6 +31,8 @@ pub struct Config {
     pub log_level: String,
     /// Hex-дамп HID-трафика на уровне debug.
     pub hid_trace: bool,
+    /// Язык интерфейса: auto (по Windows) | ru | en. Меняется из окна настроек.
+    pub language: String,
 }
 
 impl Default for Config {
@@ -38,6 +40,7 @@ impl Default for Config {
         Self {
             log_level: "info".into(),
             hid_trace: false,
+            language: "auto".into(),
         }
     }
 }
@@ -48,11 +51,23 @@ log_level = "info"
 
 # Hex-дамп HID-трафика в лог (уровень debug)
 hid_trace = false
+
+# Язык интерфейса: auto (по Windows) | ru | en
+language = "auto"
 "#;
 
 impl Config {
     pub fn path() -> PathBuf {
         config_dir().join("config.toml")
+    }
+
+    /// Записать язык интерфейса. Файл правят вручную, поэтому меняется (или добавляется)
+    /// только строка `language = ...`, комментарии и остальные ключи остаются как были.
+    pub fn save_language(code: &str) -> io::Result<()> {
+        let path = Self::path();
+        let text = fs::read_to_string(&path).unwrap_or_else(|_| DEFAULT_FILE.to_owned());
+        fs::create_dir_all(config_dir())?;
+        fs::write(&path, with_language(&text, code))
     }
 
     /// Читает конфиг; при отсутствии создаёт файл по умолчанию.
@@ -69,7 +84,7 @@ impl Config {
                 let err = fs::create_dir_all(config_dir())
                     .and_then(|()| fs::write(&path, DEFAULT_FILE))
                     .err()
-                    .map(|e| format!("не удалось создать {}: {e}", path.display()));
+                    .map(|e| format!("could not create {}: {e}", path.display()));
                 (Self::default(), err)
             }
             Err(e) => (Self::default(), Some(format!("{}: {e}", path.display()))),
@@ -77,9 +92,48 @@ impl Config {
     }
 }
 
+/// Текст конфига с `language = "<code>"`: строка заменяется на месте или дописывается в конец.
+fn with_language(text: &str, code: &str) -> String {
+    let line = format!("language = \"{code}\"");
+    let mut found = false;
+    let mut out: Vec<String> = text
+        .lines()
+        .map(|l| {
+            let key = l.split('=').next().unwrap_or("").trim();
+            if key == "language" && !l.trim_start().starts_with('#') {
+                found = true;
+                line.clone()
+            } else {
+                l.to_owned()
+            }
+        })
+        .collect();
+    if !found {
+        out.push(line);
+    }
+    out.join("\n") + "\n"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn language_line_is_replaced_or_appended() {
+        let replaced = with_language(DEFAULT_FILE, "ru");
+        assert!(replaced.contains("language = \"ru\""));
+        assert!(
+            replaced.contains("# Язык интерфейса"),
+            "комментарии на месте"
+        );
+        assert_eq!(toml::from_str::<Config>(&replaced).unwrap().language, "ru");
+        let appended = with_language("log_level = \"debug\"\n", "en");
+        let cfg: Config = toml::from_str(&appended).unwrap();
+        assert_eq!(
+            (cfg.log_level.as_str(), cfg.language.as_str()),
+            ("debug", "en")
+        );
+    }
 
     #[test]
     fn default_file_matches_default_struct() {

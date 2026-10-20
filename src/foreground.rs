@@ -5,16 +5,16 @@
 //! потоке из его цикла сообщений и только при смене активного окна — без опроса. Окна самого
 //! Hubless пропускаются, чтобы открытие панели не сбрасывало игровой профиль.
 
-use windows::Win32::Foundation::{CloseHandle, HWND};
+use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
 use windows::Win32::System::Threading::{
     OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EVENT_SYSTEM_FOREGROUND, GetWindowThreadProcessId, WINEVENT_OUTOFCONTEXT,
-    WINEVENT_SKIPOWNPROCESS,
+    EVENT_SYSTEM_FOREGROUND, EnumWindows, GW_OWNER, GetWindow, GetWindowTextLengthW,
+    GetWindowThreadProcessId, IsWindowVisible, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
 };
-use windows::core::PWSTR;
+use windows::core::{BOOL, PWSTR};
 
 use crate::app::{self, AppEvent};
 
@@ -63,6 +63,57 @@ unsafe extern "system" fn on_foreground(
     if let Some(exe) = exe_of(hwnd) {
         app::post(AppEvent::Foreground(exe));
     }
+}
+
+/// Системные процессы-обёртки с окнами (приложения Store, поиск, меню «Пуск»): привязать к ним
+/// профиль бессмысленно — активное окно у них всегда чужое.
+const SYSTEM_HOSTS: &[&str] = &[
+    "applicationframehost.exe",
+    "shellexperiencehost.exe",
+    "startmenuexperiencehost.exe",
+    "searchhost.exe",
+    "textinputhost.exe",
+];
+
+/// Программы с видимыми окнами верхнего уровня (имена exe без повторов, по алфавиту), кроме
+/// самого Hubless, — для привязки профилей в окне настроек.
+pub fn running_apps() -> Vec<String> {
+    let mut windows: Vec<HWND> = Vec::new();
+    // SAFETY: колбэк получает указатель на локальный Vec через lParam и работает синхронно,
+    // внутри вызова EnumWindows.
+    unsafe {
+        let _ = EnumWindows(Some(collect_window), LPARAM((&raw mut windows) as isize));
+    }
+    let own = std::process::id();
+    let mut apps: Vec<String> = windows
+        .into_iter()
+        .filter(|&h| {
+            let mut pid = 0u32;
+            // SAFETY: запись pid в локальную переменную.
+            unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
+            pid != own
+        })
+        .filter_map(exe_of)
+        .filter(|exe| !SYSTEM_HOSTS.contains(&exe.as_str()))
+        .collect();
+    apps.sort();
+    apps.dedup();
+    apps
+}
+
+unsafe extern "system" fn collect_window(hwnd: HWND, list: LPARAM) -> BOOL {
+    // SAFETY: только чтение свойств окна; окна без заголовка, скрытые и принадлежащие другим
+    // окнам (диалоги, подсказки) пропускаются.
+    let wanted = unsafe {
+        IsWindowVisible(hwnd).as_bool()
+            && GetWindowTextLengthW(hwnd) > 0
+            && GetWindow(hwnd, GW_OWNER).is_err()
+    };
+    if wanted {
+        // SAFETY: lParam — указатель на Vec из `running_apps`, живой на время EnumWindows.
+        unsafe { (*(list.0 as *mut Vec<HWND>)).push(hwnd) };
+    }
+    BOOL(1)
 }
 
 /// Имя exe процесса окна (без пути, в нижнем регистре).

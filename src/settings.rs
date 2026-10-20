@@ -121,7 +121,7 @@ pub struct DeviceSettings {
 }
 
 /// Имя профиля из корня файла.
-pub const BASE_PROFILE: &str = "Обычный";
+pub const BASE_PROFILE: &str = "Default";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
@@ -236,10 +236,10 @@ impl SettingsFile {
     pub fn add(&mut self, name: &str) -> Result<(), String> {
         let name = name.trim();
         if name.is_empty() {
-            return Err("пустое имя профиля".into());
+            return Err("empty profile name".into());
         }
         if self.find(name).is_some() {
-            return Err(format!("профиль «{name}» уже есть"));
+            return Err(format!("profile \"{name}\" already exists"));
         }
         let settings = self.current().clone();
         self.profiles.push(Profile {
@@ -252,12 +252,12 @@ impl SettingsFile {
 
     pub fn remove(&mut self, name: &str) -> Result<(), String> {
         if name == BASE_PROFILE {
-            return Err(format!("профиль «{BASE_PROFILE}» удалить нельзя"));
+            return Err(format!("profile \"{BASE_PROFILE}\" cannot be deleted"));
         }
         let before = self.profiles.len();
         self.profiles.retain(|p| p.name != name);
         if self.profiles.len() == before {
-            return Err(format!("нет профиля «{name}»"));
+            return Err(format!("no profile \"{name}\""));
         }
         if self.active.as_deref() == Some(name) {
             self.active = None;
@@ -268,7 +268,7 @@ impl SettingsFile {
     /// Выбрать профиль вручную.
     pub fn select(&mut self, name: &str) -> Result<(), String> {
         if self.find(name).is_none() {
-            return Err(format!("нет профиля «{name}»"));
+            return Err(format!("no profile \"{name}\""));
         }
         self.active = (name != BASE_PROFILE).then(|| name.to_owned());
         Ok(())
@@ -278,17 +278,52 @@ impl SettingsFile {
     pub fn bind(&mut self, name: &str, exe: &str) -> Result<(), String> {
         let exe = exe.trim().to_lowercase();
         if exe.is_empty() {
-            return Err("пустое имя exe".into());
+            return Err("empty exe name".into());
         }
         let profile = self
             .profiles
             .iter_mut()
             .find(|p| p.name == name)
             .ok_or_else(|| {
-                format!("нет профиля «{name}» (к «{BASE_PROFILE}» exe не привязывается)")
+                format!("no profile \"{name}\" (\"{BASE_PROFILE}\" cannot be bound to an exe)")
             })?;
         if !profile.exe.contains(&exe) {
             profile.exe.push(exe);
+        }
+        Ok(())
+    }
+
+    /// Убрать привязку exe от профиля.
+    pub fn unbind(&mut self, name: &str, exe: &str) -> Result<(), String> {
+        let profile = self
+            .profiles
+            .iter_mut()
+            .find(|p| p.name == name)
+            .ok_or_else(|| format!("no profile \"{name}\""))?;
+        profile.exe.retain(|e| e != exe);
+        Ok(())
+    }
+
+    /// Переименовать профиль («Обычный» не переименовывается).
+    pub fn rename(&mut self, old: &str, new: &str) -> Result<(), String> {
+        let new = new.trim();
+        if new.is_empty() {
+            return Err("empty profile name".into());
+        }
+        if old == BASE_PROFILE {
+            return Err(format!("profile \"{BASE_PROFILE}\" cannot be renamed"));
+        }
+        if new != old && self.find(new).is_some() {
+            return Err(format!("profile \"{new}\" already exists"));
+        }
+        let profile = self
+            .profiles
+            .iter_mut()
+            .find(|p| p.name == old)
+            .ok_or_else(|| format!("no profile \"{old}\""))?;
+        profile.name = new.to_owned();
+        if self.active.as_deref() == Some(old) {
+            self.active = Some(new.to_owned());
         }
         Ok(())
     }
@@ -317,7 +352,7 @@ mod rgb_hex {
         let v = u32::from_str_radix(s, 16)
             .ok()
             .filter(|_| s.len() == 6)
-            .ok_or_else(|| D::Error::custom(format!("цвет должен быть RRGGBB: {s}")))?;
+            .ok_or_else(|| D::Error::custom(format!("colour must be RRGGBB: {s}")))?;
         Ok([(v >> 16) as u8, (v >> 8) as u8, v as u8])
     }
 }
@@ -409,7 +444,17 @@ mod tests {
         assert_eq!(back.profile_for_exe("cs2.EXE"), Some("CS2"));
         assert!(f.add("CS2").is_err());
         assert!(f.remove(BASE_PROFILE).is_err());
-        f.remove("CS2").unwrap();
+        f.rename("CS2", "Игры").unwrap();
+        assert_eq!(
+            f.current_name(),
+            "Игры",
+            "активный профиль переименован вместе с ним"
+        );
+        assert_eq!(f.profile_for_exe("cs2.exe"), Some("Игры"));
+        assert!(f.rename(BASE_PROFILE, "X").is_err());
+        f.unbind("Игры", "cs2.exe").unwrap();
+        assert_eq!(f.profile_for_exe("cs2.exe"), None);
+        f.remove("Игры").unwrap();
         assert_eq!(f.current_name(), BASE_PROFILE);
     }
 }

@@ -149,29 +149,25 @@ fn write(function: u8, params: &[u8], what: impl Into<String>) -> Write {
 
 /// Забрать управление подсветкой (клавиатура продолжает сообщать о простое).
 pub fn claim() -> Write {
-    write(SW_CONTROL, &SW_ACTIVE, "управление подсветкой — у Hubless")
+    write(SW_CONTROL, &SW_ACTIVE, "lighting control: Hubless")
 }
 
 /// Режим простоя: клавиатура сообщает о возобновлении активности.
 pub fn idle_mode() -> Write {
-    write(SW_CONTROL, &SW_IDLE, "подсветка: режим простоя")
+    write(SW_CONTROL, &SW_IDLE, "lighting: idle mode")
 }
 
 /// Вернуть управление подсветкой клавиатуре.
 pub fn release() -> Write {
-    write(
-        SW_CONTROL,
-        &SW_RELEASE,
-        "управление подсветкой — у клавиатуры",
-    )
+    write(SW_CONTROL, &SW_RELEASE, "lighting control: keyboard")
 }
 
 pub fn power_off() -> Write {
-    write(POWER, &[0x01, 0x03, 0x00], "подсветка: сон")
+    write(POWER, &[0x01, 0x03, 0x00], "lighting: sleep")
 }
 
 pub fn power_on() -> Write {
-    write(POWER, &[0x01, 0x01, 0x00], "подсветка: проснуться")
+    write(POWER, &[0x01, 0x01, 0x00], "lighting: wake")
 }
 
 /// Индекс эффекта с данным ID в зоне.
@@ -192,7 +188,7 @@ pub fn static_color(zone: &Zone, rgb: [u8; 3]) -> Option<Write> {
         SET_ZONE_EFFECT,
         &params,
         format!(
-            "зона {}: статичный цвет #{:02X}{:02X}{:02X}",
+            "zone {}: static colour #{:02X}{:02X}{:02X}",
             zone.index, rgb[0], rgb[1], rgb[2]
         ),
     ))
@@ -207,7 +203,7 @@ pub fn disabled(zone: &Zone) -> Option<Write> {
     Some(write(
         SET_ZONE_EFFECT,
         &params,
-        format!("зона {}: выключить", zone.index),
+        format!("zone {}: off", zone.index),
     ))
 }
 
@@ -322,7 +318,7 @@ pub fn breathe(zone: &Zone, rgb: [u8; 3], period_ms: u16, intensity: u8) -> Opti
         index,
         p,
         format!(
-            "зона {}: дыхание {}, период {period_ms} мс, интенсивность {intensity}",
+            "zone {}: breathe {}, period {period_ms} ms, intensity {intensity}",
             zone.index,
             color_text(rgb)
         ),
@@ -346,7 +342,7 @@ pub fn cycle(zone: &Zone, period_ms: u16, intensity: u8) -> Option<Write> {
         index,
         p,
         format!(
-            "зона {}: цикл цветов, период {period_ms} мс, интенсивность {intensity}",
+            "zone {}: colour cycle, period {period_ms} ms, intensity {intensity}",
             zone.index
         ),
     ))
@@ -367,7 +363,7 @@ pub fn wave(zone: &Zone, period_ms: u16, direction: Direction, intensity: u8) ->
         index,
         p,
         format!(
-            "зона {}: волна {}, период {period_ms} мс, интенсивность {intensity}",
+            "zone {}: wave {}, period {period_ms} ms, intensity {intensity}",
             zone.index,
             direction.name()
         ),
@@ -390,7 +386,7 @@ pub fn ripple(zone: &Zone, rgb: [u8; 3], period: u16) -> Option<Write> {
         index,
         p,
         format!(
-            "зона {}: рябь {}, период {period}",
+            "zone {}: ripple {}, period {period}",
             zone.index,
             color_text(rgb)
         ),

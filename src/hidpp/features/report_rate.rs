@@ -54,7 +54,7 @@ pub fn set(index: u8) -> Write {
         feature: ID,
         function: SET_RATE,
         params: vec![index],
-        what: format!("частота опроса {} Гц", hz(index).unwrap_or(0)),
+        what: format!("polling rate {} Hz", hz(index).unwrap_or(0)),
         short: true,
     }
 }

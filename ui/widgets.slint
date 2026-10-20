@@ -1,0 +1,45 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Общие маленькие виджеты панели и окна настроек.
+import { Theme } from "theme.slint";
+
+// Кнопка-глиф (шрифт иконок Segoe): клик, Enter или пробел.
+export component IconButton inherits Rectangle {
+    in property <string> glyph;
+    in property <string> label;
+    callback clicked();
+
+    width: Theme.icon-button-size;
+    height: Theme.icon-button-size;
+    border-radius: Theme.radius-control;
+    background: touch.has-hover || focus.has-focus ? Theme.card : transparent;
+    accessible-role: button;
+    accessible-label: label;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    Text {
+        text: root.glyph;
+        font-family: Theme.icon-font;
+        font-size: Theme.font-icon;
+        color: Theme.text-secondary;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
+        }
+    }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == " " || event.text == Key.Return) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+}

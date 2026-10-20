@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { ComboBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
+import { IconButton } from "widgets.slint";
 import { DeviceCard, DeviceInfo, DeviceKind } from "cards/device_card.slint";
+import { ProfileRow, SettingsWindow } from "settings.slint";
 
-export { Theme, DeviceInfo, DeviceKind }
+export { Theme, DeviceInfo, DeviceKind, ProfileRow, SettingsWindow }
 
 export component Panel inherits Window {
     in property <[DeviceInfo]> devices;
@@ -16,6 +18,7 @@ export component Panel inherits Window {
     in property <[string]> profiles;
     in property <int> profile;
     callback select-profile(int);
+    callback open-settings();
     // Высота по содержимому, не больше максимальной; выше — карточки прокручиваются.
     out property <length> content-height: min(
         Theme.panel-padding * 2 + header.preferred-height + Theme.spacing-s + cards.preferred-height,
@@ -29,6 +32,8 @@ export component Panel inherits Window {
     }
     // Действия карточек (мышь — DPI, клавиатура — яркость и подсветка).
     callback select-dpi(int);
+    callback drag-dpi(float);
+    callback enter-dpi(float);
     callback select-rate(int);
     callback set-mouse-host(bool);
     callback set-lift-off(int);
@@ -86,6 +91,15 @@ export component Panel inherits Window {
                         root.select-profile(self.current-index);
                     }
                 }
+
+                // Шестерёнка — окно настроек (язык, профили).
+                IconButton {
+                    glyph: Theme.glyph-settings;
+                    label: @tr("Settings");
+                    clicked => {
+                        root.open-settings();
+                    }
+                }
             }
 
             ScrollView {
@@ -102,6 +116,12 @@ export component Panel inherits Window {
                         info: device;
                         select-dpi(v) => {
                             root.select-dpi(v);
+                        }
+                        drag-dpi(v) => {
+                            root.drag-dpi(v);
+                        }
+                        enter-dpi(v) => {
+                            root.enter-dpi(v);
                         }
                         select-rate(hz) => {
                             root.select-rate(hz);

@@ -75,6 +75,8 @@ pub enum Controls {
         dpi: Option<u16>,
         /// DPI для быстрых кнопок панели — из поддерживаемых мышью.
         dpi_presets: Vec<u16>,
+        /// Все значения DPI, которые принимает мышь (по возрастанию) — для ползунка и поля.
+        dpi_supported: Vec<u16>,
         /// Lift-off (`None` — мышь не умеет или значение не распознано).
         lift_off: Option<crate::settings::LiftOff>,
         /// Частота опроса, Гц, и быстрые кнопки из поддерживаемых в текущем подключении.
@@ -528,6 +530,12 @@ impl Worker {
                         .into_iter()
                         .filter(|v| supported.contains(v))
                         .collect(),
+                    dpi_supported: {
+                        let mut all = supported.clone();
+                        all.sort_unstable();
+                        all.dedup();
+                        all
+                    },
                 }
             }
             Role::Keyboard => Controls::Keyboard {

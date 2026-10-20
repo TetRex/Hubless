@@ -53,9 +53,9 @@ impl DeviceState {
 #[derive(Debug, Clone)]
 pub struct AppState {
     pub devices: Vec<DeviceState>,
-    /// Имена профилей настроек и действующий профиль.
+    /// Отображаемые имена профилей и индекс действующего.
     pub profiles: Vec<String>,
-    pub profile: String,
+    pub profile: usize,
 }
 
 impl Default for AppState {
@@ -77,7 +77,7 @@ impl Default for AppState {
                 device(DeviceKind::Headset, "PRO X 2 LIGHTSPEED"),
             ],
             profiles: Vec::new(),
-            profile: String::new(),
+            profile: 0,
         }
     }
 }

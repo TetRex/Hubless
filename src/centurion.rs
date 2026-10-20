@@ -76,11 +76,11 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Hid(e) => write!(f, "hid: {e}"),
-            Self::Timeout => f.write_str("нет ответа"),
-            Self::Offline => f.write_str("гарнитура не подключена"),
-            Self::Rejected(c) => write!(f, "отклонено, код {c:#04x}"),
-            Self::FeatureMissing(id) => write!(f, "фича {id:#06x} не поддерживается"),
-            Self::Malformed => f.write_str("неожиданный формат ответа"),
+            Self::Timeout => f.write_str("no reply"),
+            Self::Offline => f.write_str("headset not connected"),
+            Self::Rejected(c) => write!(f, "rejected, code {c:#04x}"),
+            Self::FeatureMissing(id) => write!(f, "feature {id:#06x} is not supported"),
+            Self::Malformed => f.write_str("unexpected reply format"),
         }
     }
 }
@@ -171,9 +171,9 @@ pub fn set_auto_sleep(minutes: u8) -> Write {
         function: FN_SET,
         params: vec![minutes],
         what: if minutes == 0 {
-            "автоотключение: никогда".into()
+            "auto-off: never".into()
         } else {
-            format!("автоотключение через {minutes} мин")
+            format!("auto-off after {minutes} min")
         },
     }
 }

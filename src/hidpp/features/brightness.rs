@@ -50,7 +50,7 @@ pub fn set(value: u16) -> crate::hidpp::Write {
         feature: ID,
         function: SET_BRIGHTNESS,
         params: value.to_be_bytes().to_vec(),
-        what: format!("яркость {value}"),
+        what: format!("brightness {value}"),
         short: false,
     }
 }

@@ -14,12 +14,12 @@ use crate::hidpp::{Error, Write};
 use crate::settings::{self, DeviceSettings, MouseSettings};
 
 pub const MOUSE_USAGE: &str =
-    "  hubless mouse [status]    состояние мыши: батарея, DPI, частота опроса, lift-off, onboard
-  hubless mouse backup      полный бэкап onboard-памяти в %APPDATA%\\Hubless\\backups
-  hubless mouse dpi <N> [<Y>] [--dry-run]          DPI (и отдельно Y, если поддерживается)
+    "  hubless mouse [status]    mouse state: battery, DPI, polling rate, lift-off, onboard
+  hubless mouse backup      full onboard memory backup to %APPDATA%\\Hubless\\backups
+  hubless mouse dpi <N> [<Y>] [--dry-run]          DPI (and a separate Y, if supported)
   hubless mouse lod <low|medium|high> [--dry-run]  lift-off distance
-  hubless mouse rate <Гц> [--dry-run]              частота опроса
-  hubless mouse mode <onboard|host> [--dry-run]    режим настроек";
+  hubless mouse rate <Hz> [--dry-run]              polling rate
+  hubless mouse mode <onboard|host> [--dry-run]    settings mode";
 
 pub fn mouse(args: &[String]) -> ExitCode {
     let dry_run = args.iter().any(|a| a == "--dry-run");
@@ -33,7 +33,7 @@ pub fn mouse(args: &[String]) -> ExitCode {
     };
     let mice = discovery::find(&api, TYPE_MOUSE);
     let Some(found) = mice.first() else {
-        eprintln!("Мышь не найдена (выключена или спит?).");
+        eprintln!("Mouse not found (off or asleep?).");
         return ExitCode::FAILURE;
     };
     match args.first().map(String::as_str) {
@@ -45,22 +45,19 @@ pub fn mouse(args: &[String]) -> ExitCode {
             Ok(writes) => run_sequence(found, &writes, dry_run),
             Err(e) => {
                 eprintln!(
-                    "{e}\n  hubless mouse raw <фича>:<функция>[s] <байты…> [, …] [--dry-run]"
+                    "{e}\n  hubless mouse raw <feature>:<function>[s] <bytes…> [, …] [--dry-run]"
                 );
                 ExitCode::from(2)
             }
         },
         Some("backup") => match mouse::backup(found) {
             Ok(path) => {
-                println!("Бэкап: {}", path.display());
-                println!(
-                    "Описание секторов: {}",
-                    path.with_extension("json").display()
-                );
+                println!("Backup: {}", path.display());
+                println!("Sector map: {}", path.with_extension("json").display());
                 ExitCode::SUCCESS
             }
             Err(e) => {
-                eprintln!("Бэкап не удался: {e}");
+                eprintln!("Backup failed: {e}");
                 ExitCode::FAILURE
             }
         },
@@ -72,7 +69,7 @@ pub fn mouse(args: &[String]) -> ExitCode {
             }
         },
         Some(other) => {
-            eprintln!("Неизвестная команда: mouse {other}\n\n{MOUSE_USAGE}");
+            eprintln!("Unknown command: mouse {other}\n\n{MOUSE_USAGE}");
             ExitCode::from(2)
         }
     }
@@ -87,25 +84,24 @@ fn plan_write(found: &Found, cmd: &str, args: &[String]) -> Result<(Write, Save)
     let arg = |i: usize| args.get(i).map(String::as_str);
     match cmd {
         "dpi" | "lod" => {
-            let current = dpi::parameters(&dev).map_err(|e| format!("чтение DPI: {e}"))?;
-            let caps = dpi::capabilities(&dev).map_err(|e| format!("возможности DPI: {e}"))?;
+            let current = dpi::parameters(&dev).map_err(|e| format!("reading DPI: {e}"))?;
+            let caps = dpi::capabilities(&dev).map_err(|e| format!("DPI capabilities: {e}"))?;
             let (x, y, lod) = if cmd == "dpi" {
                 let parse = |s: Option<&str>| s.and_then(|s| s.parse::<u16>().ok());
-                let x =
-                    parse(arg(0)).ok_or("укажите DPI числом, например: hubless mouse dpi 1600")?;
+                let x = parse(arg(0)).ok_or("give DPI as a number, e.g. hubless mouse dpi 1600")?;
                 let y = match parse(arg(1)) {
                     Some(_) if !caps.separate_y => {
-                        return Err("мышь не поддерживает отдельный DPI по Y".into());
+                        return Err("the mouse has no separate Y DPI".into());
                     }
                     Some(y) => y,
                     None => x,
                 };
                 let supported =
-                    dpi::supported(&dev, false).map_err(|e| format!("список DPI: {e}"))?;
+                    dpi::supported(&dev, false).map_err(|e| format!("DPI list: {e}"))?;
                 for v in [x, y] {
                     if !supported.contains(&v) {
                         return Err(format!(
-                            "DPI {v} не поддерживается: {}",
+                            "DPI {v} is not supported: {}",
                             mouse::describe_dpi_list(&supported)
                         ));
                     }
@@ -113,11 +109,11 @@ fn plan_write(found: &Found, cmd: &str, args: &[String]) -> Result<(Write, Save)
                 (x, y, current.lift_off)
             } else {
                 if !caps.lift_off {
-                    return Err("мышь не поддерживает настройку lift-off".into());
+                    return Err("the mouse has no lift-off setting".into());
                 }
                 let lod = arg(0)
                     .and_then(dpi::LiftOff::parse)
-                    .ok_or("укажите low, medium или high")?;
+                    .ok_or("give low, medium or high")?;
                 (current.x, current.y, lod)
             };
             let lod_saved = mouse::lift_off_from_device(lod);
@@ -134,11 +130,9 @@ fn plan_write(found: &Found, cmd: &str, args: &[String]) -> Result<(Write, Save)
         "rate" => {
             let hz: u32 = arg(0)
                 .and_then(|s| s.parse().ok())
-                .ok_or("укажите частоту в Гц, например 1000")?;
-            let index =
-                report_rate::index_of_hz(hz).ok_or(format!("неизвестная частота {hz} Гц"))?;
-            let supported =
-                report_rate::supported(&dev).map_err(|e| format!("список частот: {e}"))?;
+                .ok_or("give the rate in Hz, e.g. 1000")?;
+            let index = report_rate::index_of_hz(hz).ok_or(format!("unknown rate {hz} Hz"))?;
+            let supported = report_rate::supported(&dev).map_err(|e| format!("rate list: {e}"))?;
             if !supported.contains(&index) {
                 let list: Vec<String> = supported
                     .iter()
@@ -146,7 +140,7 @@ fn plan_write(found: &Found, cmd: &str, args: &[String]) -> Result<(Write, Save)
                     .map(|h| h.to_string())
                     .collect();
                 return Err(format!(
-                    "{hz} Гц недоступна в этом подключении (доступно: {} Гц)",
+                    "{hz} Hz is not available on this connection (available: {} Hz)",
                     list.join(", ")
                 ));
             }
@@ -158,7 +152,7 @@ fn plan_write(found: &Found, cmd: &str, args: &[String]) -> Result<(Write, Save)
         _ => {
             let mode = arg(0)
                 .and_then(onboard::Mode::parse)
-                .ok_or("укажите onboard или host")?;
+                .ok_or("give onboard or host")?;
             let saved = match mode {
                 onboard::Mode::Host => settings::Mode::Host,
                 _ => settings::Mode::Onboard,
@@ -199,31 +193,31 @@ fn run_write(found: &Found, w: &Write, dry_run: bool, save: Save) -> ExitCode {
         }
     };
     println!("{}: {}", found.name, w.what);
-    println!("  пакет: {}", packet_text(packet.as_bytes()));
+    println!("  packet: {}", packet_text(packet.as_bytes()));
     if dry_run {
-        println!("  --dry-run: не отправлено");
+        println!("  --dry-run: not sent");
         return ExitCode::SUCCESS;
     }
     match dev.apply(w) {
         Ok(r) => {
-            println!("  ответ: {}", hex(r.as_bytes()));
+            println!("  reply: {}", hex(r.as_bytes()));
             if mouse::verify(&dev, w) == Some(false) {
                 eprintln!(
-                    "  устройство приняло запись, но значение не изменилось — в настройки не сохраняю"
+                    "  the device accepted the write but the value did not change; not saving it"
                 );
                 return ExitCode::FAILURE;
             }
             let settings = save_settings(|s| save(&mut s.mouse));
             if settings.mouse.mode != Some(settings::Mode::Host) {
                 println!(
-                    "  режим onboard: при переподключении мышь вернётся к своему профилю; \
-                     чтобы Hubless применял настройки сам — hubless mouse mode host"
+                    "  onboard mode: on reconnect the mouse returns to its own profile; \
+                     to have Hubless apply settings itself, run: hubless mouse mode host"
                 );
             }
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("  ошибка: {e}");
+            eprintln!("  error: {e}");
             ExitCode::FAILURE
         }
     }
@@ -232,22 +226,22 @@ fn run_write(found: &Found, w: &Write, dry_run: bool, save: Save) -> ExitCode {
 fn show<T>(r: &Result<T, Error>, f: impl FnOnce(&T) -> String) -> String {
     match r {
         Ok(v) => f(v),
-        Err(e) => format!("ошибка: {e}"),
+        Err(e) => format!("error: {e}"),
     }
 }
 
 fn link_text(found: &Found) -> String {
     if found.via_receiver() {
-        format!("ресивер {:04X}, слот {}", found.pid, found.index)
+        format!("receiver {:04X}, slot {}", found.pid, found.index)
     } else {
-        format!("кабель, PID {:04X}", found.pid)
+        format!("cable, PID {:04X}", found.pid)
     }
 }
 
 fn battery_text(b: &battery::Battery) -> String {
     let state = match b.charging {
         battery::ChargeState::Discharging => String::new(),
-        c if c.is_charging() => ", заряжается".into(),
+        c if c.is_charging() => ", charging".into(),
         c => format!(", {c:?}"),
     };
     format!("{}%{state}", b.percent)
@@ -257,7 +251,7 @@ fn print_status(found: &Found) {
     let dev = found.device();
     let s = mouse::status(&dev);
     println!("{} ({})", found.name, link_text(found));
-    println!("  батарея:     {}", show(&s.battery, battery_text));
+    println!("  battery:     {}", show(&s.battery, battery_text));
     println!(
         "  DPI:         {}",
         show(&s.dpi, |p| {
@@ -266,13 +260,13 @@ fn print_status(found: &Found) {
             } else {
                 String::new()
             };
-            format!("{}{y} (по умолчанию {})", p.x, p.x_default)
+            format!("{}{y} (default {})", p.x, p.x_default)
         })
     );
     println!(
-        "  возможности: {}",
+        "  features:    {}",
         show(&s.dpi_caps, |c| format!(
-            "раздельный Y: {}, lift-off: {}",
+            "separate Y: {}, lift-off: {}",
             yes(c.separate_y),
             yes(c.lift_off)
         ))
@@ -282,54 +276,54 @@ fn print_status(found: &Found) {
         show(&s.dpi, |p| format!("{:?}", p.lift_off))
     );
     println!(
-        "  DPI доступно: {}",
+        "  DPI available: {}",
         show(&s.dpi_supported, |l| mouse::describe_dpi_list(l))
     );
     println!(
-        "  опрос:       {}",
+        "  polling:     {}",
         show(&s.rate, |i| report_rate::hz(*i)
-            .map_or(format!("индекс {i}"), |hz| format!("{hz} Гц")))
+            .map_or(format!("index {i}"), |hz| format!("{hz} Hz")))
     );
     println!(
-        "  опрос доступно: {}",
+        "  polling available: {}",
         show(&s.rate_supported, |l| {
             l.iter()
                 .filter_map(|&i| report_rate::hz(i))
                 .map(|hz| hz.to_string())
                 .collect::<Vec<_>>()
                 .join(", ")
-                + " Гц"
+                + " Hz"
         })
     );
     println!(
-        "  режим:       {}",
+        "  mode:        {}",
         show(&s.onboard_mode, |m| format!("{m:?}"))
     );
     println!(
-        "  профиль:     {}",
+        "  profile:     {}",
         show(&s.onboard_profile, |p| format!("{p:#06x}"))
     );
     println!(
-        "  слот DPI:    {}",
+        "  DPI slot:    {}",
         show(&s.onboard_dpi_index, |i| i.to_string())
     );
 }
 
 fn yes(b: bool) -> &'static str {
-    if b { "да" } else { "нет" }
+    if b { "yes" } else { "no" }
 }
 
 pub const KEYBOARD_USAGE: &str =
-    "  hubless keyboard [status]                    батарея, яркость, подсветка, Game Mode
-  hubless keyboard brightness <N> [--dry-run]  яркость подсветки
+    "  hubless keyboard [status]                    battery, brightness, lighting, Game Mode
+  hubless keyboard brightness <N> [--dry-run]  backlight brightness
   hubless keyboard lighting static <RRGGBB> | off | release [--dry-run]
-                                               эффект подсветки (Hubless забирает управление) / вернуть клавиатуре
-  hubless keyboard lighting breathe <RRGGBB> [--period МС] [--intensity 0–100]
-  hubless keyboard lighting cycle [--period МС] [--intensity 0–100]
-  hubless keyboard lighting wave [--direction НАПР] [--period МС] [--intensity 0–100]
+                                               lighting effect (Hubless takes control) / give it back to the keyboard
+  hubless keyboard lighting breathe <RRGGBB> [--period MS] [--intensity 0–100]
+  hubless keyboard lighting cycle [--period MS] [--intensity 0–100]
+  hubless keyboard lighting wave [--direction DIR] [--period MS] [--intensity 0–100]
   hubless keyboard lighting ripple <RRGGBB> [--period 2–200]
-                                               встроенные эффекты; период 1000–20000 мс (по умолчанию 5000),
-                                               направления: right, left, up, down, center-out, center-in, in, out, cycle";
+                                               built-in effects; period 1000–20000 ms (default 5000),
+                                               directions: right, left, up, down, center-out, center-in, in, out, cycle";
 
 pub fn keyboard(args: &[String]) -> ExitCode {
     let dry_run = args.iter().any(|a| a == "--dry-run");
@@ -343,7 +337,7 @@ pub fn keyboard(args: &[String]) -> ExitCode {
     };
     let keyboards = discovery::find(&api, discovery::TYPE_KEYBOARD);
     let Some(found) = keyboards.first() else {
-        eprintln!("Клавиатура не найдена (выключена или спит?).");
+        eprintln!("Keyboard not found (off or asleep?).");
         return ExitCode::FAILURE;
     };
     match args.first().map(String::as_str) {
@@ -358,8 +352,8 @@ pub fn keyboard(args: &[String]) -> ExitCode {
                     save_settings(|s| s.keyboard.lighting = lighting);
                     if lighting.is_some() && !crate::hidden_window::is_running() {
                         println!(
-                            "  Hubless в трее не запущен: гасить подсветку при простое некому — \
-                             запустите hubless или верните управление: hubless keyboard lighting release"
+                            "  Hubless is not running in the tray, so nothing will dim the lighting when idle; \
+                             start hubless or hand control back: hubless keyboard lighting release"
                         );
                     }
                 }
@@ -375,22 +369,25 @@ pub fn keyboard(args: &[String]) -> ExitCode {
             let info = match brightness::info(&dev) {
                 Ok(i) => i,
                 Err(e) => {
-                    eprintln!("яркость: {e}");
+                    eprintln!("brightness: {e}");
                     return ExitCode::FAILURE;
                 }
             };
             let Some(value) = args.get(1).and_then(|s| s.parse::<u16>().ok()) else {
-                eprintln!("укажите яркость числом от {} до {}", info.min, info.max);
+                eprintln!(
+                    "give brightness as a number from {} to {}",
+                    info.min, info.max
+                );
                 return ExitCode::from(2);
             };
             if !(info.min..=info.max).contains(&value) {
-                eprintln!("яркость {value} вне диапазона {}–{}", info.min, info.max);
+                eprintln!("brightness {value} is outside {}–{}", info.min, info.max);
                 return ExitCode::from(2);
             }
             run_keyboard_write(found, &brightness::set(value), dry_run)
         }
         Some(other) => {
-            eprintln!("Неизвестная команда: keyboard {other}\n\n{KEYBOARD_USAGE}");
+            eprintln!("Unknown command: keyboard {other}\n\n{KEYBOARD_USAGE}");
             ExitCode::from(2)
         }
     }
@@ -400,24 +397,24 @@ fn print_keyboard_status(found: &Found) {
     let dev = found.device();
     let s = keyboard::status(&dev);
     println!("{} ({})", found.name, link_text(found));
-    println!("  батарея:     {}", show(&s.battery, battery_text));
+    println!("  battery:     {}", show(&s.battery, battery_text));
     println!(
-        "  яркость:     {}",
+        "  brightness:  {}",
         show(&s.brightness, |v| match &s.brightness_info {
-            Ok(i) => format!("{v} (диапазон {}–{}, ступеней {})", i.min, i.max, i.steps),
+            Ok(i) => format!("{v} (range {}–{}, {} steps)", i.min, i.max, i.steps),
             Err(_) => v.to_string(),
         })
     );
     if let Some(on) = &s.illumination {
         println!(
-            "  подсветка:   {}",
-            show(on, |on| if *on { "вкл" } else { "выкл" }.into())
+            "  lighting:    {}",
+            show(on, |on| if *on { "on" } else { "off" }.into())
         );
     }
     match &s.rgb {
         Ok(info) => {
             println!(
-                "  зоны подсветки: {} (caps {:#06x})",
+                "  lighting zones: {} (caps {:#06x})",
                 info.zones.len(),
                 info.caps
             );
@@ -431,44 +428,44 @@ fn print_keyboard_status(found: &Found) {
                     })
                     .collect();
                 println!(
-                    "    зона {} ({}): {}",
+                    "    zone {} ({}): {}",
                     z.index,
                     rgb_effects::location_name(z.location),
                     effects.join(", ")
                 );
             }
         }
-        Err(e) => println!("  зоны подсветки: ошибка: {e}"),
+        Err(e) => println!("  lighting zones: error: {e}"),
     }
     if let Ok(raw) = rgb_effects::sw_control(&dev) {
         println!(
-            "  управление:  {} (сырые байты {})",
+            "  control:     {} (raw bytes {})",
             if raw.get(1).copied().unwrap_or(0) == 0 {
-                "у клавиатуры"
+                "keyboard"
             } else {
-                "у приложения"
+                "application"
             },
             hex(&raw)
         );
     }
     if let Ok((idle, sleep)) = rgb_effects::timers(&dev) {
-        println!("  таймеры:     простой {idle} с, сон {sleep} с");
+        println!("  timers:      idle {idle} s, sleep {sleep} s");
     }
     println!("  per-key:     {}", yes(s.has_per_key));
     println!(
-        "  опрос:       {}",
-        show(&s.rate_ms, |ms| format!("{ms} мс"))
+        "  polling:     {}",
+        show(&s.rate_ms, |ms| format!("{ms} ms"))
     );
     println!(
-        "  режим:       {}",
+        "  mode:        {}",
         show(&s.onboard_mode, |m| format!("{m:?}"))
     );
     println!(
         "  Game Mode:   {}",
         if s.has_disable_controls {
-            "0x4523 есть, протокол не описан — нужен захват трафика G Hub"
+            "0x4523 present, protocol unknown (needs a G Hub capture)"
         } else {
-            "нет 0x4523"
+            "no 0x4523"
         }
     );
 }
@@ -477,16 +474,16 @@ fn print_keyboard_status(found: &Found) {
 fn save_settings(update: impl FnOnce(&mut DeviceSettings)) -> DeviceSettings {
     let settings = match DeviceSettings::update(update) {
         Ok(s) => {
-            println!("  сохранено в {}", DeviceSettings::path().display());
+            println!("  saved to {}", DeviceSettings::path().display());
             s
         }
         Err(e) => {
-            eprintln!("  не удалось сохранить настройки: {e}");
+            eprintln!("  could not save settings: {e}");
             DeviceSettings::load()
         }
     };
     if crate::hidden_window::notify_settings_changed() {
-        println!("  запущенный Hubless применит настройки");
+        println!("  the running Hubless will apply the settings");
     }
     settings
 }
@@ -502,14 +499,14 @@ fn run_keyboard_write(found: &Found, w: &Write, dry_run: bool) -> ExitCode {
         }
     };
     println!("{}: {}", found.name, w.what);
-    println!("  пакет: {}", packet_text(packet.as_bytes()));
+    println!("  packet: {}", packet_text(packet.as_bytes()));
     if dry_run {
-        println!("  --dry-run: не отправлено");
+        println!("  --dry-run: not sent");
         return ExitCode::SUCCESS;
     }
     match dev.apply(w) {
         Ok(r) => {
-            println!("  ответ: {}", hex(r.as_bytes()));
+            println!("  reply: {}", hex(r.as_bytes()));
             let applied = match w.feature {
                 brightness::ID => brightness::current(&dev)
                     .ok()
@@ -517,7 +514,7 @@ fn run_keyboard_write(found: &Found, w: &Write, dry_run: bool) -> ExitCode {
                 _ => None,
             };
             if applied == Some(false) {
-                eprintln!("  устройство приняло запись, но значение не изменилось");
+                eprintln!("  the device accepted the write but the value did not change");
                 return ExitCode::FAILURE;
             }
             if w.feature == brightness::ID {
@@ -527,7 +524,7 @@ fn run_keyboard_write(found: &Found, w: &Write, dry_run: bool) -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("  ошибка: {e}");
+            eprintln!("  error: {e}");
             ExitCode::FAILURE
         }
     }
@@ -540,13 +537,16 @@ fn plan_lighting(
     args: &[String],
 ) -> Result<(Vec<Write>, Option<settings::Lighting>), String> {
     let dev = found.device();
-    let info = rgb_effects::info(&dev).map_err(|e| format!("подсветка: {e}"))?;
-    let zone = info.zones.first().ok_or("у клавиатуры нет зон подсветки")?;
+    let info = rgb_effects::info(&dev).map_err(|e| format!("lighting: {e}"))?;
+    let zone = info
+        .zones
+        .first()
+        .ok_or("the keyboard has no lighting zones")?;
     let color = |name: &str| {
         args.get(1)
             .and_then(|s| rgb_effects::parse_rgb(s))
             .ok_or(format!(
-                "укажите цвет RRGGBB, например: hubless keyboard lighting {name} ff8000"
+                "give a colour as RRGGBB, e.g. hubless keyboard lighting {name} ff8000"
             ))
     };
     let opts = EffectOptions::parse(&args[1..])?;
@@ -582,13 +582,13 @@ fn plan_lighting(
         }
         _ => {
             return Err(
-                "укажите: static <RRGGBB> | breathe <RRGGBB> | cycle | wave | ripple <RRGGBB> | off | release"
+                "give: static <RRGGBB> | breathe <RRGGBB> | cycle | wave | ripple <RRGGBB> | off | release"
                     .into(),
             );
         }
     };
     let effect =
-        rgb_effects::effect_for(zone, lighting).ok_or("зона не поддерживает этот эффект")?;
+        rgb_effects::effect_for(zone, lighting).ok_or("the zone does not support this effect")?;
     let writes = vec![
         onboard::set_mode(onboard::Mode::Host),
         rgb_effects::claim(),
@@ -616,23 +616,26 @@ impl EffectOptions {
             if !a.starts_with("--") {
                 continue;
             }
-            let v = it.next().ok_or(format!("{a}: нет значения"))?;
+            let v = it.next().ok_or(format!("{a}: missing value"))?;
             match a.as_str() {
                 "--period" => {
-                    o.period = Some(v.parse().map_err(|_| format!("--period: не число: {v}"))?);
+                    o.period = Some(
+                        v.parse()
+                            .map_err(|_| format!("--period: not a number: {v}"))?,
+                    );
                 }
                 "--intensity" => {
                     o.intensity = v
                         .parse()
                         .ok()
                         .filter(|i| *i <= 100)
-                        .ok_or(format!("--intensity: нужно число 0–100: {v}"))?;
+                        .ok_or(format!("--intensity: needs a number 0–100: {v}"))?;
                 }
                 "--direction" => {
                     o.direction = rgb_effects::Direction::parse(v)
-                        .ok_or(format!("--direction: неизвестное направление: {v}"))?;
+                        .ok_or(format!("--direction: unknown direction: {v}"))?;
                 }
-                _ => return Err(format!("неизвестный параметр: {a}")),
+                _ => return Err(format!("unknown option: {a}")),
             }
         }
         Ok(o)
@@ -643,7 +646,7 @@ impl EffectOptions {
         rgb_effects::PERIOD_MS
             .contains(&p)
             .then_some(p)
-            .ok_or(format!("--period: нужно {:?} мс", rgb_effects::PERIOD_MS))
+            .ok_or(format!("--period: needs {:?} ms", rgb_effects::PERIOD_MS))
     }
 
     fn ripple_period(&self) -> Result<u16, String> {
@@ -651,7 +654,7 @@ impl EffectOptions {
         rgb_effects::RIPPLE_PERIOD
             .contains(&p)
             .then_some(p)
-            .ok_or(format!("--period: нужно {:?}", rgb_effects::RIPPLE_PERIOD))
+            .ok_or(format!("--period: needs {:?}", rgb_effects::RIPPLE_PERIOD))
     }
 }
 
@@ -662,7 +665,7 @@ fn run_sequence(found: &Found, writes: &[Write], dry_run: bool) -> ExitCode {
     for (i, w) in writes.iter().enumerate() {
         match dev.preview(w) {
             Ok(r) => println!(
-                "  {}. {}\n     пакет: {}",
+                "  {}. {}\n     packet: {}",
                 i + 1,
                 w.what,
                 packet_text(r.as_bytes())
@@ -680,14 +683,17 @@ fn run_sequence(found: &Found, writes: &[Write], dry_run: bool) -> ExitCode {
         {
             print_idle_packets(&dev);
         }
-        println!("  --dry-run: не отправлено");
+        println!("  --dry-run: not sent");
         return ExitCode::SUCCESS;
     }
     for (i, w) in writes.iter().enumerate() {
         match dev.apply(w) {
-            Ok(r) => println!("  {}. ответ: {}", i + 1, hex(r.as_bytes())),
+            Ok(r) => println!("  {}. reply: {}", i + 1, hex(r.as_bytes())),
             Err(e) => {
-                eprintln!("  {}. ошибка: {e} — остальные записи не отправлены", i + 1);
+                eprintln!(
+                    "  {}. error: {e}; the remaining writes were not sent",
+                    i + 1
+                );
                 return ExitCode::FAILURE;
             }
         }
@@ -697,36 +703,36 @@ fn run_sequence(found: &Found, writes: &[Write], dry_run: bool) -> ExitCode {
 
 /// Пакеты, которые Hubless в трее отправляет, пока держит управление подсветкой.
 fn print_idle_packets(dev: &crate::hidpp::Device) {
-    println!("  Пока подсветкой управляет Hubless, при простое и активности он отправляет:");
+    println!("  While Hubless controls the lighting, it sends on idle and activity:");
     let steps = [
-        ("клавиатура сообщила о простое", rgb_effects::idle_mode()),
+        ("the keyboard reported idle", rgb_effects::idle_mode()),
         (
-            "через «сон − простой» секунд после простоя",
+            "(sleep − idle) seconds after idle",
             rgb_effects::power_off(),
         ),
         (
-            "клавиатура сообщила об активности (после сна)",
+            "the keyboard reported activity (after sleep)",
             rgb_effects::power_on(),
         ),
-        ("затем снова", rgb_effects::claim()),
+        ("then again", rgb_effects::claim()),
     ];
     for (when, w) in steps {
         if let Ok(r) = dev.preview(&w) {
             println!(
                 "   - {when}: {}
-       пакет: {}",
+       packet: {}",
                 w.what,
                 packet_text(r.as_bytes())
             );
         }
     }
-    println!("   - после пробуждения повторяется эффект зоны (пакет 3 выше)");
+    println!("   - after waking, the zone effect is sent again (packet 3 above)");
 }
 
 pub const HEADSET_USAGE: &str =
-    "  hubless headset [status]                     батарея, sidetone, автоотключение
-  hubless headset sidetone <0–100> [--dry-run] громкость своего голоса в наушниках
-  hubless headset auto-off <0–255> [--dry-run] автоотключение через N минут, 0 — никогда";
+    "  hubless headset [status]                     battery, sidetone, auto-off
+  hubless headset sidetone <0–100> [--dry-run] how loud your own voice is in the headset
+  hubless headset auto-off <0–255> [--dry-run] turn off after N minutes, 0 means never";
 
 pub fn headset(args: &[String]) -> ExitCode {
     let dry_run = args.iter().any(|a| a == "--dry-run");
@@ -739,17 +745,17 @@ pub fn headset(args: &[String]) -> ExitCode {
         }
     };
     let Some(mut a) = centurion::Adapter::find(&api) else {
-        eprintln!("Адаптер гарнитуры не найден.");
+        eprintln!("Headset adapter not found.");
         return ExitCode::FAILURE;
     };
     match a.headset_connected() {
         Ok(true) => {}
         Ok(false) => {
-            eprintln!("Гарнитура не подключена к адаптеру (выключена?).");
+            eprintln!("The headset is not connected to the adapter (off?).");
             return ExitCode::FAILURE;
         }
         Err(e) => {
-            eprintln!("состояние моста: {e}");
+            eprintln!("bridge state: {e}");
             return ExitCode::FAILURE;
         }
     }
@@ -758,7 +764,7 @@ pub fn headset(args: &[String]) -> ExitCode {
             .and_then(|s| s.parse::<u8>().ok())
             .filter(|v| *v <= max)
             .ok_or_else(|| {
-                eprintln!("{name}: укажите число 0–{max}");
+                eprintln!("{name}: give a number 0–{max}");
                 ExitCode::from(2)
             })
     };
@@ -786,35 +792,35 @@ pub fn headset(args: &[String]) -> ExitCode {
             Err(c) => c,
         },
         Some(other) => {
-            eprintln!("Неизвестная команда: headset {other}\n\n{HEADSET_USAGE}");
+            eprintln!("Unknown command: headset {other}\n\n{HEADSET_USAGE}");
             ExitCode::from(2)
         }
     }
 }
 
 fn print_headset_status(a: &mut centurion::Adapter) {
-    println!("PRO X 2 LIGHTSPEED (адаптер Centurion)");
+    println!("PRO X 2 LIGHTSPEED (Centurion adapter)");
     match a.battery() {
         Ok(b) => println!(
-            "  батарея:     {}%{} (сырые байты {})",
+            "  battery:     {}%{} (raw bytes {})",
             b.percent,
             if matches!(b.charging_state, 1 | 2) {
-                ", заряжается"
+                ", charging"
             } else {
                 ""
             },
             hex(&b.raw)
         ),
-        Err(e) => println!("  батарея:     ошибка: {e}"),
+        Err(e) => println!("  battery:     error: {e}"),
     }
     match a.sidetone_level() {
         Ok(v) => println!("  sidetone:    {v} (0–{})", centurion::SIDETONE_MAX),
-        Err(e) => println!("  sidetone:    ошибка: {e}"),
+        Err(e) => println!("  sidetone:    error: {e}"),
     }
     match a.auto_sleep_minutes() {
-        Ok(0) => println!("  автоотключение: никогда"),
-        Ok(m) => println!("  автоотключение: через {m} мин"),
-        Err(e) => println!("  автоотключение: ошибка: {e}"),
+        Ok(0) => println!("  auto-off:    never"),
+        Ok(m) => println!("  auto-off:    after {m} min"),
+        Err(e) => println!("  auto-off:    error: {e}"),
     }
 }
 
@@ -828,14 +834,14 @@ fn run_headset_write(a: &mut centurion::Adapter, w: &centurion::Write, dry_run: 
         }
     };
     println!("PRO X 2 LIGHTSPEED: {}", w.what);
-    println!("  кадр: {}", headset_frame_text(&frame));
+    println!("  frame: {}", headset_frame_text(&frame));
     if dry_run {
-        println!("  --dry-run: не отправлено");
+        println!("  --dry-run: not sent");
         return ExitCode::SUCCESS;
     }
     match a.apply(w) {
         Ok(r) => {
-            println!("  ответ: {}", hex(&r));
+            println!("  reply: {}", hex(&r));
             // Проверка чтением: значение — последний байт параметров записи.
             let expected = w.params.last().copied().unwrap_or(0);
             let actual = match w.feature {
@@ -845,21 +851,23 @@ fn run_headset_write(a: &mut centurion::Adapter, w: &centurion::Write, dry_run: 
             };
             match actual {
                 Ok(v) if v == expected => {
-                    println!("  проверено чтением: {v}");
+                    println!("  read back: {v}");
                     ExitCode::SUCCESS
                 }
                 Ok(v) => {
-                    eprintln!("  устройство приняло запись, но читается {v} вместо {expected}");
+                    eprintln!(
+                        "  the device accepted the write but reads {v} instead of {expected}"
+                    );
                     ExitCode::FAILURE
                 }
                 Err(e) => {
-                    eprintln!("  проверка чтением не удалась: {e}");
+                    eprintln!("  read-back failed: {e}");
                     ExitCode::FAILURE
                 }
             }
         }
         Err(e) => {
-            eprintln!("  ошибка: {e}");
+            eprintln!("  error: {e}");
             ExitCode::FAILURE
         }
     }
@@ -876,11 +884,11 @@ fn headset_frame_text(frame: &[u8]) -> String {
 }
 
 pub const PROFILE_USAGE: &str =
-    "  hubless profile [list]                       профили настроек мыши и клавиатуры
-  hubless profile add <имя>                    новый профиль — копия действующего
-  hubless profile use <имя>                    выбрать профиль
-  hubless profile bind <имя> <exe>             включать профиль, когда активно окно exe (например cs2.exe)
-  hubless profile remove <имя>                 удалить профиль";
+    "  hubless profile [list]                       mouse and keyboard setting profiles
+  hubless profile add <name>                   new profile, a copy of the current one
+  hubless profile use <name>                   select a profile
+  hubless profile bind <name> <exe>            switch to the profile while exe is in the foreground (e.g. cs2.exe)
+  hubless profile remove <name>                delete a profile";
 
 pub fn profile(args: &[String]) -> ExitCode {
     let mut file = settings::SettingsFile::load();
@@ -915,9 +923,9 @@ pub fn profile(args: &[String]) -> ExitCode {
     };
     match result.and_then(|()| file.save()) {
         Ok(()) => {
-            println!("Действующий профиль: {}", file.current_name());
+            println!("Current profile: {}", file.current_name());
             if crate::hidden_window::notify_settings_changed() {
-                println!("  запущенный Hubless применит настройки");
+                println!("  the running Hubless will apply the settings");
             }
             ExitCode::SUCCESS
         }
@@ -934,29 +942,29 @@ pub fn profile(args: &[String]) -> ExitCode {
 fn parse_raw(args: &[String]) -> Result<Vec<Write>, String> {
     let mut writes = Vec::new();
     for group in args.split(|a| a == ",") {
-        let (head, bytes) = group.split_first().ok_or("пустая запись")?;
+        let (head, bytes) = group.split_first().ok_or("empty write")?;
         let (feature, function) = head
             .split_once(':')
-            .ok_or_else(|| format!("ожидалось <фича>:<функция>, а не {head}"))?;
+            .ok_or_else(|| format!("expected <feature>:<function>, got {head}"))?;
         let (function, short) = match function.strip_suffix('s') {
             Some(f) => (f, true),
             None => (function, false),
         };
-        let feature =
-            u16::from_str_radix(feature, 16).map_err(|_| format!("фича не hex: {feature}"))?;
+        let feature = u16::from_str_radix(feature, 16)
+            .map_err(|_| format!("feature is not hex: {feature}"))?;
         let function: u8 = function
             .parse()
             .ok()
             .filter(|f| *f < 16)
-            .ok_or_else(|| format!("функция 0–15: {function}"))?;
+            .ok_or_else(|| format!("function must be 0–15: {function}"))?;
         let params = bytes
             .iter()
-            .map(|b| u8::from_str_radix(b, 16).map_err(|_| format!("байт не hex: {b}")))
+            .map(|b| u8::from_str_radix(b, 16).map_err(|_| format!("byte is not hex: {b}")))
             .collect::<Result<Vec<u8>, String>>()?;
         writes.push(Write {
             feature,
             function,
-            what: format!("{feature:#06x} функция {function}"),
+            what: format!("{feature:#06x} function {function}"),
             params,
             short,
         });

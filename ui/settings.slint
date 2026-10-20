@@ -1,0 +1,471 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Окно настроек: слева меню разделов, справа страница раздела.
+// «Общие» — язык и автозапуск; «Профили» — карточки профилей, раскрывается выбранная.
+// Создаётся по требованию и уничтожается при закрытии.
+import { Button, ComboBox, LineEdit, ScrollView, Switch } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+import { IconButton } from "widgets.slint";
+
+// Профиль для карточки (готовит Rust).
+export struct ProfileRow {
+    name: string,
+    // Строка под именем: привязанные программы или пояснение для «Обычного».
+    summary: string,
+    programs: [string],
+    active: bool,
+    // «Обычный»: без программ, не переименовывается и не удаляется.
+    base: bool,
+}
+
+component Caption inherits Text {
+    font-size: Theme.font-caption;
+    color: Theme.text-secondary;
+    vertical-alignment: center;
+}
+
+// Пункт меню разделов: значок и подпись; выбранный — с полоской акцента слева.
+component NavItem inherits Rectangle {
+    in property <string> glyph;
+    in property <string> label;
+    in property <bool> selected;
+    callback clicked();
+
+    height: Theme.settings-nav-item-height;
+    border-radius: Theme.radius-control;
+    background: selected || touch.has-hover || focus.has-focus ? Theme.card : transparent;
+    accessible-role: tab;
+    accessible-label: label;
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    Rectangle {
+        x: 0;
+        width: Theme.nav-indicator-width;
+        height: Theme.nav-indicator-height;
+        border-radius: self.width / 2;
+        background: root.selected ? Theme.accent : transparent;
+    }
+
+    HorizontalLayout {
+        padding-left: Theme.spacing-m;
+        padding-right: Theme.spacing-m;
+        spacing: Theme.spacing-m;
+
+        Text {
+            text: root.glyph;
+            font-family: Theme.icon-font;
+            font-size: Theme.font-icon;
+            color: Theme.text-primary;
+            vertical-alignment: center;
+        }
+
+        Text {
+            text: root.label;
+            color: Theme.text-primary;
+            vertical-alignment: center;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => {
+            focus.focus();
+            root.clicked();
+        }
+    }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == " " || event.text == Key.Return) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+}
+
+// Строка настройки на странице «Общие»: подпись слева, элемент справа.
+component SettingRow inherits Rectangle {
+    in property <string> label;
+
+    background: Theme.card;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: Theme.card-stroke;
+    min-height: Theme.settings-nav-item-height + Theme.spacing-l;
+
+    HorizontalLayout {
+        padding-left: Theme.spacing-l;
+        padding-right: Theme.spacing-l;
+        spacing: Theme.spacing-m;
+
+        Text {
+            text: root.label;
+            color: Theme.text-primary;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+
+        @children
+    }
+}
+
+// Карточка профиля; выбранная раскрыта.
+component ProfileCard inherits Rectangle {
+    in property <ProfileRow> profile;
+    in property <bool> expanded;
+    // Варианты для добавления: первый — подсказка, остальные — запущенные программы.
+    in property <[string]> running;
+    callback select();
+    callback make-active();
+    callback rename(string);
+    callback delete();
+    callback add-program(string);
+    callback remove-program(string);
+    callback refresh-running();
+
+    property <bool> editing;
+
+    background: Theme.card;
+    border-radius: Theme.radius-card;
+    border-width: 1px;
+    border-color: root.expanded ? Theme.accent : Theme.card-stroke;
+
+    // Под содержимым: щелчок по свободному месту карточки выбирает её.
+    TouchArea {
+        clicked => {
+            root.select();
+        }
+    }
+
+    VerticalLayout {
+        padding: Theme.spacing-l;
+        spacing: Theme.spacing-s;
+
+        HorizontalLayout {
+            spacing: Theme.spacing-s;
+
+            if !root.editing: Text {
+                text: root.profile.name;
+                font-weight: Theme.weight-semibold;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                overflow: elide;
+            }
+
+            if root.editing: name-edit := LineEdit {
+                horizontal-stretch: 1;
+                text: root.profile.name;
+                init => {
+                    self.focus();
+                    self.select-all();
+                }
+                accepted(t) => {
+                    root.editing = false;
+                    root.rename(t);
+                }
+                key-pressed(event) => {
+                    if (event.text == Key.Escape) {
+                        root.editing = false;
+                        return accept;
+                    }
+                    reject
+                }
+            }
+
+            if root.profile.active: Text {
+                text: @tr("Active");
+                font-size: Theme.font-caption;
+                color: Theme.accent;
+                vertical-alignment: center;
+            }
+        }
+
+        Caption {
+            text: root.profile.summary;
+            wrap: word-wrap;
+        }
+
+        // Раскрытая карточка: программы, добавление, действия.
+        if root.expanded && !root.profile.base: VerticalLayout {
+            spacing: Theme.spacing-xs;
+            padding-top: Theme.spacing-s;
+
+            for exe in root.profile.programs: HorizontalLayout {
+                spacing: Theme.spacing-s;
+
+                Text {
+                    text: exe;
+                    color: Theme.text-primary;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+
+                IconButton {
+                    glyph: Theme.glyph-close;
+                    label: @tr("Remove program");
+                    clicked => {
+                        root.remove-program(exe);
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: Theme.spacing-s;
+                padding-top: Theme.spacing-xs;
+
+                running-box := ComboBox {
+                    horizontal-stretch: 1;
+                    model: root.running;
+                    current-index: 0;
+                    selected(value) => {
+                        if (self.current-index > 0) {
+                            root.add-program(value);
+                        }
+                        self.current-index = 0;
+                    }
+                }
+
+                IconButton {
+                    glyph: Theme.glyph-refresh;
+                    label: @tr("Refresh");
+                    clicked => {
+                        root.refresh-running();
+                    }
+                }
+
+                LineEdit {
+                    width: Theme.settings-exe-field-width;
+                    placeholder-text: @tr("or type e.g. cs2.exe");
+                    accepted(t) => {
+                        root.add-program(t);
+                        self.text = "";
+                    }
+                }
+            }
+        }
+
+        // Нижняя строка — только если в ней есть действия (у активного «Обычного» их нет).
+        if root.expanded && !(root.profile.active && root.profile.base): HorizontalLayout {
+            spacing: Theme.spacing-s;
+            padding-top: Theme.spacing-s;
+
+            if !root.profile.active: Button {
+                text: @tr("Make active");
+                clicked => {
+                    root.make-active();
+                }
+            }
+
+            Rectangle {
+                horizontal-stretch: 1;
+            }
+
+            if !root.profile.base: IconButton {
+                glyph: Theme.glyph-edit;
+                label: @tr("Rename");
+                clicked => {
+                    root.editing = true;
+                }
+            }
+
+            if !root.profile.base: IconButton {
+                glyph: Theme.glyph-delete;
+                label: @tr("Delete");
+                clicked => {
+                    root.delete();
+                }
+            }
+        }
+    }
+}
+
+export component SettingsWindow inherits Window {
+    // Раздел: 0 — «Общие», 1 — «Профили».
+    in-out property <int> page;
+    // Общие
+    in-out property <int> language;           // 0 — английский, 1 — русский
+    in-out property <bool> autostart;
+    // Профили: карточки, раскрытая и варианты для добавления программы (первый — подсказка).
+    in property <[ProfileRow]> profiles;
+    in-out property <int> selected;
+    in property <[string]> running;
+    // Сообщение об ошибке последнего действия (пусто — нет ошибки).
+    in property <string> error;
+
+    callback set-language(int);
+    callback set-autostart(bool);
+    callback select-profile(int);
+    callback create-profile();
+    callback rename-profile(int, string);
+    callback delete-profile(int);
+    callback use-profile(int);
+    callback add-program(int, string);
+    callback remove-program(int, string);
+    callback refresh-running();
+
+    title: @tr("Hubless — Settings");
+    preferred-width: Theme.settings-width;
+    preferred-height: Theme.settings-height;
+    min-width: Theme.settings-min-width;
+    min-height: Theme.settings-min-height;
+    background: Theme.background;
+    default-font-family: Theme.font-family;
+    default-font-size: Theme.font-body;
+
+    HorizontalLayout {
+        // Меню разделов.
+        VerticalLayout {
+            width: Theme.settings-nav-width;
+            padding: Theme.spacing-m;
+            spacing: Theme.spacing-xs;
+            alignment: start;
+
+            NavItem {
+                glyph: Theme.glyph-settings;
+                label: @tr("General");
+                selected: root.page == 0;
+                clicked => {
+                    root.page = 0;
+                }
+            }
+
+            NavItem {
+                glyph: Theme.glyph-profiles;
+                label: @tr("Profiles");
+                selected: root.page == 1;
+                clicked => {
+                    root.page = 1;
+                }
+            }
+        }
+
+        // Страница раздела.
+        VerticalLayout {
+            horizontal-stretch: 1;
+            padding: Theme.spacing-l;
+            padding-left: 0;
+            spacing: Theme.spacing-m;
+
+            if root.page == 0: VerticalLayout {
+                alignment: start;
+                spacing: Theme.spacing-s;
+
+                Text {
+                    text: @tr("General");
+                    font-size: Theme.font-title;
+                    font-weight: Theme.weight-semibold;
+                    color: Theme.text-primary;
+                }
+
+                SettingRow {
+                    label: @tr("Language");
+
+                    // По центру строки и в своей высоте (иначе раскладка тянет на всю строку).
+                    VerticalLayout {
+                        alignment: center;
+
+                        ComboBox {
+                            width: Theme.settings-combo-width;
+                            // Названия языков не переводятся: каждый — на своём языке.
+                            model: ["English", "Русский"];
+                            current-index: root.language;
+                            selected => {
+                                root.language = self.current-index;
+                                root.set-language(self.current-index);
+                            }
+                        }
+                    }
+                }
+
+                SettingRow {
+                    label: @tr("Start with Windows");
+
+                    Switch {
+                        checked: root.autostart;
+                        toggled => {
+                            root.autostart = self.checked;
+                            root.set-autostart(self.checked);
+                        }
+                    }
+                }
+            }
+
+            if root.page == 1: VerticalLayout {
+                spacing: Theme.spacing-s;
+
+                HorizontalLayout {
+                    spacing: Theme.spacing-m;
+
+                    Text {
+                        text: @tr("Profiles");
+                        font-size: Theme.font-title;
+                        font-weight: Theme.weight-semibold;
+                        color: Theme.text-primary;
+                        horizontal-stretch: 1;
+                        vertical-alignment: center;
+                    }
+
+                    Button {
+                        text: @tr("New profile");
+                        clicked => {
+                            root.create-profile();
+                        }
+                    }
+                }
+
+                Caption {
+                    text: @tr("A profile switches on by itself while one of its programs is in the foreground.");
+                    wrap: word-wrap;
+                }
+
+                ScrollView {
+                    vertical-stretch: 1;
+
+                    VerticalLayout {
+                        alignment: start;
+                        spacing: Theme.spacing-s;
+                        padding-top: Theme.spacing-xs;
+
+                        for item[i] in root.profiles: ProfileCard {
+                            profile: item;
+                            expanded: i == root.selected;
+                            running: root.running;
+                            select => {
+                                root.selected = i;
+                                root.select-profile(i);
+                            }
+                            make-active => {
+                                root.use-profile(i);
+                            }
+                            rename(name) => {
+                                root.rename-profile(i, name);
+                            }
+                            delete => {
+                                root.delete-profile(i);
+                            }
+                            add-program(exe) => {
+                                root.add-program(i, exe);
+                            }
+                            remove-program(exe) => {
+                                root.remove-program(i, exe);
+                            }
+                            refresh-running => {
+                                root.refresh-running();
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.error != "": Text {
+                text: root.error;
+                color: Theme.error-text;
+                wrap: word-wrap;
+            }
+        }
+    }
+}

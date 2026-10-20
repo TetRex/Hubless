@@ -1,0 +1,112 @@
+# Русский перевод интерфейса Hubless (строки `@tr(...)` из ui/*.slint).
+# Строки из Rust (меню трея, уведомления) — в src/i18n.rs.
+# SPDX-License-Identifier: GPL-3.0-or-later
+msgid ""
+msgstr ""
+"Project-Id-Version: hubless\n"
+"Language: ru\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+# Панель
+msgid "More"
+msgstr "Ещё"
+
+msgid "not connected"
+msgstr "не подключено"
+
+msgid "Polling"
+msgstr "Опрос"
+
+msgid "Settings from Hubless (host)"
+msgstr "Настройки из Hubless (host)"
+
+msgid "medium"
+msgstr "средний"
+
+msgid "high"
+msgstr "высокий"
+
+msgid "Brightness"
+msgstr "Яркость"
+
+msgid "Effect"
+msgstr "Эффект"
+
+msgid "Keyboard"
+msgstr "Клавиатура"
+
+msgid "Static"
+msgstr "Статичный"
+
+msgid "Breathe"
+msgstr "Дыхание"
+
+msgid "Cycle"
+msgstr "Цикл"
+
+msgid "Wave"
+msgstr "Волна"
+
+msgid "Ripple"
+msgstr "Рябь"
+
+msgid "Sidetone"
+msgstr "Свой голос"
+
+msgid "Turn off when silent"
+msgstr "Автоотключение без звука"
+
+msgid "never"
+msgstr "никогда"
+
+msgid "{} min"
+msgstr "{} мин"
+
+msgid "Settings"
+msgstr "Настройки"
+
+# Окно настроек
+msgid "Hubless — Settings"
+msgstr "Hubless — настройки"
+
+msgid "General"
+msgstr "Общие"
+
+msgid "Language"
+msgstr "Язык"
+
+msgid "Start with Windows"
+msgstr "Автозапуск"
+
+msgid "Profiles"
+msgstr "Профили"
+
+msgid "Rename"
+msgstr "Переименовать"
+
+msgid "Make active"
+msgstr "Сделать активным"
+
+msgid "Delete"
+msgstr "Удалить"
+
+msgid "Remove program"
+msgstr "Убрать программу"
+
+msgid "Refresh"
+msgstr "Обновить"
+
+msgid "New profile"
+msgstr "Новый профиль"
+
+msgid "Active"
+msgstr "Активный"
+
+msgid "or type e.g. cs2.exe"
+msgstr "или введите, например, cs2.exe"
+
+msgid "A profile switches on by itself while one of its programs is in the foreground."
+msgstr "Профиль включается сам, пока активна одна из его программ."

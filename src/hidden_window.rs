@@ -25,6 +25,7 @@ const WM_APP_SHOW_PANEL: u32 = WM_APP + 1;
 const WM_APP_TEST_NOTIFICATION: u32 = WM_APP + 2;
 const WM_APP_SETTINGS_CHANGED: u32 = WM_APP + 3;
 const WM_APP_QUIT: u32 = WM_APP + 4;
+const WM_APP_SETTINGS: u32 = WM_APP + 5;
 
 pub struct HiddenWindow {
     hwnd: HWND,
@@ -116,6 +117,18 @@ pub fn notify_settings_changed() -> bool {
     }
 }
 
+/// Попросить запущенный экземпляр открыть окно настроек на разделе `page`
+/// (0 — «Общие», 1 — «Профили»); `false` — он не запущен.
+pub fn request_settings(page: usize) -> bool {
+    // SAFETY: поиск окна по имени класса и асинхронная отправка сообщения.
+    unsafe {
+        FindWindowW(CLASS, None).is_ok_and(|hwnd| {
+            let _ = AllowSetForegroundWindow(ASFW_ANY);
+            PostMessageW(Some(hwnd), WM_APP_SETTINGS, WPARAM(page), LPARAM(0)).is_ok()
+        })
+    }
+}
+
 /// Попросить запущенный экземпляр завершиться штатно (как «Выход» в меню); `false` — он не запущен.
 pub fn request_quit() -> bool {
     // SAFETY: поиск окна по имени класса и асинхронная отправка сообщения.
@@ -151,6 +164,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         // CLI изменил devices.toml — пересканировать и применить настройки.
         WM_APP_SETTINGS_CHANGED => app::post(AppEvent::DevicesChanged),
         WM_APP_QUIT => app::post(AppEvent::Menu(app::MenuCommand::Exit)),
+        WM_APP_SETTINGS => app::post(AppEvent::OpenSettings(Some(wparam.0))),
         _ => {}
     }
     // SAFETY: стандартная обработка остальных сообщений.

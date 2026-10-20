@@ -9,19 +9,25 @@ use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuIt
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
 use crate::app::{self, AppEvent, MenuCommand};
+use crate::i18n::tr;
 
 const ID_STATUS: &str = "status";
+const ID_SETTINGS: &str = "settings";
 const ID_AUTOSTART: &str = "autostart";
 const ID_LOGS: &str = "logs";
 const ID_EXIT: &str = "exit";
 
-const NO_DEVICES: &str = "Нет подключённых устройств";
+const NO_DEVICES: &str = "No devices connected";
 
 pub struct Tray {
     icon: TrayIcon,
     autostart: CheckMenuItem,
     /// Неактивный пункт меню с зарядом устройств.
     status: MenuItem,
+    /// Пункты с подписями — переименовываются при смене языка.
+    settings: MenuItem,
+    logs: MenuItem,
+    exit: MenuItem,
     taskbar_light: bool,
     low_battery: bool,
 }
@@ -30,25 +36,29 @@ impl Tray {
     pub fn new(taskbar_light: bool) -> Result<Self, Box<dyn std::error::Error>> {
         let autostart = CheckMenuItem::with_id(
             ID_AUTOSTART,
-            "Автозапуск",
+            tr("Start with Windows"),
             true,
             autostart::is_enabled(),
             None,
         );
-        let status = MenuItem::with_id(ID_STATUS, NO_DEVICES, false, None);
+        let status = MenuItem::with_id(ID_STATUS, tr(NO_DEVICES), false, None);
+        let settings = MenuItem::with_id(ID_SETTINGS, tr("Settings…"), true, None);
+        let logs = MenuItem::with_id(ID_LOGS, tr("Open log folder"), true, None);
+        let exit = MenuItem::with_id(ID_EXIT, tr("Exit"), true, None);
         let menu = Menu::new();
         menu.append_items(&[
             &status,
             &PredefinedMenuItem::separator(),
+            &settings,
             &autostart,
-            &MenuItem::with_id(ID_LOGS, "Открыть папку логов", true, None),
+            &logs,
             &PredefinedMenuItem::separator(),
-            &MenuItem::with_id(ID_EXIT, "Выход", true, None),
+            &exit,
         ])?;
 
         let icon = TrayIconBuilder::new()
             .with_icon(icon::render(taskbar_light, false))
-            .with_tooltip(format!("Hubless\n{NO_DEVICES}"))
+            .with_tooltip(format!("Hubless\n{}", tr(NO_DEVICES)))
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)
             .build()?;
@@ -58,6 +68,9 @@ impl Tray {
             icon,
             autostart,
             status,
+            settings,
+            logs,
+            exit,
             taskbar_light,
             low_battery: false,
         })
@@ -79,7 +92,7 @@ impl Tray {
     /// индикатор низкого заряда на иконке.
     pub fn set_status(&mut self, lines: &[String], low_battery: bool) {
         let (tooltip, menu) = if lines.is_empty() {
-            (NO_DEVICES.to_owned(), NO_DEVICES.to_owned())
+            (tr(NO_DEVICES).to_owned(), tr(NO_DEVICES).to_owned())
         } else {
             (lines.join("\n"), lines.join(" · "))
         };
@@ -106,6 +119,14 @@ impl Tray {
         toast::show(hwnd, title, text);
     }
 
+    /// Подписи меню на текущем языке (строка состояния обновляется в `set_status`).
+    pub fn relabel(&self) {
+        self.settings.set_text(tr("Settings…"));
+        self.autostart.set_text(tr("Start with Windows"));
+        self.logs.set_text(tr("Open log folder"));
+        self.exit.set_text(tr("Exit"));
+    }
+
     pub fn set_autostart_checked(&self, checked: bool) {
         self.autostart.set_checked(checked);
     }
@@ -126,6 +147,7 @@ fn install_handlers() {
     }));
     MenuEvent::set_event_handler(Some(|ev: MenuEvent| {
         let cmd = match ev.id.as_ref() {
+            ID_SETTINGS => MenuCommand::Settings,
             ID_AUTOSTART => MenuCommand::ToggleAutostart,
             ID_LOGS => MenuCommand::OpenLogs,
             ID_EXIT => MenuCommand::Exit,

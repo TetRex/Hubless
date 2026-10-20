@@ -73,7 +73,7 @@ pub fn set_mode(mode: Mode) -> Write {
         feature: ID,
         function: SET_ONBOARD_MODE,
         params: vec![mode.to_byte()],
-        what: format!("режим {mode:?}"),
+        what: format!("mode {mode:?}"),
         short: false,
     }
 }

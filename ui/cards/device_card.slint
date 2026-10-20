@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-import { Button, ComboBox, Slider, Switch } from "std-widgets.slint";
+import { Button, ComboBox, LineEdit, Slider, Switch } from "std-widgets.slint";
 
 // Заголовок раскрывающегося блока «Ещё».
 component Expander inherits Rectangle {
@@ -19,7 +19,7 @@ component Expander inherits Rectangle {
         }
 
         Text {
-            text: "Ещё";
+            text: @tr("More");
             font-size: Theme.font-caption;
             color: focus.has-focus ? Theme.text-primary : Theme.text-secondary;
             vertical-alignment: center;
@@ -60,6 +60,9 @@ export struct DeviceInfo {
     // Мышь: текущий DPI (-1 — неизвестен) и быстрые кнопки.
     dpi: int,
     dpi-presets: [int],
+    // Мышь: диапазон допустимых DPI (0 — неизвестен) для ползунка и поля.
+    dpi-min: int,
+    dpi-max: int,
     // Мышь: настройки применяет Hubless (host) и lift-off: 0 low, 1 medium, 2 high, -1 — нет.
     host: bool,
     lift-off: int,
@@ -162,6 +165,8 @@ component Label inherits Text {
 export component DeviceCard inherits Rectangle {
     in property <DeviceInfo> info;
     callback select-dpi(int);
+    callback drag-dpi(float);
+    callback enter-dpi(float);
     callback select-rate(int);
     callback set-mouse-host(bool);
     callback set-lift-off(int);
@@ -203,7 +208,7 @@ export component DeviceCard inherits Rectangle {
             }
 
             Text {
-                text: info.connected ? info.link : "не подключено";
+                text: info.connected ? info.link : @tr("not connected");
                 font-size: Theme.font-caption;
                 color: info.connected ? Theme.text-secondary : Theme.text-disabled;
                 vertical-alignment: center;
@@ -234,12 +239,50 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
+        // Мышь: любое значение DPI — ползунок в логарифмическом масштабе и поле ввода.
+        // Значение подгоняется к допустимому в Rust; поле и ползунок следят за фактическим DPI.
+        if info.connected && info.kind == DeviceKind.mouse && info.dpi-max > info.dpi-min: HorizontalLayout {
+            spacing: Theme.spacing-s;
+
+            dpi-slider := Slider {
+                // Положение 0…1 ↔ DPI: min · (max / min) ^ положение.
+                property <float> ratio: info.dpi-max / info.dpi-min;
+                property <float> actual: info.dpi > 0 ? log(info.dpi / info.dpi-min, self.ratio) : 0;
+                horizontal-stretch: 1;
+                minimum: 0;
+                maximum: 1;
+                value: self.actual;
+                changed actual => {
+                    self.value = self.actual;
+                }
+                changed(v) => {
+                    let dpi = round(info.dpi-min * pow(self.ratio, v));
+                    dpi-edit.text = dpi;
+                    root.drag-dpi(dpi);
+                }
+            }
+
+            dpi-edit := LineEdit {
+                property <int> actual: info.dpi;
+                width: Theme.dpi-field-width;
+                input-type: number;
+                horizontal-alignment: right;
+                text: info.dpi > 0 ? info.dpi : "";
+                changed actual => {
+                    self.text = self.actual > 0 ? self.actual : "";
+                }
+                accepted(t) => {
+                    root.enter-dpi(t.to-float());
+                }
+            }
+        }
+
         // Мышь: частота опроса (переводит мышь в режим host).
         if info.connected && info.kind == DeviceKind.mouse && info.rate-presets.length > 0: HorizontalLayout {
             spacing: Theme.spacing-xs;
 
             Label {
-                text: "Опрос";
+                text: @tr("Polling");
                 min-width: self.preferred-width + Theme.spacing-s;
             }
 
@@ -259,7 +302,7 @@ export component DeviceCard inherits Rectangle {
             more := Expander { }
 
             if more.expanded: Switch {
-                text: "Настройки из Hubless (host)";
+                text: @tr("Settings from Hubless (host)");
                 checked: info.host;
                 toggled => {
                     root.set-mouse-host(self.checked);
@@ -275,7 +318,7 @@ export component DeviceCard inherits Rectangle {
                 }
 
                 // Без «низкого»: PRO X 2 отвергает lift-off 0 (INVALID_ARGUMENT, 2026-10-19).
-                for name[i] in ["средний", "высокий"]: Button {
+                for name[i] in [@tr("medium"), @tr("high")]: Button {
                     text: name;
                     primary: i + 1 == info.lift-off;
                     clicked => {
@@ -290,7 +333,7 @@ export component DeviceCard inherits Rectangle {
             spacing: Theme.spacing-s;
 
             Label {
-                text: "Яркость";
+                text: @tr("Brightness");
             }
 
             Slider {
@@ -309,13 +352,13 @@ export component DeviceCard inherits Rectangle {
             spacing: Theme.spacing-s;
 
             Label {
-                text: "Эффект";
+                text: @tr("Effect");
             }
 
             ComboBox {
                 horizontal-stretch: 1;
                 // Порядок совпадает с effect_by_index в app.rs.
-                model: ["Клавиатура", "Статичный", "Дыхание", "Цикл", "Волна", "Рябь"];
+                model: [@tr("Keyboard"), @tr("Static"), @tr("Breathe"), @tr("Cycle"), @tr("Wave"), @tr("Ripple")];
                 current-index: info.effect;
                 selected => {
                     root.set-effect(self.current-index);
@@ -343,7 +386,7 @@ export component DeviceCard inherits Rectangle {
             spacing: Theme.spacing-s;
 
             Label {
-                text: "Свой голос";
+                text: @tr("Sidetone");
             }
 
             Slider {
@@ -363,14 +406,14 @@ export component DeviceCard inherits Rectangle {
             headset-more := Expander { }
 
             if headset-more.expanded: Label {
-                text: "Автоотключение без звука";
+                text: @tr("Turn off when silent");
             }
 
             if headset-more.expanded: HorizontalLayout {
                 spacing: Theme.spacing-xs;
 
                 for m in [0, 10, 30, 60]: Button {
-                    text: m == 0 ? "никогда" : m + " мин";
+                    text: m == 0 ? @tr("never") : @tr("{} min", m);
                     primary: m == info.auto-off;
                     clicked => {
                         root.set-auto-off(m);

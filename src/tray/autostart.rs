@@ -22,7 +22,7 @@ pub fn is_enabled() -> bool {
 pub fn set_enabled(enable: bool) -> std::io::Result<()> {
     if enable {
         let cmd =
-            command().ok_or_else(|| std::io::Error::other("не удалось определить путь exe"))?;
+            command().ok_or_else(|| std::io::Error::other("could not determine the exe path"))?;
         hkcu_write_string(RUN_KEY, VALUE, &cmd)?;
     } else {
         hkcu_delete_value(RUN_KEY, VALUE)?;

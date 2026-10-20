@@ -33,21 +33,21 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Hid(e) => write!(f, "hid: {e}"),
-            Self::Timeout => f.write_str("нет ответа"),
-            Self::Disconnected => f.write_str("устройство отключено"),
-            Self::NoHidppCollection => f.write_str("нет подходящей HID++ коллекции"),
+            Self::Timeout => f.write_str("no reply"),
+            Self::Disconnected => f.write_str("device disconnected"),
+            Self::NoHidppCollection => f.write_str("no suitable HID++ collection"),
             Self::Hidpp20(c) => write!(
                 f,
-                "HID++ 2.0 ошибка {c:#04x} ({})",
+                "HID++ 2.0 error {c:#04x} ({})",
                 message::error_20_name(*c)
             ),
             Self::Hidpp10(c) => write!(
                 f,
-                "HID++ 1.0 ошибка {c:#04x} ({})",
+                "HID++ 1.0 error {c:#04x} ({})",
                 message::error_10_name(*c)
             ),
-            Self::FeatureMissing(id) => write!(f, "фича {id:#06x} не поддерживается"),
-            Self::Forbidden(id) => write!(f, "фича {id:#06x} в чёрном списке"),
+            Self::FeatureMissing(id) => write!(f, "feature {id:#06x} is not supported"),
+            Self::Forbidden(id) => write!(f, "feature {id:#06x} is blacklisted"),
         }
     }
 }
