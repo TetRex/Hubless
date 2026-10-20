@@ -14,8 +14,8 @@ msgstr ""
 msgid "More"
 msgstr "Ещё"
 
-msgid "not connected"
-msgstr "не подключено"
+msgid "inactive"
+msgstr "неактивно"
 
 msgid "Polling"
 msgstr "Опрос"
@@ -146,8 +146,8 @@ msgstr "Перетащите устройства, чтобы задать их 
 msgid "Connected"
 msgstr "Подключено"
 
-msgid "Not connected"
-msgstr "Не подключено"
+msgid "Inactive"
+msgstr "Неактивно"
 
 msgid "Reorder: drag, or use the arrow keys"
 msgstr "Порядок: перетащите или нажимайте стрелки"

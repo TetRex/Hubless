@@ -27,12 +27,6 @@ export component IconButton inherits Rectangle {
         vertical-alignment: center;
     }
 
-    touch := TouchArea {
-        clicked => {
-            root.clicked();
-        }
-    }
-
     focus := FocusScope {
         key-pressed(event) => {
             if (event.text == " " || event.text == Key.Return) {
@@ -40,6 +34,14 @@ export component IconButton inherits Rectangle {
                 return accept;
             }
             reject
+        }
+    }
+
+    // Область клика поверх FocusScope: иначе первый клик только забирает фокус
+    // (FocusScope принимает нажатие, пока не в фокусе), и срабатывает лишь второй.
+    touch := TouchArea {
+        clicked => {
+            root.clicked();
         }
     }
 }

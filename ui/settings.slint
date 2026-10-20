@@ -78,13 +78,6 @@ component NavItem inherits Rectangle {
         }
     }
 
-    touch := TouchArea {
-        clicked => {
-            focus.focus();
-            root.clicked();
-        }
-    }
-
     focus := FocusScope {
         key-pressed(event) => {
             if (event.text == " " || event.text == Key.Return) {
@@ -92,6 +85,15 @@ component NavItem inherits Rectangle {
                 return accept;
             }
             reject
+        }
+    }
+
+    // Область клика поверх FocusScope: иначе первый клик только забирает фокус
+    // (FocusScope принимает нажатие, пока не в фокусе), и срабатывает лишь второй.
+    touch := TouchArea {
+        clicked => {
+            focus.focus();
+            root.clicked();
         }
     }
 }
@@ -216,7 +218,7 @@ component DeviceRowCard inherits Rectangle {
                     }
 
                     Caption {
-                        text: root.device.connected ? @tr("Connected") : @tr("Not connected");
+                        text: root.device.connected ? @tr("Connected") : @tr("Inactive");
                     }
                 }
             }

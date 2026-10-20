@@ -27,13 +27,6 @@ component Expander inherits Rectangle {
         }
     }
 
-    TouchArea {
-        clicked => {
-            focus.focus();
-            root.expanded = !root.expanded;
-        }
-    }
-
     focus := FocusScope {
         key-pressed(event) => {
             if (event.text == " " || event.text == Key.Return) {
@@ -41,6 +34,15 @@ component Expander inherits Rectangle {
                 return accept;
             }
             reject
+        }
+    }
+
+    // Область клика поверх FocusScope: иначе первый клик только забирает фокус
+    // (FocusScope принимает нажатие, пока не в фокусе), и срабатывает лишь второй.
+    TouchArea {
+        clicked => {
+            focus.focus();
+            root.expanded = !root.expanded;
         }
     }
 }
@@ -137,13 +139,6 @@ component Swatch inherits Rectangle {
     border-width: selected ? 2px : 1px;
     border-color: selected || focus.has-focus ? Theme.swatch-ring : Theme.card-stroke;
 
-    touch := TouchArea {
-        clicked => {
-            focus.focus();
-            root.picked();
-        }
-    }
-
     focus := FocusScope {
         key-pressed(event) => {
             if (event.text == " " || event.text == Key.Return) {
@@ -151,6 +146,15 @@ component Swatch inherits Rectangle {
                 return accept;
             }
             reject
+        }
+    }
+
+    // Область клика поверх FocusScope: иначе первый клик только забирает фокус
+    // (FocusScope принимает нажатие, пока не в фокусе), и срабатывает лишь второй.
+    touch := TouchArea {
+        clicked => {
+            focus.focus();
+            root.picked();
         }
     }
 }
@@ -208,7 +212,7 @@ export component DeviceCard inherits Rectangle {
             }
 
             Text {
-                text: info.connected ? info.link : @tr("not connected");
+                text: info.connected ? info.link : @tr("inactive");
                 font-size: Theme.font-caption;
                 color: info.connected ? Theme.text-secondary : Theme.text-disabled;
                 vertical-alignment: center;
