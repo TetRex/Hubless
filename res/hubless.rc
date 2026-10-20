@@ -2,8 +2,8 @@
 1 RT_MANIFEST "hubless.exe.manifest"
 
 1 VERSIONINFO
-FILEVERSION 0,1,3,0
-PRODUCTVERSION 0,1,3,0
+FILEVERSION 0,1,4,0
+PRODUCTVERSION 0,1,4,0
 FILEOS 0x40004
 FILETYPE 0x1
 BEGIN
@@ -13,12 +13,12 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "TetRex"
       VALUE "FileDescription", "Hubless"
-      VALUE "FileVersion", "0.1.3"
+      VALUE "FileVersion", "0.1.4"
       VALUE "InternalName", "hubless"
       VALUE "LegalCopyright", "Copyright (C) 2026 TetRex. GPL-3.0-or-later"
       VALUE "OriginalFilename", "hubless.exe"
       VALUE "ProductName", "Hubless"
-      VALUE "ProductVersion", "0.1.3"
+      VALUE "ProductVersion", "0.1.4"
     END
   END
   BLOCK "VarFileInfo"
