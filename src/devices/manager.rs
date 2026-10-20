@@ -82,8 +82,6 @@ pub enum Controls {
         /// Частота опроса, Гц, и быстрые кнопки из поддерживаемых в текущем подключении.
         rate_hz: Option<u32>,
         rate_presets: Vec<u32>,
-        /// DPI и частота только для чтения: старые фичи, экспериментальный режим выключен.
-        locked: bool,
     },
     Keyboard {
         brightness: Option<u16>,
@@ -231,7 +229,8 @@ enum LightState {
 
 /// Подсветка, которой управляет Hubless.
 struct Lighting {
-    effect: Write,
+    /// Эффект для каждой зоны, которая его умеет (у G815 — логотип и клавиши).
+    effects: Vec<Write>,
     idle_s: u16,
     sleep_s: u16,
     state: LightState,
@@ -547,31 +546,26 @@ impl Worker {
         let settings = DeviceSettings::load();
         let controls = match self.role {
             Role::Mouse => {
-                let experimental = crate::config::Config::load().0.experimental;
                 let params = dpi::parameters(&dev).ok();
                 let lod_supported = dpi::capabilities(&dev).is_ok_and(|c| c.lift_off);
-                // Старые фичи (0x2201, 0x8060): значение видно всегда, а списки для кнопок и
-                // ползунка — только в экспериментальном режиме (запись не проверена на железе).
+                // Старые фичи (0x2201, 0x8060) — у G903 и других мышей постарше.
                 let old_dpi = mouse::old_dpi(&dev);
                 let old_rate = mouse::old_rate(&dev);
-                let supported = match (old_dpi, experimental) {
-                    (false, _) => dpi::supported(&dev, false).unwrap_or_default(),
-                    (true, true) => dpi::old_supported(&dev).unwrap_or_default(),
-                    (true, false) => Vec::new(),
+                let supported = if old_dpi {
+                    dpi::old_supported(&dev).unwrap_or_default()
+                } else {
+                    dpi::supported(&dev, false).unwrap_or_default()
                 };
-                let rate_presets = match (old_rate, experimental) {
-                    (false, _) => {
-                        let supported = report_rate::supported(&dev).unwrap_or_default();
-                        RATE_PRESETS
-                            .into_iter()
-                            .filter(|hz| {
-                                report_rate::index_of_hz(*hz)
-                                    .is_some_and(|i| supported.contains(&i))
-                            })
-                            .collect()
-                    }
-                    (true, true) => report_rate::old_supported_hz(&dev).unwrap_or_default(),
-                    (true, false) => Vec::new(),
+                let rate_presets = if old_rate {
+                    report_rate::old_supported_hz(&dev).unwrap_or_default()
+                } else {
+                    let supported = report_rate::supported(&dev).unwrap_or_default();
+                    RATE_PRESETS
+                        .into_iter()
+                        .filter(|hz| {
+                            report_rate::index_of_hz(*hz).is_some_and(|i| supported.contains(&i))
+                        })
+                        .collect()
                 };
                 Controls::Mouse {
                     host: matches!(onboard::mode(&dev), Ok(onboard::Mode::Host)),
@@ -599,7 +593,6 @@ impl Worker {
                         all.dedup();
                         all
                     },
-                    locked: !experimental && (old_dpi || old_rate),
                 }
             }
             Role::Keyboard => Controls::Keyboard {
@@ -628,8 +621,7 @@ impl Worker {
             Role::Mouse => {
                 let Some(d) = &self.dev else { return };
                 let dev = d.device();
-                let experimental = crate::config::Config::load().0.experimental;
-                let mut writes = mouse::host_writes(&dev, &settings.mouse, experimental);
+                let mut writes = mouse::host_writes(&dev, &settings.mouse);
                 // Возврат к onboard: настройки снова берутся из памяти мыши.
                 if settings.mouse.mode == Some(crate::settings::Mode::Onboard)
                     && matches!(onboard::mode(&dev), Ok(onboard::Mode::Host))
@@ -653,21 +645,24 @@ impl Worker {
         }
     }
 
-    /// Забрать управление подсветкой и задать эффект.
+    /// Забрать управление подсветкой и задать эффект всем зонам, которые его умеют.
+    /// Раньше — только зоне 0: у PRO X TKL она одна, а у G815 зона 0 — логотип, и клавиши
+    /// не менялись (отчёт пользователя 2026-10-20).
     fn take_lighting(&mut self, setting: crate::settings::Lighting) {
         let Some(d) = &self.dev else { return };
         let dev = d.device();
-        let effect = match rgb_effects::info(&dev)
-            .ok()
-            .and_then(|i| i.zones.into_iter().next())
-            .and_then(|z| rgb_effects::effect_for(&z, setting))
-        {
-            Some(w) => w,
-            None => {
-                tracing::warn!("подсветка: зона или эффект не поддерживаются");
-                return;
-            }
-        };
+        let effects: Vec<Write> = rgb_effects::info(&dev)
+            .map(|i| {
+                i.zones
+                    .iter()
+                    .filter_map(|z| rgb_effects::effect_for(z, setting))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if effects.is_empty() {
+            tracing::warn!("подсветка: зоны или эффект не поддерживаются");
+            return;
+        }
         let (idle_s, sleep_s) = rgb_effects::timers(&dev).unwrap_or((60, 300));
         if !self.apply(&onboard::set_mode(onboard::Mode::Host)) {
             return;
@@ -677,7 +672,9 @@ impl Worker {
         let error = self.error.clone();
         self.apply(&rgb_effects::power_on());
         self.error = error;
-        let ok = self.apply(&rgb_effects::claim()) && self.apply(&effect);
+        // Хотя бы одна зона должна принять эффект; отказ отдельной зоны — в лог и карточку.
+        let ok = self.apply(&rgb_effects::claim())
+            && effects.iter().filter(|w| self.apply(w)).count() > 0;
         if !ok {
             // Не оставлять клавиатуру в режиме host без управления подсветкой.
             self.apply(&rgb_effects::release());
@@ -688,7 +685,7 @@ impl Worker {
         {
             tracing::info!(idle_s, sleep_s, "подсветкой управляет Hubless");
             self.lighting = Some(Lighting {
-                effect,
+                effects,
                 idle_s,
                 sleep_s,
                 state: LightState::Active,
@@ -710,7 +707,7 @@ impl Worker {
     /// реагируем только на смену состояния.
     fn on_activity(&mut self, active: bool) {
         let Some(l) = &self.lighting else { return };
-        let (state, idle_s, sleep_s, effect) = (l.state, l.idle_s, l.sleep_s, l.effect.clone());
+        let (state, idle_s, sleep_s, effects) = (l.state, l.idle_s, l.sleep_s, l.effects.clone());
         if !active && state == LightState::Active {
             tracing::debug!("подсветка: простой");
             self.apply(&rgb_effects::idle_mode());
@@ -728,7 +725,9 @@ impl Worker {
                 self.apply(&rgb_effects::power_on());
             }
             self.apply(&rgb_effects::claim());
-            self.apply(&effect);
+            for w in &effects {
+                self.apply(w);
+            }
             if let Some(l) = &mut self.lighting {
                 l.state = LightState::Active;
                 l.sleep_at = None;

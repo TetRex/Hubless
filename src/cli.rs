@@ -538,10 +538,9 @@ fn plan_lighting(
 ) -> Result<(Vec<Write>, Option<settings::Lighting>), String> {
     let dev = found.device();
     let info = rgb_effects::info(&dev).map_err(|e| format!("lighting: {e}"))?;
-    let zone = info
-        .zones
-        .first()
-        .ok_or("the keyboard has no lighting zones")?;
+    if info.zones.is_empty() {
+        return Err("the keyboard has no lighting zones".into());
+    }
     let color = |name: &str| {
         args.get(1)
             .and_then(|s| rgb_effects::parse_rgb(s))
@@ -587,13 +586,17 @@ fn plan_lighting(
             );
         }
     };
-    let effect =
-        rgb_effects::effect_for(zone, lighting).ok_or("the zone does not support this effect")?;
-    let writes = vec![
-        onboard::set_mode(onboard::Mode::Host),
-        rgb_effects::claim(),
-        effect,
-    ];
+    // Все зоны, которые умеют эффект (у G815 — логотип и клавиши), как в трее.
+    let effects: Vec<Write> = info
+        .zones
+        .iter()
+        .filter_map(|z| rgb_effects::effect_for(z, lighting))
+        .collect();
+    if effects.is_empty() {
+        return Err("no lighting zone supports this effect".into());
+    }
+    let mut writes = vec![onboard::set_mode(onboard::Mode::Host), rgb_effects::claim()];
+    writes.extend(effects);
     Ok((writes, Some(lighting)))
 }
 

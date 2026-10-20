@@ -475,16 +475,6 @@ impl App {
                 }
                 self.tray.set_autostart_checked(autostart::is_enabled());
             }
-            SettingsAction::Experimental(on) => {
-                if let Err(e) = Config::save_experimental(on) {
-                    tracing::error!("config.toml: {e}");
-                    self.settings.set_error(&e.to_string());
-                    return;
-                }
-                tracing::info!(on, "экспериментальная поддержка устройств");
-                // Перечитать контролы (кнопки DPI и частоты у мышей со старыми фичами).
-                self.devices.send_to(Role::Mouse, Command::Apply);
-            }
             SettingsAction::MoveDevice(from, to) => {
                 if let Some(order) = self.state.moved(from.max(0) as usize, to.max(0) as usize) {
                     self.edit_layout(|l| l.order = order);

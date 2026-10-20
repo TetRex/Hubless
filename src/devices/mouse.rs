@@ -100,14 +100,14 @@ pub fn old_rate(dev: &Device) -> bool {
 
 /// Записи для режима host: сначала режим, затем DPI/lift-off и частота.
 /// Значения, которые устройство в текущем подключении не поддерживает, пропускаются
-/// (например, 8000 Гц по кабелю) — с записью в лог. Старые фичи (`0x2201`, `0x8060`)
-/// не проверены на железе — пишутся только при `experimental`.
-pub fn host_writes(dev: &Device, s: &MouseSettings, experimental: bool) -> Vec<Write> {
+/// (например, 8000 Гц по кабелю) — с записью в лог. Старые фичи (`0x2201`, `0x8060`, G903)
+/// пишутся по спецификации Logitech и Solaar; на железе не проверены.
+pub fn host_writes(dev: &Device, s: &MouseSettings) -> Vec<Write> {
     if s.mode != Some(settings::Mode::Host) {
         return Vec::new();
     }
     let mut writes = vec![onboard::set_mode(onboard::Mode::Host)];
-    if experimental && old_dpi(dev) {
+    if old_dpi(dev) {
         if let Some(v) = s.dpi {
             match dpi::old_supported(dev) {
                 Ok(list) if list.contains(&v) => {
@@ -137,7 +137,7 @@ pub fn host_writes(dev: &Device, s: &MouseSettings, experimental: bool) -> Vec<W
             Err(e) => tracing::warn!("чтение DPI: {e}"),
         }
     }
-    if experimental && old_rate(dev) {
+    if old_rate(dev) {
         if let Some(hz) = s.rate_hz {
             let supported = report_rate::old_supported_hz(dev).is_ok_and(|l| l.contains(&hz));
             match report_rate::old_set(hz).filter(|_| supported) {

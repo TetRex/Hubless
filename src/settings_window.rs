@@ -25,8 +25,6 @@ pub enum SettingsAction {
     /// Индекс в списке языков: 0 — английский, 1 — русский.
     Language(i32),
     Autostart(bool),
-    /// Изменения на непроверенных устройствах.
-    Experimental(bool),
     /// Переставить устройство в разделе «Устройства»: с места и на место (индексы в списке).
     MoveDevice(i32, i32),
     /// Показать (`true`) или скрыть устройство в панели.
@@ -232,7 +230,6 @@ impl SettingsController {
         w.set_running(ModelRc::new(VecModel::from(running)));
         let config = Config::load().0;
         w.set_language(index_of(Choice::parse(&config.language)));
-        w.set_experimental(config.experimental);
         w.set_autostart(autostart::is_enabled());
         w.set_error(SharedString::new());
     }
@@ -286,7 +283,6 @@ fn wire(w: &ui::SettingsWindow) {
     let post = |a: SettingsAction| app::post(AppEvent::Settings(a));
     w.on_set_language(move |i| post(SettingsAction::Language(i)));
     w.on_set_autostart(move |on| post(SettingsAction::Autostart(on)));
-    w.on_set_experimental(move |on| post(SettingsAction::Experimental(on)));
     w.on_move_device(move |from, to| post(SettingsAction::MoveDevice(from, to)));
     w.on_show_device(move |i, on| post(SettingsAction::ShowDevice(i, on)));
     w.on_select_profile(move |i| post(SettingsAction::Select(i)));

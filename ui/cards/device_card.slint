@@ -68,8 +68,6 @@ export struct DeviceInfo {
     // Мышь: настройки применяет Hubless (host) и lift-off: 0 low, 1 medium, 2 high, -1 — нет.
     host: bool,
     lift-off: int,
-    // Мышь: DPI и частота только для чтения — старые фичи, экспериментальный режим выключен.
-    locked: bool,
     // Мышь: частота опроса, Гц (-1 — неизвестна), и быстрые кнопки.
     rate: int,
     rate-presets: [int],
@@ -301,7 +299,7 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
-        // Значения без кнопок: старые фичи (0x2201, 0x8060) при выключенном экспериментальном режиме.
+        // Значения без кнопок: список DPI или частот не прочитался.
         if info.connected && info.kind == DeviceKind.mouse && info.dpi > 0
             && info.dpi-presets.length == 0 && info.dpi-max <= info.dpi-min: HorizontalLayout {
             spacing: Theme.spacing-xs;
@@ -332,13 +330,6 @@ export component DeviceCard inherits Rectangle {
                 color: Theme.text-primary;
                 vertical-alignment: center;
             }
-        }
-
-        if info.connected && info.kind == DeviceKind.mouse && info.locked: Text {
-            text: @tr("Changing these settings on this mouse is experimental: turn it on in Settings → General.");
-            font-size: Theme.font-caption;
-            color: Theme.text-secondary;
-            wrap: word-wrap;
         }
 
         // Мышь: редкие настройки.

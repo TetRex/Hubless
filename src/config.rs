@@ -33,9 +33,6 @@ pub struct Config {
     pub hid_trace: bool,
     /// Язык интерфейса: auto (по Windows) | ru | en. Меняется из окна настроек.
     pub language: String,
-    /// Разрешить изменения на непроверенных устройствах (старые фичи `0x2201`, `0x8060`).
-    /// Меняется из окна настроек.
-    pub experimental: bool,
 }
 
 impl Default for Config {
@@ -44,7 +41,6 @@ impl Default for Config {
             log_level: "info".into(),
             hid_trace: false,
             language: "auto".into(),
-            experimental: false,
         }
     }
 }
@@ -58,9 +54,6 @@ hid_trace = false
 
 # Язык интерфейса: auto (по Windows) | ru | en
 language = "auto"
-
-# Изменять настройки непроверенных устройств (экспериментально)
-experimental = false
 "#;
 
 impl Config {
@@ -72,11 +65,6 @@ impl Config {
     /// только строка `language = ...`, комментарии и остальные ключи остаются как были.
     pub fn save_language(code: &str) -> io::Result<()> {
         Self::save_key("language", &format!("\"{code}\""))
-    }
-
-    /// Записать флаг экспериментальной поддержки — так же, только строку `experimental = ...`.
-    pub fn save_experimental(on: bool) -> io::Result<()> {
-        Self::save_key("experimental", if on { "true" } else { "false" })
     }
 
     fn save_key(key: &str, value: &str) -> io::Result<()> {
@@ -159,9 +147,6 @@ mod tests {
         let def = Config::default();
         assert_eq!(cfg.log_level, def.log_level);
         assert_eq!(cfg.hid_trace, def.hid_trace);
-        assert_eq!(cfg.experimental, def.experimental);
-        let on: Config = toml::from_str(&with_key(DEFAULT_FILE, "experimental", "true")).unwrap();
-        assert!(on.experimental);
     }
 
     #[test]
