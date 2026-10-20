@@ -158,6 +158,15 @@ msgstr "Показывать в панели"
 msgid "{} Hz"
 msgstr "{} Гц"
 
+msgid "Changing these settings on this mouse is experimental: turn it on in Settings → General."
+msgstr "Изменение этих настроек на этой мыши — экспериментальное: включите его в «Настройки → Общие»."
+
+msgid "Experimental support for untested devices"
+msgstr "Экспериментальная поддержка непроверенных устройств"
+
+msgid "Lets Hubless change settings that use older device features no one has tested yet (for example DPI and polling rate on the G903). The changes can be undone, but the device may behave unexpectedly."
+msgstr "Разрешает менять настройки, которые используют старые фичи устройств, ещё никем не проверенные (например, DPI и частоту опроса у G903). Изменения обратимы, но устройство может повести себя неожиданно."
+
 msgid "No Logitech devices found. Connect a device or its receiver."
 msgstr "Устройства Logitech не найдены. Подключите устройство или его ресивер."
 

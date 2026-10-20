@@ -510,6 +510,7 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
             dpi_min: 0,
             dpi_max: 0,
             host: false,
+            locked: false,
             lift_off: -1,
             rate: -1,
             rate_presets: ModelRc::default(),
@@ -548,7 +549,9 @@ fn fill_controls(info: &mut ui::DeviceInfo, c: &Controls) {
             lift_off,
             rate_hz,
             rate_presets,
+            locked,
         } => {
+            info.locked = *locked;
             info.dpi_min = dpi_supported.first().map_or(0, |&v| i32::from(v));
             info.dpi_max = dpi_supported.last().map_or(0, |&v| i32::from(v));
             info.rate = rate_hz.map_or(-1, |hz| hz as i32);

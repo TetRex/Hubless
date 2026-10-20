@@ -43,10 +43,37 @@ pub fn current(dev: &Device) -> Result<u8, Error> {
     Ok(dev.call(ID, GET_RATE, &[link])?.params()[0])
 }
 
-/// Старая `0x8060` Report Rate (по Solaar `ReportRate`): fn1 — текущий интервал опроса, мс.
-/// Пока только чтение (G903, клавиатуры).
+/// Старая `0x8060` Report Rate (спецификация Logitech и Solaar `ReportRate`):
+/// fn0 — битовая маска интервалов (бит n — n+1 мс), fn1 — текущий интервал, мс,
+/// fn2 — запись интервала, мс. Запись не проверена на железе — только в экспериментальном режиме.
 pub const OLD_ID: u16 = 0x8060;
+const OLD_GET_LIST: u8 = 0;
 const OLD_GET_RATE: u8 = 1;
+const OLD_SET_RATE: u8 = 2;
+
+/// Поддерживаемые частоты по `0x8060`, Гц, по возрастанию.
+pub fn old_supported_hz(dev: &Device) -> Result<Vec<u32>, Error> {
+    let mask = dev.call(OLD_ID, OLD_GET_LIST, &[])?.params()[0];
+    let mut list: Vec<u32> = (0..8u32)
+        .filter(|n| mask & (1 << n) != 0)
+        .map(|n| 1000 / (n + 1))
+        .collect();
+    list.sort_unstable();
+    list.dedup();
+    Ok(list)
+}
+
+/// Запись частоты по `0x8060` (интервал в мс; `None` — частота не делит 1000 мс нацело).
+pub fn old_set(hz: u32) -> Option<Write> {
+    let ms = u8::try_from(1000 / hz.max(1)).ok().filter(|ms| *ms > 0)?;
+    (1000 / u32::from(ms) == hz).then(|| Write {
+        feature: OLD_ID,
+        function: OLD_SET_RATE,
+        params: vec![ms],
+        what: format!("polling rate {hz} Hz (0x8060)"),
+        short: false,
+    })
+}
 
 /// Текущая частота по `0x8060`, Гц.
 pub fn old_current_hz(dev: &Device) -> Result<u32, Error> {
@@ -70,5 +97,18 @@ pub fn set(index: u8) -> Write {
         params: vec![index],
         what: format!("polling rate {} Hz", hz(index).unwrap_or(0)),
         short: true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_rate_write() {
+        assert_eq!(old_set(1000).unwrap().params, vec![1]);
+        assert_eq!(old_set(125).unwrap().params, vec![8]);
+        assert!(old_set(300).is_none(), "1000/300 не целое число мс");
+        assert!(old_set(2000).is_none(), "меньше 1 мс — нет у 0x8060");
     }
 }

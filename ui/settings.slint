@@ -430,6 +430,8 @@ export component SettingsWindow inherits Window {
     // Общие
     in-out property <int> language;           // 0 — английский, 1 — русский
     in-out property <bool> autostart;
+    // Изменения на непроверенных устройствах (config.toml, `experimental`).
+    in-out property <bool> experimental;
     // Устройства в порядке панели.
     in property <[DeviceRow]> devices;
     // Профили: карточки, раскрытая и варианты для добавления программы (первый — подсказка).
@@ -448,6 +450,7 @@ export component SettingsWindow inherits Window {
 
     callback set-language(int);
     callback set-autostart(bool);
+    callback set-experimental(bool);
     // Устройство по индексу в списке: переставить на новое место, показать или скрыть в панели.
     // После перестановки Rust присылает новый порядок и вызывает finish-drop().
     callback move-device(int, int);
@@ -611,6 +614,23 @@ export component SettingsWindow inherits Window {
                             root.set-autostart(self.checked);
                         }
                     }
+                }
+
+                SettingRow {
+                    label: @tr("Experimental support for untested devices");
+
+                    Switch {
+                        checked: root.experimental;
+                        toggled => {
+                            root.experimental = self.checked;
+                            root.set-experimental(self.checked);
+                        }
+                    }
+                }
+
+                Caption {
+                    text: @tr("Lets Hubless change settings that use older device features no one has tested yet (for example DPI and polling rate on the G903). The changes can be undone, but the device may behave unexpectedly.");
+                    wrap: word-wrap;
                 }
             }
 

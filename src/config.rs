@@ -33,6 +33,9 @@ pub struct Config {
     pub hid_trace: bool,
     /// Язык интерфейса: auto (по Windows) | ru | en. Меняется из окна настроек.
     pub language: String,
+    /// Разрешить изменения на непроверенных устройствах (старые фичи `0x2201`, `0x8060`).
+    /// Меняется из окна настроек.
+    pub experimental: bool,
 }
 
 impl Default for Config {
@@ -41,6 +44,7 @@ impl Default for Config {
             log_level: "info".into(),
             hid_trace: false,
             language: "auto".into(),
+            experimental: false,
         }
     }
 }
@@ -54,6 +58,9 @@ hid_trace = false
 
 # Язык интерфейса: auto (по Windows) | ru | en
 language = "auto"
+
+# Изменять настройки непроверенных устройств (экспериментально)
+experimental = false
 "#;
 
 impl Config {
@@ -64,10 +71,19 @@ impl Config {
     /// Записать язык интерфейса. Файл правят вручную, поэтому меняется (или добавляется)
     /// только строка `language = ...`, комментарии и остальные ключи остаются как были.
     pub fn save_language(code: &str) -> io::Result<()> {
+        Self::save_key("language", &format!("\"{code}\""))
+    }
+
+    /// Записать флаг экспериментальной поддержки — так же, только строку `experimental = ...`.
+    pub fn save_experimental(on: bool) -> io::Result<()> {
+        Self::save_key("experimental", if on { "true" } else { "false" })
+    }
+
+    fn save_key(key: &str, value: &str) -> io::Result<()> {
         let path = Self::path();
         let text = fs::read_to_string(&path).unwrap_or_else(|_| DEFAULT_FILE.to_owned());
         fs::create_dir_all(config_dir())?;
-        fs::write(&path, with_language(&text, code))
+        fs::write(&path, with_key(&text, key, value))
     }
 
     /// Читает конфиг; при отсутствии создаёт файл по умолчанию.
@@ -92,15 +108,15 @@ impl Config {
     }
 }
 
-/// Текст конфига с `language = "<code>"`: строка заменяется на месте или дописывается в конец.
-fn with_language(text: &str, code: &str) -> String {
-    let line = format!("language = \"{code}\"");
+/// Текст конфига с `<key> = <value>`: строка заменяется на месте или дописывается в конец.
+fn with_key(text: &str, key: &str, value: &str) -> String {
+    let line = format!("{key} = {value}");
     let mut found = false;
     let mut out: Vec<String> = text
         .lines()
         .map(|l| {
-            let key = l.split('=').next().unwrap_or("").trim();
-            if key == "language" && !l.trim_start().starts_with('#') {
+            let k = l.split('=').next().unwrap_or("").trim();
+            if k == key && !l.trim_start().starts_with('#') {
                 found = true;
                 line.clone()
             } else {
@@ -120,6 +136,8 @@ mod tests {
 
     #[test]
     fn language_line_is_replaced_or_appended() {
+        let with_language =
+            |text: &str, code: &str| with_key(text, "language", &format!("\"{code}\""));
         let replaced = with_language(DEFAULT_FILE, "ru");
         assert!(replaced.contains("language = \"ru\""));
         assert!(
@@ -141,6 +159,9 @@ mod tests {
         let def = Config::default();
         assert_eq!(cfg.log_level, def.log_level);
         assert_eq!(cfg.hid_trace, def.hid_trace);
+        assert_eq!(cfg.experimental, def.experimental);
+        let on: Config = toml::from_str(&with_key(DEFAULT_FILE, "experimental", "true")).unwrap();
+        assert!(on.experimental);
     }
 
     #[test]

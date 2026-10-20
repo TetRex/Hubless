@@ -82,6 +82,8 @@ pub enum Controls {
         /// Частота опроса, Гц, и быстрые кнопки из поддерживаемых в текущем подключении.
         rate_hz: Option<u32>,
         rate_presets: Vec<u32>,
+        /// DPI и частота только для чтения: старые фичи, экспериментальный режим выключен.
+        locked: bool,
     },
     Keyboard {
         brightness: Option<u16>,
@@ -94,6 +96,20 @@ pub enum Controls {
         /// Автоотключение, минуты (0 — никогда).
         auto_off: Option<u8>,
     },
+}
+
+/// Событие фичи, от которой зависят значения в карточке мыши: onboard-профили (смена профиля
+/// или DPI кнопкой), DPI, частота опроса. По Solaar такие события шлёт сама мышь.
+fn settings_event(dev: &crate::hidpp::Device, r: &Report) -> bool {
+    [
+        onboard::ID,
+        dpi::ID,
+        dpi::OLD_ID,
+        report_rate::ID,
+        report_rate::OLD_ID,
+    ]
+    .into_iter()
+    .any(|id| dev.feature(id).is_some_and(|f| f.index == r.sub_id()))
 }
 
 /// Быстрые кнопки DPI и частоты опроса в карточке мыши (раздел 7 плана).
@@ -456,6 +472,10 @@ impl Worker {
             });
         } else if let Some(active) = rgb_effects::activity_event(&dev, r) {
             self.on_activity(active);
+        } else if r.device() == d.index && r.address() & 0x0F == 0 && settings_event(&dev, r) {
+            // Мышь сама сменила DPI, профиль или частоту (кнопкой) — перечитать для панели.
+            tracing::debug!(role = ?self.role, ?r, "событие настроек");
+            self.publish_controls(false);
         } else if r.sub_id() == DEVICE_CONNECTION && r.device() == d.index {
             let online = r.params()[0] & LINK_NOT_ESTABLISHED == 0;
             tracing::info!(role = ?self.role, online, "связь с ресивером");
@@ -470,10 +490,20 @@ impl Worker {
         }
     }
 
+    /// Заряд и связь с устройством. Без фичи батареи (проводная G815, отчёт пользователя
+    /// 2026-10-20) связь проверяется ping'ом: раньше ошибка чтения заряда делала такое
+    /// устройство навсегда неактивным.
     fn poll_battery(&mut self) {
         self.next_poll = Instant::now() + BATTERY_POLL;
         let Some(d) = &self.dev else { return };
-        let result = battery::status(&d.device());
+        let dev = d.device();
+        let has_battery =
+            dev.feature(battery::ID).is_some() || dev.feature(battery::VOLTAGE_ID).is_some();
+        let result = if has_battery {
+            battery::status(&dev).map(Some)
+        } else {
+            root::ping(&d.transport, d.index).map(|_| None)
+        };
         let was_offline = self.snapshot.as_ref().is_some_and(|s| !s.connected);
         if result.is_ok() && was_offline {
             // Устройство проснулось/переподключилось без уведомления ресивера.
@@ -481,7 +511,7 @@ impl Worker {
         }
         match result {
             Ok(b) => self.update(|s| {
-                s.battery = Some(b);
+                s.battery = b;
                 s.connected = true;
             }),
             // Устройство за ресивером может спать — это «offline», а не ошибка.
@@ -517,29 +547,20 @@ impl Worker {
         let settings = DeviceSettings::load();
         let controls = match self.role {
             Role::Mouse => {
-                let supported = dpi::supported(&dev, false).unwrap_or_default();
+                let experimental = crate::config::Config::load().0.experimental;
                 let params = dpi::parameters(&dev).ok();
                 let lod_supported = dpi::capabilities(&dev).is_ok_and(|c| c.lift_off);
-                // Старые фичи (0x2201, 0x8060) — только показать значение, без кнопок.
-                let old_dpi = || {
-                    dev.feature(dpi::OLD_ID)
-                        .and_then(|_| dpi::old_current(&dev).ok())
+                // Старые фичи (0x2201, 0x8060): значение видно всегда, а списки для кнопок и
+                // ползунка — только в экспериментальном режиме (запись не проверена на железе).
+                let old_dpi = mouse::old_dpi(&dev);
+                let old_rate = mouse::old_rate(&dev);
+                let supported = match (old_dpi, experimental) {
+                    (false, _) => dpi::supported(&dev, false).unwrap_or_default(),
+                    (true, true) => dpi::old_supported(&dev).unwrap_or_default(),
+                    (true, false) => Vec::new(),
                 };
-                let old_rate = || {
-                    dev.feature(report_rate::OLD_ID)
-                        .and_then(|_| report_rate::old_current_hz(&dev).ok())
-                };
-                Controls::Mouse {
-                    host: matches!(onboard::mode(&dev), Ok(onboard::Mode::Host)),
-                    dpi: params.as_ref().map(|p| p.x).or_else(old_dpi),
-                    lift_off: params
-                        .filter(|_| lod_supported)
-                        .and_then(|p| mouse::lift_off_from_device(p.lift_off)),
-                    rate_hz: report_rate::current(&dev)
-                        .ok()
-                        .and_then(report_rate::hz)
-                        .or_else(old_rate),
-                    rate_presets: {
+                let rate_presets = match (old_rate, experimental) {
+                    (false, _) => {
                         let supported = report_rate::supported(&dev).unwrap_or_default();
                         RATE_PRESETS
                             .into_iter()
@@ -548,7 +569,26 @@ impl Worker {
                                     .is_some_and(|i| supported.contains(&i))
                             })
                             .collect()
+                    }
+                    (true, true) => report_rate::old_supported_hz(&dev).unwrap_or_default(),
+                    (true, false) => Vec::new(),
+                };
+                Controls::Mouse {
+                    host: matches!(onboard::mode(&dev), Ok(onboard::Mode::Host)),
+                    dpi: if old_dpi {
+                        dpi::old_current(&dev).ok()
+                    } else {
+                        params.as_ref().map(|p| p.x)
                     },
+                    lift_off: params
+                        .filter(|_| lod_supported)
+                        .and_then(|p| mouse::lift_off_from_device(p.lift_off)),
+                    rate_hz: if old_rate {
+                        report_rate::old_current_hz(&dev).ok()
+                    } else {
+                        report_rate::current(&dev).ok().and_then(report_rate::hz)
+                    },
+                    rate_presets,
                     dpi_presets: DPI_PRESETS
                         .into_iter()
                         .filter(|v| supported.contains(v))
@@ -559,6 +599,7 @@ impl Worker {
                         all.dedup();
                         all
                     },
+                    locked: !experimental && (old_dpi || old_rate),
                 }
             }
             Role::Keyboard => Controls::Keyboard {
@@ -587,7 +628,8 @@ impl Worker {
             Role::Mouse => {
                 let Some(d) = &self.dev else { return };
                 let dev = d.device();
-                let mut writes = mouse::host_writes(&dev, &settings.mouse);
+                let experimental = crate::config::Config::load().0.experimental;
+                let mut writes = mouse::host_writes(&dev, &settings.mouse, experimental);
                 // Возврат к onboard: настройки снова берутся из памяти мыши.
                 if settings.mouse.mode == Some(crate::settings::Mode::Onboard)
                     && matches!(onboard::mode(&dev), Ok(onboard::Mode::Host))

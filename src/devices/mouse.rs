@@ -89,15 +89,39 @@ pub fn lift_off_from_device(l: dpi::LiftOff) -> Option<settings::LiftOff> {
     }
 }
 
+/// Мышь со старыми фичами DPI/частоты (`0x2201`, `0x8060`), а не новыми.
+pub fn old_dpi(dev: &Device) -> bool {
+    dev.feature(dpi::ID).is_none() && dev.feature(dpi::OLD_ID).is_some()
+}
+
+pub fn old_rate(dev: &Device) -> bool {
+    dev.feature(report_rate::ID).is_none() && dev.feature(report_rate::OLD_ID).is_some()
+}
+
 /// Записи для режима host: сначала режим, затем DPI/lift-off и частота.
 /// Значения, которые устройство в текущем подключении не поддерживает, пропускаются
-/// (например, 8000 Гц по кабелю) — с записью в лог.
-pub fn host_writes(dev: &Device, s: &MouseSettings) -> Vec<Write> {
+/// (например, 8000 Гц по кабелю) — с записью в лог. Старые фичи (`0x2201`, `0x8060`)
+/// не проверены на железе — пишутся только при `experimental`.
+pub fn host_writes(dev: &Device, s: &MouseSettings, experimental: bool) -> Vec<Write> {
     if s.mode != Some(settings::Mode::Host) {
         return Vec::new();
     }
     let mut writes = vec![onboard::set_mode(onboard::Mode::Host)];
-    if s.dpi.is_some() || s.lift_off.is_some() {
+    if experimental && old_dpi(dev) {
+        if let Some(v) = s.dpi {
+            match dpi::old_supported(dev) {
+                Ok(list) if list.contains(&v) => {
+                    if dpi::old_current(dev).ok() != Some(v) {
+                        writes.push(dpi::old_set(v));
+                    }
+                }
+                _ => tracing::warn!(
+                    v,
+                    "DPI из devices.toml не поддерживается (0x2201) — пропуск"
+                ),
+            }
+        }
+    } else if s.dpi.is_some() || s.lift_off.is_some() {
         match dpi::parameters(dev) {
             Ok(cur) => {
                 let x = s.dpi.unwrap_or(cur.x);
@@ -113,7 +137,22 @@ pub fn host_writes(dev: &Device, s: &MouseSettings) -> Vec<Write> {
             Err(e) => tracing::warn!("чтение DPI: {e}"),
         }
     }
-    if let Some(hz) = s.rate_hz {
+    if experimental && old_rate(dev) {
+        if let Some(hz) = s.rate_hz {
+            let supported = report_rate::old_supported_hz(dev).is_ok_and(|l| l.contains(&hz));
+            match report_rate::old_set(hz).filter(|_| supported) {
+                Some(w) => {
+                    if report_rate::old_current_hz(dev).ok() != Some(hz) {
+                        writes.push(w);
+                    }
+                }
+                None => tracing::warn!(
+                    hz,
+                    "частота из devices.toml не поддерживается (0x8060) — пропуск"
+                ),
+            }
+        }
+    } else if let Some(hz) = s.rate_hz {
         match report_rate::index_of_hz(hz) {
             Some(i) if report_rate::supported(dev).is_ok_and(|l| l.contains(&i)) => {
                 if report_rate::current(dev).ok() != Some(i) {
@@ -132,6 +171,12 @@ pub fn verify(dev: &Device, w: &Write) -> Option<bool> {
     let p = &w.params;
     match w.feature {
         report_rate::ID => report_rate::current(dev).ok().map(|cur| cur == p[0]),
+        report_rate::OLD_ID => report_rate::old_current_hz(dev)
+            .ok()
+            .map(|hz| hz == 1000 / u32::from(p[0].max(1))),
+        dpi::OLD_ID => dpi::old_current(dev)
+            .ok()
+            .map(|v| v.to_be_bytes() == [p[1], p[2]]),
         dpi::ID => dpi::parameters(dev).ok().map(|cur| {
             cur.x.to_be_bytes() == [p[1], p[2]]
                 && cur.y.to_be_bytes() == [p[3], p[4]]

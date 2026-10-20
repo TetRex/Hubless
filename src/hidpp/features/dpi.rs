@@ -11,10 +11,14 @@
 use crate::hidpp::{Device, Error, Write};
 
 pub const ID: u16 = 0x2202;
-/// Старая `0x2201` Adjustable DPI (G903 и др., по Solaar `AdjustableDpi`): fn2
-/// `getSensorDpi(sensor)` → `[sensor, dpi(2), …]`. Пока только чтение.
+/// Старая `0x2201` Adjustable DPI (G903 и др.; спецификация Logitech и Solaar `AdjustableDpi`):
+/// - fn1 `getSensorDpiList(sensor)` → `[sensor, u16 × 7]`, диапазоны `0xE000 | step` как у `0x2202`;
+/// - fn2 `getSensorDpi(sensor)` → `[sensor, dpi(2), default(2)]`;
+/// - fn3 `setSensorDpi(sensor, dpi(2))`. Не проверено на железе — только в экспериментальном режиме.
 pub const OLD_ID: u16 = 0x2201;
+const OLD_GET_LIST: u8 = 1;
 const OLD_GET_DPI: u8 = 2;
+const OLD_SET_DPI: u8 = 3;
 const GET_CAPABILITIES: u8 = 1;
 const GET_DPI_RANGES: u8 = 2;
 const GET_PARAMETERS: u8 = 5;
@@ -157,6 +161,28 @@ pub fn old_current(dev: &Device) -> Result<u16, Error> {
     let r = dev.call(OLD_ID, OLD_GET_DPI, &[SENSOR])?;
     let p = r.params();
     Ok(u16::from_be_bytes([p[1], p[2]]))
+}
+
+/// Допустимые значения DPI по `0x2201`.
+pub fn old_supported(dev: &Device) -> Result<Vec<u16>, Error> {
+    let r = dev.call(OLD_ID, OLD_GET_LIST, &[SENSOR])?;
+    let p = r.params();
+    let (words, _) = words_until_end(&p[1..15.min(p.len())]);
+    expand_ranges(&words)
+        .filter(|l| !l.is_empty())
+        .ok_or(Error::Hidpp20(0xFF))
+}
+
+/// Запись DPI по `0x2201`.
+pub fn old_set(dpi: u16) -> Write {
+    let [hi, lo] = dpi.to_be_bytes();
+    Write {
+        feature: OLD_ID,
+        function: OLD_SET_DPI,
+        params: vec![SENSOR, hi, lo],
+        what: format!("DPI {dpi} (0x2201)"),
+        short: false,
+    }
 }
 
 /// Записать DPI по X/Y и lift-off.
