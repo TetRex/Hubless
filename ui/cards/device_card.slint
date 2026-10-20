@@ -67,6 +67,9 @@ export struct DeviceInfo {
     dpi-max: int,
     // Мышь: настройки применяет Hubless (host) и lift-off: 0 low, 1 medium, 2 high, -1 — нет.
     host: bool,
+    // Мышь: есть переключатель host/onboard (у G903 и других мышей со старыми фичами — нет:
+    // режим host выключает кнопку DPI на мыши).
+    host-mode: bool,
     lift-off: int,
     // Мышь: частота опроса, Гц (-1 — неизвестна), и быстрые кнопки.
     rate: int,
@@ -225,7 +228,7 @@ export component DeviceCard inherits Rectangle {
             low: info.low;
         }
 
-        // Мышь: быстрые кнопки DPI (переводят мышь в режим host).
+        // Мышь: быстрые кнопки DPI (новые мыши переводятся в режим host, G903 и др. — нет).
         if info.connected && info.kind == DeviceKind.mouse && info.dpi-presets.length > 0: HorizontalLayout {
             spacing: Theme.spacing-xs;
 
@@ -281,7 +284,7 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
-        // Мышь: частота опроса (переводит мышь в режим host).
+        // Мышь: частота опроса (новые мыши переводятся в режим host, G903 и др. — нет).
         if info.connected && info.kind == DeviceKind.mouse && info.rate-presets.length > 0: HorizontalLayout {
             spacing: Theme.spacing-xs;
 
@@ -333,12 +336,12 @@ export component DeviceCard inherits Rectangle {
         }
 
         // Мышь: редкие настройки.
-        if info.connected && info.kind == DeviceKind.mouse: VerticalLayout {
+        if info.connected && info.kind == DeviceKind.mouse && (info.host-mode || info.lift-off >= 0): VerticalLayout {
             spacing: Theme.spacing-s;
 
             more := Expander { }
 
-            if more.expanded: Switch {
+            if more.expanded && info.host-mode: Switch {
                 text: @tr("Settings from Hubless (host)");
                 checked: info.host;
                 toggled => {

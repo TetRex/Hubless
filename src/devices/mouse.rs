@@ -98,15 +98,28 @@ pub fn old_rate(dev: &Device) -> bool {
     dev.feature(report_rate::ID).is_none() && dev.feature(report_rate::OLD_ID).is_some()
 }
 
-/// Записи для режима host: сначала режим, затем DPI/lift-off и частота.
+/// У мыши со старыми фичами Hubless не включает режим host: в нём мышь отключает onboard-профиль,
+/// а с ним и свою кнопку DPI — она оживала только после перезапуска мыши (G903, отчёт
+/// пользователя 2026-10-20). DPI и частота пишутся в onboard-режиме.
+pub fn host_mode_supported(dev: &Device) -> bool {
+    !(old_dpi(dev) || old_rate(dev))
+}
+
+/// Записи настроек из `devices.toml`: в режиме host — сначала режим, затем DPI/lift-off и частота.
 /// Значения, которые устройство в текущем подключении не поддерживает, пропускаются
 /// (например, 8000 Гц по кабелю) — с записью в лог. Старые фичи (`0x2201`, `0x8060`, G903)
-/// пишутся по спецификации Logitech и Solaar; на железе не проверены.
+/// пишутся по спецификации Logitech и Solaar без режима host (см. [`host_mode_supported`]),
+/// а оставшийся от 0.1.3 режим host снимается.
 pub fn host_writes(dev: &Device, s: &MouseSettings) -> Vec<Write> {
-    if s.mode != Some(settings::Mode::Host) {
-        return Vec::new();
+    let mut writes = Vec::new();
+    if host_mode_supported(dev) {
+        if s.mode != Some(settings::Mode::Host) {
+            return Vec::new();
+        }
+        writes.push(onboard::set_mode(onboard::Mode::Host));
+    } else if matches!(onboard::mode(dev), Ok(onboard::Mode::Host)) {
+        writes.push(onboard::set_mode(onboard::Mode::Onboard));
     }
-    let mut writes = vec![onboard::set_mode(onboard::Mode::Host)];
     if old_dpi(dev) {
         if let Some(v) = s.dpi {
             match dpi::old_supported(dev) {

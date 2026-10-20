@@ -82,6 +82,9 @@ pub enum Controls {
         /// Частота опроса, Гц, и быстрые кнопки из поддерживаемых в текущем подключении.
         rate_hz: Option<u32>,
         rate_presets: Vec<u32>,
+        /// Есть переключатель host/onboard (у мышей со старыми фичами — нет, см.
+        /// [`mouse::host_mode_supported`]).
+        host_mode: bool,
     },
     Keyboard {
         brightness: Option<u16>,
@@ -569,6 +572,7 @@ impl Worker {
                 };
                 Controls::Mouse {
                     host: matches!(onboard::mode(&dev), Ok(onboard::Mode::Host)),
+                    host_mode: mouse::host_mode_supported(&dev),
                     dpi: if old_dpi {
                         dpi::old_current(&dev).ok()
                     } else {
@@ -624,6 +628,7 @@ impl Worker {
                 let mut writes = mouse::host_writes(&dev, &settings.mouse);
                 // Возврат к onboard: настройки снова берутся из памяти мыши.
                 if settings.mouse.mode == Some(crate::settings::Mode::Onboard)
+                    && mouse::host_mode_supported(&dev)
                     && matches!(onboard::mode(&dev), Ok(onboard::Mode::Host))
                 {
                     writes.push(onboard::set_mode(onboard::Mode::Onboard));
