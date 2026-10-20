@@ -1,90 +1,93 @@
 # Hubless
 Hubless open-source alternative of Logitech G Hub
 
-Лёгкая трей-замена G Hub для Windows: один exe без установщика, в простое ~14 МБ памяти и ~0% CPU.
-Проверено с мышью PRO X Superlight 2, клавиатурой PRO X TKL Lightspeed и гарнитурой PRO X 2 LIGHTSPEED.
+A lightweight tray replacement for G Hub on Windows: a single exe with no installer, about 13 MB of memory
+and ~0% CPU while idle. Tested with the PRO X Superlight 2 mouse, the PRO X TKL Lightspeed keyboard and
+the PRO X 2 LIGHTSPEED headset.
 
-В разработке — см. [Plan.md](Plan.md). Находки по протоколам — в [docs/devices](docs/devices/README.md).
+Work in progress: see [Plan.md](Plan.md). Protocol findings are in [docs/devices](docs/devices/README.md).
+Both are in Russian.
 
-## Что умеет
+## Features
 
-- **Трей:** заряд всех устройств в подсказке, точка на иконке и уведомление при заряде ниже 15%,
-  меню «Автозапуск», «Открыть папку логов», «Выход».
-- **Панель** (левый клик по иконке):
-  - мышь — DPI 400/800/1600/3200, частота опроса 1–8 кГц, режим onboard/host, lift-off;
-  - клавиатура — яркость, эффект подсветки (статичный, дыхание, цикл, волна, рябь) и цвет;
-  - гарнитура — громкость своего голоса (sidetone) и автоотключение.
-- **Подсветка клавиатуры как в Solaar:** пока выбран эффект, Hubless управляет подсветкой сам и гасит её
-  при простое; при выходе управление возвращается клавиатуре.
-- **Окно настроек** (пункт «Настройки…» в меню трея или шестерёнка в панели): язык интерфейса
-  (русский или английский), автозапуск, создание и привязка профилей к программам.
-- **Профили:** наборы настроек мыши и клавиатуры; переключаются в шапке панели или сами,
-  когда активно окно привязанной программы (`hubless profile bind <имя> cs2.exe`).
-- **Onboard и host:** в режиме onboard настройки мыши хранятся в её памяти и работают без Hubless;
-  в режиме host Hubless применяет их при каждом подключении.
+- **Tray:** battery level of every device in the tooltip; a dot on the icon and a notification when a battery
+  drops below 15%; menu items "Start with Windows", "Open log folder" and "Exit".
+- **Panel** (left-click the tray icon):
+  - mouse: DPI presets plus any value via the slider or input field, polling rate 125 Hz to 8 kHz,
+    onboard/host mode, lift-off distance;
+  - keyboard: brightness, lighting effect (static, breathe, cycle, wave, ripple) and colour;
+  - headset: sidetone (how loud you hear your own voice) and auto power-off.
+- **Solaar-style keyboard lighting:** while an effect is selected, Hubless controls the lighting itself and
+  turns it off when you're idle; on exit, control goes back to the keyboard.
+- **Settings window** ("Settings…" in the tray menu or the gear in the panel): interface language
+  (English or Russian), start with Windows, the order of devices in the panel and which ones it shows,
+  creating profiles and binding them to programs.
+- **Profiles:** sets of mouse and keyboard settings. Switch them from the panel header, or let them switch
+  automatically while a bound program's window is active (`hubless profile bind <name> cs2.exe`).
+- **Onboard and host:** in onboard mode the mouse settings live in the mouse's memory and work without Hubless;
+  in host mode Hubless applies them every time the device connects.
 
-Пока не поддерживаются Game Mode и подсветка отдельных клавиш. Не будет эквалайзера, Blue VO!CE и DTS:
-это обработка звука в самом G Hub, а не команды устройству. Вместо эквалайзера
-можно использовать [Equalizer APO](https://sourceforge.net/projects/equalizerapo/).
+Game Mode and per-key lighting are not supported yet. There will be no equalizer, Blue VO!CE or DTS: those are
+audio processing inside G Hub itself, not commands sent to the device. For an equalizer, use
+[Equalizer APO](https://sourceforge.net/projects/equalizerapo/).
 
-Перед запуском закройте G Hub (`lghub`, `lghub_agent`, `lghub_updater`): обе программы одновременно
-управлять устройствами не могут.
+Close G Hub before starting Hubless (`lghub`, `lghub_agent`, `lghub_system_tray`; the `lghub_updater` service
+doesn't get in the way): the two programs can't control the devices at the same time.
 
-## Другие устройства Logitech
+## Other Logitech devices
 
-Hubless проверен на трёх устройствах, но многие мыши и клавиатуры Logitech говорят на том же
-протоколе HID++. Чтобы помочь добавить поддержку своего устройства:
+Hubless has been tested on three devices, but many Logitech mice and keyboards speak the same HID++ protocol.
+To help add support for your device:
 
-1. Полностью закройте G Hub.
-2. Откройте **Настройки → Отчёт об устройствах → Создать отчёт** (или выполните `hubless --report`).
-3. Нажмите **Открыть issue на GitHub** и приложите файл отчёта (или вставьте его текст кнопкой «Скопировать»).
+1. Close G Hub completely.
+2. Open **Settings → Device report → Create report** (or run `hubless --report`).
+3. Click **Open GitHub issue** and attach the report file (or paste its text using the **Copy** button).
 
-Отчёт только читает данные с устройств, не содержит серийных номеров и личных данных; сам Hubless
-ничего никуда не отправляет.
+The report only reads data from the devices and contains no serial numbers or personal data; Hubless itself
+sends nothing anywhere.
 
-## Командная строка
-
-Справка и вывод команд — на английском.
+## Command line
 
 ```
-hubless                       запуск в трее
-hubless --dump [файл]         устройства и таблицы фич HID++ (JSON и текст)
-hubless --report              отчёт об устройствах для issue на GitHub
-hubless --settings            открыть окно настроек запущенного Hubless
-hubless --quit                завершить запущенный Hubless (как «Выход» в меню)
-hubless mouse ...             DPI, lift-off, режим onboard/host
-hubless keyboard ...          яркость, подсветка и эффекты
-hubless headset ...           sidetone, автоотключение
-hubless profile ...           профили настроек, привязка к exe
-hubless --help                полный список команд
+hubless                       run in the tray
+hubless --dump [file]         devices and HID++ feature tables (JSON and text)
+hubless --report              device report for a GitHub issue
+hubless --settings [section]  open the settings window of the running Hubless (devices, profiles, report)
+hubless --quit                quit the running Hubless (like "Exit" in the menu)
+hubless mouse ...             DPI, polling rate, lift-off, onboard/host mode
+hubless keyboard ...          brightness, lighting and effects
+hubless headset ...           sidetone, auto power-off
+hubless profile ...           settings profiles, binding to exe files
+hubless --help                full list of commands
 ```
 
-Записи в устройство принимают `--dry-run`: показать пакеты, ничего не отправляя.
+Commands that write to a device accept `--dry-run`: show the packets without sending anything.
 
-## Сборка
+## Building
 
-Нужны Rust (stable, `x86_64-pc-windows-msvc`) и Visual Studio Build Tools с C++.
+You need Rust (stable, `x86_64-pc-windows-msvc`) and Visual Studio Build Tools with C++.
 
 ```
 cargo build --release
 ```
 
-Результат — `target/release/hubless.exe`.
+The result is `target/release/hubless.exe`.
 
-## Файлы
+## Files
 
-- `%APPDATA%\Hubless\config.toml` — настройки приложения (уровень логов, трассировка HID).
-- `%APPDATA%\Hubless\devices.toml` — настройки устройств, их пишет сам Hubless.
-- `%APPDATA%\Hubless\backups\` — резервные копии памяти мыши.
-- `%LOCALAPPDATA%\Hubless\logs\` — логи; подробные — с переменной окружения `HUBLESS_LOG=debug`.
+- `%APPDATA%\Hubless\config.toml`: app settings (log level, HID tracing, language).
+- `%APPDATA%\Hubless\devices.toml`: device settings, profiles and the panel layout; written by Hubless itself.
+- `%APPDATA%\Hubless\backups\`: backups of the mouse's onboard memory.
+- `%LOCALAPPDATA%\Hubless\logs\`: logs; set the environment variable `HUBLESS_LOG=debug` for verbose ones.
+- `%LOCALAPPDATA%\Hubless\reports\`: device reports.
 
-## Лицензия
+## License
 
 Copyright (C) 2026 TetRex
 
-Эта программа — свободное ПО: вы можете распространять и/или изменять её на условиях
-GNU General Public License версии 3 либо (по вашему выбору) любой более поздней версии,
-опубликованной Free Software Foundation. Программа распространяется БЕЗ КАКИХ-ЛИБО ГАРАНТИЙ.
-Полный текст лицензии — в файле [LICENSE](LICENSE).
+This program is free software: you can redistribute it and/or modify it under the terms of the
+GNU General Public License as published by the Free Software Foundation, either version 3 of the License,
+or (at your option) any later version. This program is distributed WITHOUT ANY WARRANTY.
+See the [LICENSE](LICENSE) file for the full text.
 
 SPDX-License-Identifier: `GPL-3.0-or-later`
