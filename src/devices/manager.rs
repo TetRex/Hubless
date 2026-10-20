@@ -340,6 +340,16 @@ impl Worker {
             // Устройство спит: слушаем ресивер, проснётся — придёт уведомление о связи.
             *self.waker.lock().unwrap_or_else(|e| e.into_inner()) = Some(s.transport.waker());
         }
+        // Спящее устройство — карточка «не подключено» с именем от ресивера (пустое — панель
+        // подставит название типа).
+        let asleep = sleeping.as_ref().map(|s| Snapshot {
+            name: s.name.clone().unwrap_or_default(),
+            connected: false,
+            wired: false,
+            battery: None,
+            controls: Controls::None,
+            error: None,
+        });
         self.sleeping = sleeping;
         match found {
             Some(f) => {
@@ -349,7 +359,7 @@ impl Worker {
                 self.poll_battery();
                 self.publish_controls(false);
             }
-            None => self.set_snapshot(None),
+            None => self.set_snapshot(asleep),
         }
     }
 
@@ -386,6 +396,7 @@ impl Worker {
             Event::Closed => {
                 tracing::info!(role = ?self.role, "ресивер отключён");
                 self.drop_device();
+                self.set_snapshot(None);
             }
             Event::Timeout => {}
         }
@@ -509,13 +520,25 @@ impl Worker {
                 let supported = dpi::supported(&dev, false).unwrap_or_default();
                 let params = dpi::parameters(&dev).ok();
                 let lod_supported = dpi::capabilities(&dev).is_ok_and(|c| c.lift_off);
+                // Старые фичи (0x2201, 0x8060) — только показать значение, без кнопок.
+                let old_dpi = || {
+                    dev.feature(dpi::OLD_ID)
+                        .and_then(|_| dpi::old_current(&dev).ok())
+                };
+                let old_rate = || {
+                    dev.feature(report_rate::OLD_ID)
+                        .and_then(|_| report_rate::old_current_hz(&dev).ok())
+                };
                 Controls::Mouse {
                     host: matches!(onboard::mode(&dev), Ok(onboard::Mode::Host)),
-                    dpi: params.as_ref().map(|p| p.x),
+                    dpi: params.as_ref().map(|p| p.x).or_else(old_dpi),
                     lift_off: params
                         .filter(|_| lod_supported)
                         .and_then(|p| mouse::lift_off_from_device(p.lift_off)),
-                    rate_hz: report_rate::current(&dev).ok().and_then(report_rate::hz),
+                    rate_hz: report_rate::current(&dev)
+                        .ok()
+                        .and_then(report_rate::hz)
+                        .or_else(old_rate),
                     rate_presets: {
                         let supported = report_rate::supported(&dev).unwrap_or_default();
                         RATE_PRESETS

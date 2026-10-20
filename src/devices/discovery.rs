@@ -37,6 +37,16 @@ impl Found {
 pub struct Sleeping {
     pub transport: Transport,
     pub slots: Vec<u8>,
+    /// Имя спящего устройства из регистров ресивера (если ресивер его знает).
+    pub name: Option<String>,
+}
+
+/// Ресивер по известному PID или строке продукта «… Receiver» (так называются и Unifying,
+/// и Bolt, и LIGHTSPEED). LIGHTSPEED-ресиверы на ping по `0xFF` не отвечают вовсе —
+/// поэтому сначала эти признаки, а ping — только для остальных.
+fn named_receiver(info: &transport::Interface) -> bool {
+    registry::lookup(info.pid).is_some_and(|k| k.kind == KnownKind::Receiver)
+        || info.product.to_ascii_lowercase().contains("receiver")
 }
 
 /// Найти устройства заданного типа (по `0x0005`). Только чтение.
@@ -52,31 +62,54 @@ pub fn find_or_sleeping(api: &HidApi, want_kind: u8) -> (Vec<Found>, Option<Slee
         .into_iter()
         .filter(|i| i.is_hidpp())
     {
-        let is_receiver = registry::lookup(info.pid).is_some_and(|k| k.kind == KnownKind::Receiver);
         let Ok(t) = Transport::open(api, &info) else {
             continue;
         };
-        // Слот и точно ли там устройство нужного типа (по pairing info).
-        let slots: Vec<(u8, bool)> = if is_receiver {
+        let mut names = Vec::new();
+        // Не ресивер по имени: ping по 0xFF — HID++ 2.0 у проводного устройства, 1.0 у ресивера.
+        let self_ping = (!named_receiver(&info)).then(|| root::ping(&t, DEVICE_SELF));
+        let receiver = matches!(self_ping, None | Some(Ok(Protocol::V1)));
+        // Слот, точно ли там устройство нужного типа (по pairing info) и быстрый ли пинг.
+        let slots: Vec<(u8, bool, bool)> = if receiver {
+            let regs = receiver::read_info(&t);
+            let reg = |label: String| {
+                regs.iter()
+                    .find(|r| r.label == label)
+                    .and_then(|r| r.result.as_ref().ok())
+            };
             // Только спаренные слоты; тип из pairing info отсекает чужие устройства без пинга.
-            receiver::read_info(&t)
-                .iter()
-                .filter_map(|r| {
-                    let slot: u8 = r.label.strip_prefix("pairing_info_slot")?.parse().ok()?;
-                    let raw = r.result.as_ref().ok()?;
+            let paired: Vec<(u8, bool, bool)> = (1..=6u8)
+                .filter_map(|slot| {
+                    let raw = reg(format!("pairing_info_slot{slot}"))?;
                     match receiver::pairing_device_type(raw) {
                         Some(kind) if kind != want_kind => None,
-                        kind => Some((slot, kind.is_some())),
+                        kind => Some((slot, kind.is_some(), false)),
                     }
                 })
-                .collect()
+                .collect();
+            for &(slot, ..) in &paired {
+                if let Some(name) = reg(format!("device_name_slot{slot}"))
+                    .and_then(|raw| receiver::pairing_name(raw))
+                {
+                    names.push((slot, name));
+                }
+            }
+            let any_pairing = (1..=6u8).any(|s| reg(format!("pairing_info_slot{s}")).is_some());
+            if any_pairing {
+                paired
+            } else {
+                // Pairing info не читается (Bolt и неизвестные ресиверы): пингуем все слоты быстро.
+                (1..=6u8).map(|slot| (slot, false, true)).collect()
+            }
+        } else if matches!(self_ping, Some(Ok(Protocol::V2(..)))) {
+            vec![(DEVICE_SELF, false, false)]
         } else {
-            vec![(DEVICE_SELF, false)]
+            Vec::new()
         };
         let mut silent = Vec::new();
         let mut hit = None;
-        for (index, typed) in slots {
-            match probe(&t, index, want_kind) {
+        for (index, typed, quick) in slots {
+            match probe(&t, index, want_kind, quick) {
                 Some((name, table)) => {
                     hit = Some((index, name, table));
                     break;
@@ -94,9 +127,14 @@ pub fn find_or_sleeping(api: &HidApi, want_kind: u8) -> (Vec<Found>, Option<Slee
                 table,
             }),
             None if !silent.is_empty() && sleeping.is_none() => {
+                let name = names
+                    .into_iter()
+                    .find(|(slot, _)| silent.contains(slot))
+                    .map(|(_, name)| name);
                 sleeping = Some(Sleeping {
                     transport: t,
                     slots: silent,
+                    name,
                 });
             }
             None => {}
@@ -108,8 +146,17 @@ pub fn find_or_sleeping(api: &HidApi, want_kind: u8) -> (Vec<Found>, Option<Slee
     (found, sleeping)
 }
 
-fn probe(t: &Transport, index: u8, want_kind: u8) -> Option<(String, Vec<FeatureEntry>)> {
-    if !matches!(root::ping(t, index), Ok(Protocol::V2(..))) {
+/// Опросить устройство: HID++ 2.0 нужного типа — имя и таблица фич. `quick` — пинг без
+/// повтора и с коротким таймаутом (слот, про который неизвестно, спарен ли он).
+fn probe(
+    t: &Transport,
+    index: u8,
+    want_kind: u8,
+    quick: bool,
+) -> Option<(String, Vec<FeatureEntry>)> {
+    let ping = || root::ping(t, index);
+    let protocol = if quick { t.quick(ping) } else { ping() };
+    if !matches!(protocol, Ok(Protocol::V2(..))) {
         return None;
     }
     let table = root::enumerate(t, index).ok()?;

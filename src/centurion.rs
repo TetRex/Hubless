@@ -188,21 +188,33 @@ impl Adapter {
         })
     }
 
-    /// Первый адаптер Centurion (коллекция `0xFFA0` известной гарнитуры) с найденным мостом.
-    pub fn find(api: &HidApi) -> Option<Self> {
-        let info = api.device_list().find(|d| {
-            d.vendor_id() == crate::hidpp::transport::LOGITECH_VID
-                && d.usage_page() == USAGE_PAGE
-                && crate::devices::registry::lookup(d.product_id())
-                    .is_some_and(|k| k.kind == crate::devices::registry::KnownKind::Headset)
-        })?;
-        let mut a = Self::open(api, info.path())
-            .inspect_err(|e| tracing::warn!("гарнитура: не открыть адаптер: {e}"))
-            .ok()?;
-        a.find_bridge()
-            .inspect_err(|e| tracing::warn!("гарнитура: нет моста: {e}"))
-            .ok()?;
-        Some(a)
+    /// Первый адаптер Centurion (коллекция `0xFFA0` у устройства Logitech) с найденным мостом
+    /// и его имя (строка продукта USB).
+    pub fn find(api: &HidApi) -> Option<(Self, String)> {
+        api.device_list()
+            .filter(|d| {
+                d.vendor_id() == crate::hidpp::transport::LOGITECH_VID
+                    && d.usage_page() == USAGE_PAGE
+            })
+            .find_map(|info| {
+                let mut a = Self::open(api, info.path())
+                    .inspect_err(|e| tracing::warn!("гарнитура: не открыть адаптер: {e}"))
+                    .ok()?;
+                a.find_bridge()
+                    .inspect_err(|e| tracing::warn!("гарнитура: нет моста: {e}"))
+                    .ok()?;
+                let name = info
+                    .product_string()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        crate::devices::registry::lookup(info.product_id())
+                            .map(|k| k.name.to_owned())
+                    })
+                    .unwrap_or_default();
+                Some((a, name))
+            })
     }
 
     /// Следующий асинхронный кадр (payload) или `None`, если за `timeout` ничего не пришло.

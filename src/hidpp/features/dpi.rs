@@ -11,6 +11,10 @@
 use crate::hidpp::{Device, Error, Write};
 
 pub const ID: u16 = 0x2202;
+/// Старая `0x2201` Adjustable DPI (G903 и др., по Solaar `AdjustableDpi`): fn2
+/// `getSensorDpi(sensor)` → `[sensor, dpi(2), …]`. Пока только чтение.
+pub const OLD_ID: u16 = 0x2201;
+const OLD_GET_DPI: u8 = 2;
 const GET_CAPABILITIES: u8 = 1;
 const GET_DPI_RANGES: u8 = 2;
 const GET_PARAMETERS: u8 = 5;
@@ -146,6 +150,13 @@ pub fn parameters(dev: &Device) -> Result<Parameters, Error> {
         y_default: be(7),
         lift_off: LiftOff::from_byte(p[9]),
     })
+}
+
+/// Текущий DPI по старой фиче `0x2201`.
+pub fn old_current(dev: &Device) -> Result<u16, Error> {
+    let r = dev.call(OLD_ID, OLD_GET_DPI, &[SENSOR])?;
+    let p = r.params();
+    Ok(u16::from_be_bytes([p[1], p[2]]))
 }
 
 /// Записать DPI по X/Y и lift-off.

@@ -24,6 +24,8 @@ use super::message::{
 
 pub const LOGITECH_VID: u16 = 0x046D;
 pub const HIDPP_USAGE_PAGE: u16 = 0xFF00;
+/// HID++ у устройств G-серии (отчёт пользователя 2026-10-20: G815, коллекции `FF43:0602/0604`).
+pub const HIDPP_G_USAGE_PAGE: u16 = 0xFF43;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 /// Быстрый режим для перебора слотов, которые скорее всего пусты: без повтора.
@@ -44,15 +46,19 @@ pub struct Collection {
 }
 
 impl Collection {
-    /// Размер отчёта HID++, который принимает коллекция (по usage на page 0xFF00).
+    /// Размер отчёта HID++, который принимает коллекция: usage `0x0001`/`0x0002`/`0x0004`
+    /// на page `0xFF00` или `0x0601`/`0x0602`/`0x0604` на page `0xFF43` (G-серия, по Solaar;
+    /// у G815 по кабелю есть только long и very long — short тогда уходит long-отчётом).
     fn report_id(&self) -> Option<u8> {
-        if self.usage_page != HIDPP_USAGE_PAGE {
-            return None;
-        }
-        match self.usage {
-            0x0001 => Some(SHORT),
-            0x0002 => Some(LONG),
-            0x0004 => Some(VERY_LONG),
+        let size = match self.usage_page {
+            HIDPP_USAGE_PAGE => self.usage,
+            HIDPP_G_USAGE_PAGE if self.usage >> 8 == 0x06 => self.usage & 0xFF,
+            _ => return None,
+        };
+        match size {
+            0x01 => Some(SHORT),
+            0x02 => Some(LONG),
+            0x04 => Some(VERY_LONG),
             _ => None,
         }
     }
@@ -453,6 +459,22 @@ mod error_tests {
         assert_eq!(error_code(&r, ERROR_20, 0x09, 0x6E), Some(0x02));
         assert_eq!(error_code(&r, ERROR_20, 0x09, 0x6F), None);
         assert_eq!(error_code(&r, ERROR_10, 0x09, 0x6E), None);
+    }
+
+    #[test]
+    fn hidpp_collections_on_both_pages() {
+        let c = |usage_page, usage| Collection {
+            path: CString::default(),
+            usage_page,
+            usage,
+        };
+        assert_eq!(c(0xFF00, 0x0001).report_id(), Some(SHORT));
+        assert_eq!(c(0xFF00, 0x0002).report_id(), Some(LONG));
+        // G815 по кабелю (отчёт пользователя 2026-10-20).
+        assert_eq!(c(0xFF43, 0x0602).report_id(), Some(LONG));
+        assert_eq!(c(0xFF43, 0x0604).report_id(), Some(VERY_LONG));
+        assert_eq!(c(0xFF43, 0x0002).report_id(), None);
+        assert_eq!(c(0xFFBC, 0x0088).report_id(), None);
     }
 
     #[test]

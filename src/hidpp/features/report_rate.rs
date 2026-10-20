@@ -43,6 +43,20 @@ pub fn current(dev: &Device) -> Result<u8, Error> {
     Ok(dev.call(ID, GET_RATE, &[link])?.params()[0])
 }
 
+/// Старая `0x8060` Report Rate (по Solaar `ReportRate`): fn1 — текущий интервал опроса, мс.
+/// Пока только чтение (G903, клавиатуры).
+pub const OLD_ID: u16 = 0x8060;
+const OLD_GET_RATE: u8 = 1;
+
+/// Текущая частота по `0x8060`, Гц.
+pub fn old_current_hz(dev: &Device) -> Result<u32, Error> {
+    let ms = dev.call(OLD_ID, OLD_GET_RATE, &[])?.params()[0];
+    if ms == 0 {
+        return Err(Error::Hidpp20(0xFF));
+    }
+    Ok(1000 / u32::from(ms))
+}
+
 /// Индекс частоты по значению в Гц.
 pub fn index_of_hz(hz: u32) -> Option<u8> {
     RATES_HZ.iter().position(|&r| r == hz).map(|i| i as u8)

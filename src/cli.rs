@@ -744,7 +744,7 @@ pub fn headset(args: &[String]) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let Some(mut a) = centurion::Adapter::find(&api) else {
+    let Some((mut a, _)) = centurion::Adapter::find(&api) else {
         eprintln!("Headset adapter not found.");
         return ExitCode::FAILURE;
     };

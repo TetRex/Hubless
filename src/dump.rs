@@ -120,17 +120,17 @@ fn dump_interface(api: &HidApi, info: Interface) -> Value {
         "usb_serial": info.serial.as_ref().map(|_| MASK),
         "collections": collections,
     });
-    if known.is_some_and(|k| k.kind == KnownKind::Headset)
-        && let Some(c) = info
-            .collections
-            .iter()
-            .find(|c| c.usage_page == centurion::USAGE_PAGE)
+    // Centurion (гарнитуры) — по коллекции 0xFFA0, а не по PID: так попадут и незнакомые модели.
+    if let Some(c) = info
+        .collections
+        .iter()
+        .find(|c| c.usage_page == centurion::USAGE_PAGE)
     {
         j["centurion"] = dump_centurion(api, &c.path);
         return j;
     }
     if !info.is_hidpp() {
-        out!("  no HID++ collections (page FF00), skipped");
+        out!("  no HID++ collections (page FF00/FF43), skipped");
         return j;
     }
 
@@ -144,7 +144,8 @@ fn dump_interface(api: &HidApi, info: Interface) -> Value {
     };
 
     let mut devices = Vec::new();
-    let mut is_receiver = known.is_some_and(|k| k.kind == KnownKind::Receiver);
+    let mut is_receiver = known.is_some_and(|k| k.kind == KnownKind::Receiver)
+        || info.product.to_ascii_lowercase().contains("receiver");
     // LIGHTSPEED-ресиверы на ping по 0xFF не отвечают вовсе — для них быстрый режим.
     let ping_self = || root::ping(&transport, DEVICE_SELF);
     let self_protocol = if is_receiver {

@@ -278,20 +278,23 @@ impl App {
             Role::Keyboard => DeviceKind::Keyboard,
             Role::Headset => DeviceKind::Headset,
         };
-        if let Some(m) = self.state.device_mut(kind) {
-            m.connected = s.as_ref().is_some_and(|s| s.connected);
-            m.link = s
-                .as_ref()
-                .map(|s| if s.wired { Link::Usb } else { Link::Wireless });
-            m.battery = s.as_ref().and_then(|s| s.battery).map(|b| BatteryState {
-                percent: b.percent,
-                charging: b.charging.is_charging() || b.external_power,
-            });
-            if let Some(s) = &s {
-                m.name.clone_from(&s.name);
+        // Нет снимка — устройства (и его ресивера или адаптера) нет: карточка исчезает.
+        match s {
+            None => self.state.remove_device(kind),
+            Some(s) => {
+                let m = self.state.device_entry(kind);
+                m.connected = s.connected;
+                m.link = s
+                    .connected
+                    .then_some(if s.wired { Link::Usb } else { Link::Wireless });
+                m.battery = s.battery.map(|b| BatteryState {
+                    percent: b.percent,
+                    charging: b.charging.is_charging() || b.external_power,
+                });
+                m.name = s.name;
+                m.controls = s.controls;
+                m.error = s.error;
             }
-            m.controls = s.as_ref().map(|s| s.controls.clone()).unwrap_or_default();
-            m.error = s.as_ref().and_then(|s| s.error.clone());
         }
         self.refresh_status();
     }
@@ -617,7 +620,13 @@ impl App {
                 .devices
                 .iter()
                 .filter(|d| d.connected && d.battery.is_some_and(BatteryState::is_low))
-                .map(|d| format!("{} — {}", d.name, d.battery_text().unwrap_or_default()))
+                .map(|d| {
+                    format!(
+                        "{} — {}",
+                        d.display_name(),
+                        d.battery_text().unwrap_or_default()
+                    )
+                })
                 .collect();
             self.tray.notify(
                 &tr("Battery below {}%").replace("{}", &LOW_BATTERY.to_string()),

@@ -295,6 +295,39 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
+        // Мышь со старыми фичами (0x2201, 0x8060): значения без кнопок — запись ещё не сделана.
+        if info.connected && info.kind == DeviceKind.mouse && info.dpi > 0
+            && info.dpi-presets.length == 0 && info.dpi-max <= info.dpi-min: HorizontalLayout {
+            spacing: Theme.spacing-xs;
+
+            Label {
+                text: "DPI";
+                min-width: self.preferred-width + Theme.spacing-s;
+            }
+
+            Text {
+                text: info.dpi;
+                color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+        }
+
+        if info.connected && info.kind == DeviceKind.mouse && info.rate > 0
+            && info.rate-presets.length == 0: HorizontalLayout {
+            spacing: Theme.spacing-xs;
+
+            Label {
+                text: @tr("Polling");
+                min-width: self.preferred-width + Theme.spacing-s;
+            }
+
+            Text {
+                text: @tr("{} Hz", info.rate);
+                color: Theme.text-primary;
+                vertical-alignment: center;
+            }
+        }
+
         // Мышь: редкие настройки.
         if info.connected && info.kind == DeviceKind.mouse: VerticalLayout {
             spacing: Theme.spacing-s;

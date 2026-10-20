@@ -155,5 +155,11 @@ msgstr "Порядок: перетащите или нажимайте стре�
 msgid "Show in the panel"
 msgstr "Показывать в панели"
 
+msgid "{} Hz"
+msgstr "{} Гц"
+
+msgid "No Logitech devices found. Connect a device or its receiver."
+msgstr "Устройства Logitech не найдены. Подключите устройство или его ресивер."
+
 msgid "All devices are hidden. Choose which to show in Settings → Devices."
 msgstr "Все устройства скрыты. Выбрать, какие показывать, — в «Настройки → Устройства»."

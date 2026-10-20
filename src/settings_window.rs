@@ -252,7 +252,7 @@ impl SettingsController {
                     DeviceKind::Keyboard => ui::DeviceKind::Keyboard,
                     DeviceKind::Headset => ui::DeviceKind::Headset,
                 },
-                name: d.name.as_str().into(),
+                name: d.display_name().into(),
                 connected: d.connected,
                 shown: !state.layout.is_hidden(d.kind.key()),
             })

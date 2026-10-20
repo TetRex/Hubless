@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Известные USB PID Logitech (VID `0x046D`). Пополняется по реальным дампам из `docs/devices/`.
-//! Тип устройства определяется опросом (ping/0x0005), таблица нужна для имён и подсказок.
+//! Тип устройства определяется опросом (ping/0x0005), ресивер — ещё и по строке продукта,
+//! гарнитура Centurion — по коллекции `0xFFA0`; таблица нужна для имён и подсказок.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KnownKind {
@@ -16,6 +17,18 @@ pub struct Known {
 }
 
 const KNOWN: &[Known] = &[
+    // PID по Solaar (не проверены на железе).
+    Known {
+        pid: 0xC52B,
+        name: "Unifying Receiver",
+        kind: KnownKind::Receiver,
+    },
+    Known {
+        pid: 0xC548,
+        name: "Bolt Receiver",
+        kind: KnownKind::Receiver,
+    },
+    // Проверены (docs/devices).
     Known {
         pid: 0xC547,
         name: "LIGHTSPEED Receiver",

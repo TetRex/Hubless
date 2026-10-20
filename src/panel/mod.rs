@@ -456,6 +456,7 @@ pub fn apply_theme_global(t: &ui::Theme<'_>, theme: &SystemTheme, fonts: &Fonts)
 /// Обновить карточки на месте: модель живёт, пока живёт окно, меняются только изменившиеся
 /// строки — раскрытые блоки и перетаскиваемый ползунок не сбрасываются.
 fn update_devices(panel: &ui::Panel, state: &AppState) {
+    panel.set_has_devices(!state.devices.is_empty());
     let items = device_infos(state);
     let model = panel.get_devices();
     match model.as_any().downcast_ref::<VecModel<ui::DeviceInfo>>() {
@@ -495,7 +496,7 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
                 DeviceKind::Keyboard => ui::DeviceKind::Keyboard,
                 DeviceKind::Headset => ui::DeviceKind::Headset,
             },
-            name: d.name.as_str().into(),
+            name: d.display_name().into(),
             connected: d.connected,
             link: link_text(d).into(),
             // Подробность ошибки — в логе; в карточке короткое сообщение на языке интерфейса.
@@ -586,7 +587,7 @@ fn fill_controls(info: &mut ui::DeviceInfo, c: &Controls) {
 fn link_text(d: &DeviceState) -> &'static str {
     match d.link {
         Some(Link::Usb) => "USB",
-        Some(Link::Wireless) => "Lightspeed",
+        Some(Link::Wireless) => crate::i18n::tr("Wireless"),
         None => "",
     }
 }

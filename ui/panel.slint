@@ -9,6 +9,8 @@ export { Theme, DeviceInfo, DeviceKind, DeviceRow, ProfileRow, SettingsWindow }
 
 export component Panel inherits Window {
     in property <[DeviceInfo]> devices;
+    // Найдено хоть одно устройство (карточек может не быть — все скрыты).
+    in property <bool> has-devices;
     // Фон Mica от DWM: окно прозрачное, иначе — сплошной цвет темы.
     in property <bool> backdrop;
     // Панель показана (содержимое проявляется) и включены ли системные «Эффекты анимации».
@@ -112,9 +114,11 @@ export component Panel inherits Window {
                     alignment: start;
                     spacing: Theme.spacing-s;
 
-                    // Все устройства скрыты в настройках.
+                    // Карточек нет: устройств не найдено или все скрыты в настройках.
                     if root.devices.length == 0: Text {
-                        text: @tr("All devices are hidden. Choose which to show in Settings → Devices.");
+                        text: root.has-devices
+                            ? @tr("All devices are hidden. Choose which to show in Settings → Devices.")
+                            : @tr("No Logitech devices found. Connect a device or its receiver.");
                         font-size: Theme.font-caption;
                         color: Theme.text-secondary;
                         wrap: word-wrap;

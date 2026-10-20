@@ -19,13 +19,14 @@ use crate::hidpp::features::battery::{Battery, ChargeState};
 const BATTERY_POLL: Duration = Duration::from_secs(5 * 60);
 const READ_SLICE: Duration = Duration::from_secs(1);
 const RESCAN_DEBOUNCE: Duration = Duration::from_millis(800);
-const NAME: &str = "PRO X 2 LIGHTSPEED";
 
 pub(super) struct Worker {
     rx: Receiver<Command>,
     on_update: Box<dyn Fn(Option<Snapshot>) + Send>,
     api: Option<HidApi>,
     adapter: Option<Adapter>,
+    /// Имя гарнитуры — строка продукта адаптера.
+    name: String,
     snapshot: Option<Snapshot>,
     next_poll: Instant,
     /// Ошибка последней записи из панели.
@@ -42,6 +43,7 @@ impl Worker {
             on_update,
             api: None,
             adapter: None,
+            name: String::new(),
             snapshot: None,
             next_poll: Instant::now(),
             error: None,
@@ -119,8 +121,15 @@ impl Worker {
                 }
             },
         };
-        self.adapter = Adapter::find(api);
-        tracing::info!(found = self.adapter.is_some(), "поиск адаптера гарнитуры");
+        let found = Adapter::find(api);
+        tracing::info!(
+            name = found.as_ref().map(|(_, n)| n.as_str()),
+            "поиск адаптера гарнитуры"
+        );
+        if let Some((adapter, name)) = found {
+            self.adapter = Some(adapter);
+            self.name = name;
+        }
         if self.adapter.is_some() {
             self.poll();
         } else {
@@ -211,7 +220,7 @@ impl Worker {
         let error = self.error.clone();
         match battery {
             Ok(b) => self.set_snapshot(Some(Snapshot {
-                name: NAME.into(),
+                name: self.name.clone(),
                 connected: true,
                 wired: false,
                 battery: Some(Battery {
@@ -237,7 +246,7 @@ impl Worker {
 
     fn set_offline(&mut self) {
         self.set_snapshot(Some(Snapshot {
-            name: NAME.into(),
+            name: self.name.clone(),
             connected: false,
             wired: false,
             battery: None,

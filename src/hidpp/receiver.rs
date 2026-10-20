@@ -11,6 +11,9 @@ const RECEIVER_INFO: u8 = 0xB5;
 const FIRMWARE: u8 = 0xF1;
 /// Подрегистр RECEIVER_INFO с информацией о паре в слоте `n` (1..6): `0x20 + n - 1`.
 const PAIRING_INFO: u8 = 0x20;
+/// Подрегистр RECEIVER_INFO с именем устройства в слоте `n`: `0x40 + n - 1` (по Solaar;
+/// у Bolt — другие подрегистры, не читается).
+const DEVICE_NAME: u8 = 0x40;
 
 pub struct RegisterValue {
     pub label: String,
@@ -56,12 +59,21 @@ pub fn read_info(t: &Transport) -> Vec<RegisterValue> {
                 [PAIRING_INFO + slot - 1, 0, 0],
             )
         });
-        empty_in_row = if reg.result.is_ok() {
-            0
-        } else {
-            empty_in_row + 1
-        };
+        let paired = reg.result.is_ok();
+        empty_in_row = if paired { 0 } else { empty_in_row + 1 };
         regs.push(reg);
+        if paired {
+            // Имя знает сам ресивер — есть и у спящего устройства.
+            regs.push(t.quick(|| {
+                read(
+                    t,
+                    format!("device_name_slot{slot}"),
+                    RECEIVER_INFO,
+                    true,
+                    [DEVICE_NAME + slot - 1, 0, 0],
+                )
+            }));
+        }
         if empty_in_row == 2 {
             break;
         }
@@ -75,6 +87,17 @@ pub fn pairing_wpid(raw: &[u8]) -> Option<u16> {
     (wpid != 0).then_some(wpid)
 }
 
+/// Имя устройства из ответа DEVICE_NAME: `[подрегистр, длина, имя…]` (по Solaar).
+pub fn pairing_name(raw: &[u8]) -> Option<String> {
+    let len = usize::from(*raw.get(1)?);
+    let bytes = raw.get(2..2 + len)?;
+    let name = String::from_utf8_lossy(bytes)
+        .trim_end_matches('\0')
+        .trim()
+        .to_owned();
+    (!name.is_empty()).then_some(name)
+}
+
 /// Тип устройства из pairing info (байт 7, младшая тетрада; по Solaar): 1 — клавиатура, 2 — мышь.
 /// Возвращает тип в терминах `0x0005` (0 — клавиатура, 3 — мышь), если он известен.
 pub fn pairing_device_type(raw: &[u8]) -> Option<u8> {
@@ -82,5 +105,20 @@ pub fn pairing_device_type(raw: &[u8]) -> Option<u8> {
         1 => Some(0),
         2 => Some(3),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn name_from_register() {
+        let mut raw = vec![0x40, 7];
+        raw.extend_from_slice(b"PRO X 2");
+        raw.resize(16, 0);
+        assert_eq!(pairing_name(&raw).as_deref(), Some("PRO X 2"));
+        assert_eq!(pairing_name(&[0x40, 0]), None);
+        assert_eq!(pairing_name(&[0x40, 20, b'A']), None, "длина больше ответа");
     }
 }

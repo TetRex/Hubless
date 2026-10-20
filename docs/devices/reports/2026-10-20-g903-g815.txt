@@ -1,0 +1,570 @@
+Hubless 0.1.0 device report
+Windows: Windows 11 Pro 25H2 (build 26200)
+G Hub running: no
+Generated (UTC): 2026-10-20T12:55:26Z
+
+== C33F HID VHF Driver (interface -1, "HID VHF Driver") ==
+  collections: 0059:0001
+  no HID++ collections (page FF00), skipped
+
+== 4087 HID VHF Driver (interface -1, "HID VHF Driver") ==
+  collections: 0059:0001
+  no HID++ collections (page FF00), skipped
+
+== C232  (interface 0, "") ==
+  collections: 0001:0006
+  no HID++ collections (page FF00), skipped
+
+== C33F G815 RGB MECHANICAL GAMING KEYBOARD (interface 0, "G815 RGB MECHANICAL GAMING KEYBOARD") ==
+  collections: 0001:0006
+  no HID++ collections (page FF00), skipped
+
+== C33F G815 RGB MECHANICAL GAMING KEYBOARD (interface 1, "G815 RGB MECHANICAL GAMING KEYBOARD") ==
+  collections: 0001:0002 0001:0006 000C:0001 FF43:0602 FF43:0604
+  no HID++ collections (page FF00), skipped
+
+== C539 USB Receiver (interface 0, "USB Receiver") ==
+  collections: 0001:0006
+  no HID++ collections (page FF00), skipped
+
+== C539 USB Receiver (interface 1, "USB Receiver") ==
+  collections: 0001:0002 0001:0080 000C:0001 FFBC:0088
+  no HID++ collections (page FF00), skipped
+
+== C539 USB Receiver (interface 2, "USB Receiver") ==
+  collections: FF00:0001 FF00:0002 FF00:0004
+  0xFF: HID++ 1.0 receiver
+  reg  connection_state     00 01 00
+  reg  firmware_version     01 39 06
+  reg  firmware_build       02 00 40
+  reg  bootloader           04 02 09
+  reg  pairing_info_slot1   20 09 08 40 87 0c 01 02 b3 00 00 00 00 00 00 00
+  reg  pairing_info_slot2   HID++ 1.0 error 0x03 (invalid value)
+  reg  pairing_info_slot3   HID++ 1.0 error 0x03 (invalid value)
+  slot 1: HID++ 4.2
+    G903 LIGHTSPEED Wireless Gaming Mouse w/ HERO (mouse)
+    model 4087/C091/0000 transport 000C, firmware entities: 3
+    bootloader   BL1 06.01.B0013
+    firmware     MPM 23.01.B0013
+    softdevice    00.00.B00AE
+    features (31):
+      idx  id    ver  flags             name
+        0  0000    1                    ROOT
+        1  0001    1                    FEATURE_SET
+        2  0003    2                    DEVICE_FW_VERSION
+        3  0005    0                    DEVICE_NAME
+        4  1D4B    0                    WIRELESS_DEVICE_STATUS
+        5  0020    0                    CONFIG_CHANGE
+        6  1001    2                    BATTERY_VOLTAGE
+        7  8071    0                    RGB_EFFECTS
+        8  8100    0                    ONBOARD_PROFILES
+        9  8110    0                    MOUSE_BUTTON_SPY
+       10  8060    0                    REPORT_RATE
+       11  2201    1                    ADJUSTABLE_DPI
+       12  00C2    0                    DFUCONTROL_SIGNED  [blacklisted]
+       13  1802    0  hidden,engineering  DEVICE_RESET
+       14  1803    0  hidden,engineering  ?
+       15  1805    0  hidden,engineering  OOBSTATE
+       16  1806    4  hidden,engineering  CONFIG_DEVICE_PROPS
+       17  1811    0  hidden,engineering  ?
+       18  1830    0  hidden,engineering  ?
+       19  1890    4  hidden,engineering  ?
+       20  1891    4  hidden,engineering  ?
+       21  18A1    0  hidden,engineering  ?
+       22  1801    0  hidden,engineering  ?
+       23  18B1    0  hidden,engineering  ?
+       24  1DF3    0  hidden,engineering  ?
+       25  1E00    0  hidden            ENABLE_HIDDEN_FEATURES
+       26  1EB0    0  hidden,engineering  ?
+       27  1863    0  hidden,engineering  ?
+       28  1E22    0  hidden,engineering  ?
+       29  2121    0                    HIRES_WHEEL
+       30  18C0    0  hidden,engineering  ?
+  slot 2: HID++ 1.0 error 0x08 (unknown device)
+  slot 3: HID++ 1.0 error 0x08 (unknown device)
+  slot 4: HID++ 1.0 error 0x08 (unknown device)
+  slot 5: HID++ 1.0 error 0x08 (unknown device)
+  slot 6: HID++ 1.0 error 0x08 (unknown device)
+
+----- JSON -----
+{
+  "generated_utc": "2026-10-20T12:55:26Z",
+  "interfaces": [
+    {
+      "collections": [
+        "0059:0001"
+      ],
+      "interface": -1,
+      "known_as": null,
+      "pid": "C33F",
+      "product": "HID VHF Driver",
+      "release": "0000",
+      "usb_serial": "XXXXXXXX"
+    },
+    {
+      "collections": [
+        "0059:0001"
+      ],
+      "interface": -1,
+      "known_as": null,
+      "pid": "4087",
+      "product": "HID VHF Driver",
+      "release": "0000",
+      "usb_serial": "XXXXXXXX"
+    },
+    {
+      "collections": [
+        "0001:0006"
+      ],
+      "interface": 0,
+      "known_as": null,
+      "pid": "C232",
+      "product": "",
+      "release": "0001",
+      "usb_serial": null
+    },
+    {
+      "collections": [
+        "0001:0006"
+      ],
+      "interface": 0,
+      "known_as": null,
+      "pid": "C33F",
+      "product": "G815 RGB MECHANICAL GAMING KEYBOARD",
+      "release": "3102",
+      "usb_serial": "XXXXXXXX"
+    },
+    {
+      "collections": [
+        "0001:0002",
+        "0001:0006",
+        "000C:0001",
+        "FF43:0602",
+        "FF43:0604"
+      ],
+      "interface": 1,
+      "known_as": null,
+      "pid": "C33F",
+      "product": "G815 RGB MECHANICAL GAMING KEYBOARD",
+      "release": "3102",
+      "usb_serial": "XXXXXXXX"
+    },
+    {
+      "collections": [
+        "0001:0006"
+      ],
+      "interface": 0,
+      "known_as": null,
+      "pid": "C539",
+      "product": "USB Receiver",
+      "release": "3906",
+      "usb_serial": null
+    },
+    {
+      "collections": [
+        "0001:0002",
+        "0001:0080",
+        "000C:0001",
+        "FFBC:0088"
+      ],
+      "interface": 1,
+      "known_as": null,
+      "pid": "C539",
+      "product": "USB Receiver",
+      "release": "3906",
+      "usb_serial": null
+    },
+    {
+      "collections": [
+        "FF00:0001",
+        "FF00:0002",
+        "FF00:0004"
+      ],
+      "devices": [
+        {
+          "device_info": {
+            "capabilities": "00",
+            "entity_count": 3,
+            "extended_model_id": "00",
+            "model_ids": [
+              "4087",
+              "C091",
+              "0000"
+            ],
+            "raw": "03 XX XX XX XX 00 0c 40 87 c0 91 00 00 00 00 00",
+            "transport": "000C",
+            "unit_id": "XXXXXXXX"
+          },
+          "features": [
+            {
+              "flags": [],
+              "id": "0000",
+              "index": 0,
+              "name": "ROOT",
+              "version": 1
+            },
+            {
+              "flags": [],
+              "id": "0001",
+              "index": 1,
+              "name": "FEATURE_SET",
+              "version": 1
+            },
+            {
+              "flags": [],
+              "id": "0003",
+              "index": 2,
+              "name": "DEVICE_FW_VERSION",
+              "version": 2
+            },
+            {
+              "flags": [],
+              "id": "0005",
+              "index": 3,
+              "name": "DEVICE_NAME",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "1D4B",
+              "index": 4,
+              "name": "WIRELESS_DEVICE_STATUS",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "0020",
+              "index": 5,
+              "name": "CONFIG_CHANGE",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "1001",
+              "index": 6,
+              "name": "BATTERY_VOLTAGE",
+              "version": 2
+            },
+            {
+              "flags": [],
+              "id": "8071",
+              "index": 7,
+              "name": "RGB_EFFECTS",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "8100",
+              "index": 8,
+              "name": "ONBOARD_PROFILES",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "8110",
+              "index": 9,
+              "name": "MOUSE_BUTTON_SPY",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "8060",
+              "index": 10,
+              "name": "REPORT_RATE",
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "2201",
+              "index": 11,
+              "name": "ADJUSTABLE_DPI",
+              "version": 1
+            },
+            {
+              "flags": [],
+              "id": "00C2",
+              "index": 12,
+              "name": "DFUCONTROL_SIGNED",
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1802",
+              "index": 13,
+              "name": "DEVICE_RESET",
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1803",
+              "index": 14,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1805",
+              "index": 15,
+              "name": "OOBSTATE",
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1806",
+              "index": 16,
+              "name": "CONFIG_DEVICE_PROPS",
+              "version": 4
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1811",
+              "index": 17,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1830",
+              "index": 18,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1890",
+              "index": 19,
+              "name": null,
+              "version": 4
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1891",
+              "index": 20,
+              "name": null,
+              "version": 4
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "18A1",
+              "index": 21,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1801",
+              "index": 22,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "18B1",
+              "index": 23,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1DF3",
+              "index": 24,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden"
+              ],
+              "id": "1E00",
+              "index": 25,
+              "name": "ENABLE_HIDDEN_FEATURES",
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1EB0",
+              "index": 26,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1863",
+              "index": 27,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "1E22",
+              "index": 28,
+              "name": null,
+              "version": 0
+            },
+            {
+              "flags": [],
+              "id": "2121",
+              "index": 29,
+              "name": "HIRES_WHEEL",
+              "version": 0
+            },
+            {
+              "flags": [
+                "hidden",
+                "engineering"
+              ],
+              "id": "18C0",
+              "index": 30,
+              "name": null,
+              "version": 0
+            }
+          ],
+          "firmware": [
+            {
+              "entity": 0,
+              "kind": "bootloader",
+              "raw": "01 42 4c 31 06 01 00 13 00 00 00 04 70 72 fe 00",
+              "version": "BL1 06.01.B0013"
+            },
+            {
+              "entity": 1,
+              "kind": "firmware",
+              "raw": "00 4d 50 4d 23 01 00 13 01 40 87 04 70 72 fe 00",
+              "version": "MPM 23.01.B0013"
+            },
+            {
+              "entity": 2,
+              "kind": "softdevice",
+              "raw": "05 00 00 00 00 00 00 ae 00 00 00 00 00 00 00 00",
+              "version": " 00.00.B00AE"
+            }
+          ],
+          "index": "01",
+          "name": "G903 LIGHTSPEED Wireless Gaming Mouse w/ HERO",
+          "protocol": "4.2",
+          "type": "mouse",
+          "type_id": 3
+        }
+      ],
+      "interface": 2,
+      "known_as": null,
+      "notifications": [
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00",
+        "11 01 07 10 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00"
+      ],
+      "pid": "C539",
+      "product": "USB Receiver",
+      "registers": [
+        {
+          "label": "connection_state",
+          "params": "00 00 00",
+          "raw": "00 01 00",
+          "register": "02"
+        },
+        {
+          "label": "firmware_version",
+          "params": "01 00 00",
+          "raw": "01 39 06",
+          "register": "F1"
+        },
+        {
+          "label": "firmware_build",
+          "params": "02 00 00",
+          "raw": "02 00 40",
+          "register": "F1"
+        },
+        {
+          "label": "bootloader",
+          "params": "04 00 00",
+          "raw": "04 02 09",
+          "register": "F1"
+        },
+        {
+          "label": "pairing_info_slot1",
+          "params": "20 00 00",
+          "raw": "20 09 08 40 87 0c 01 02 b3 00 00 00 00 00 00 00",
+          "register": "B5",
+          "wpid": "4087"
+        },
+        {
+          "error": "HID++ 1.0 error 0x03 (invalid value)",
+          "label": "pairing_info_slot2",
+          "params": "21 00 00",
+          "register": "B5"
+        },
+        {
+          "error": "HID++ 1.0 error 0x03 (invalid value)",
+          "label": "pairing_info_slot3",
+          "params": "22 00 00",
+          "register": "B5"
+        }
+      ],
+      "release": "3906",
+      "role": "receiver",
+      "self_protocol": "1.0",
+      "usb_serial": null
+    }
+  ],
+  "tool": "hubless 0.1.0"
+}

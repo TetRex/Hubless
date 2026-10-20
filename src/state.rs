@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Общая модель состояния устройств — источник данных для панели и трея.
 
+use crate::i18n::tr;
 use crate::settings::PanelLayout;
 
 /// Порог низкого заряда (индикатор на иконке, уведомление).
 pub const LOW_BATTERY: u8 = 15;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Порядок вариантов — порядок карточек по умолчанию.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DeviceKind {
     Mouse,
     Keyboard,
@@ -20,6 +22,15 @@ impl DeviceKind {
             Self::Mouse => "mouse",
             Self::Keyboard => "keyboard",
             Self::Headset => "headset",
+        }
+    }
+
+    /// Название типа — имя карточки, если устройство своего имени не сообщило.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Mouse => tr("Mouse"),
+            Self::Keyboard => tr("Keyboard"),
+            Self::Headset => tr("Headset"),
         }
     }
 }
@@ -56,6 +67,27 @@ pub struct DeviceState {
 }
 
 impl DeviceState {
+    fn new(kind: DeviceKind) -> Self {
+        Self {
+            kind,
+            name: String::new(),
+            connected: false,
+            link: None,
+            battery: None,
+            controls: Default::default(),
+            error: None,
+        }
+    }
+
+    /// Имя для панели и трея: от устройства, иначе название типа.
+    pub fn display_name(&self) -> &str {
+        if self.name.is_empty() {
+            self.kind.title()
+        } else {
+            &self.name
+        }
+    }
+
     /// «94% ⚡» или «—».
     pub fn battery_text(&self) -> Option<String> {
         self.battery
@@ -63,8 +95,10 @@ impl DeviceState {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AppState {
+    /// Найденные устройства (по одному на тип), в порядке типов. Карточка есть, пока
+    /// устройство подключено или спарено с подключённым ресивером/адаптером.
     pub devices: Vec<DeviceState>,
     /// Отображаемые имена профилей и индекс действующего.
     pub profiles: Vec<String>,
@@ -73,34 +107,22 @@ pub struct AppState {
     pub layout: PanelLayout,
 }
 
-impl Default for AppState {
-    /// Известные устройства, все отключены до первого опроса.
-    fn default() -> Self {
-        let device = |kind, name: &str| DeviceState {
-            kind,
-            name: name.into(),
-            connected: false,
-            link: None,
-            battery: None,
-            controls: Default::default(),
-            error: None,
-        };
-        Self {
-            devices: vec![
-                device(DeviceKind::Mouse, "PRO X Superlight 2"),
-                device(DeviceKind::Keyboard, "PRO X TKL"),
-                device(DeviceKind::Headset, "PRO X 2 LIGHTSPEED"),
-            ],
-            profiles: Vec::new(),
-            profile: 0,
-            layout: PanelLayout::default(),
-        }
-    }
-}
-
 impl AppState {
-    pub fn device_mut(&mut self, kind: DeviceKind) -> Option<&mut DeviceState> {
-        self.devices.iter_mut().find(|d| d.kind == kind)
+    /// Карточка устройства; нет — добавить (на место по типу).
+    pub fn device_entry(&mut self, kind: DeviceKind) -> &mut DeviceState {
+        let at = match self.devices.binary_search_by_key(&kind, |d| d.kind) {
+            Ok(i) => i,
+            Err(i) => {
+                self.devices.insert(i, DeviceState::new(kind));
+                i
+            }
+        };
+        &mut self.devices[at]
+    }
+
+    /// Устройство пропало (нет ни его, ни ресивера или адаптера) — убрать карточку.
+    pub fn remove_device(&mut self, kind: DeviceKind) {
+        self.devices.retain(|d| d.kind != kind);
     }
 
     /// Все устройства в порядке, заданном в настройках.
@@ -124,6 +146,12 @@ impl AppState {
         }
         let key = keys.remove(from);
         keys.insert(to, key);
+        // Устройства, которых сейчас нет, сохраняют место в списке — в конце.
+        for k in &self.layout.order {
+            if !keys.contains(k) {
+                keys.push(k.clone());
+            }
+        }
         Some(keys)
     }
 
@@ -140,8 +168,8 @@ impl AppState {
             .into_iter()
             .filter(|d| d.connected)
             .map(|d| match d.battery_text() {
-                Some(b) => format!("{}: {b}", d.name),
-                None => d.name.clone(),
+                Some(b) => format!("{}: {b}", d.display_name()),
+                None => d.display_name().to_owned(),
             })
             .collect()
     }
@@ -157,30 +185,64 @@ impl AppState {
 mod tests {
     use super::*;
 
+    /// Все три устройства, как у автора.
+    fn three() -> AppState {
+        let mut s = AppState::default();
+        for kind in [DeviceKind::Headset, DeviceKind::Mouse, DeviceKind::Keyboard] {
+            s.device_entry(kind);
+        }
+        s
+    }
+
+    #[test]
+    fn devices_appear_and_disappear() {
+        let mut s = AppState::default();
+        assert!(s.panel_devices().is_empty(), "до поиска карточек нет");
+        s.device_entry(DeviceKind::Headset).name = "A50".into();
+        s.device_entry(DeviceKind::Mouse);
+        let kinds: Vec<_> = s.devices.iter().map(|d| d.kind).collect();
+        assert_eq!(
+            kinds,
+            [DeviceKind::Mouse, DeviceKind::Headset],
+            "порядок по типу"
+        );
+        assert_eq!(
+            s.devices[0].display_name(),
+            "Mouse",
+            "без имени — название типа"
+        );
+        s.device_entry(DeviceKind::Headset);
+        assert_eq!(s.devices.len(), 2, "повторно не добавляется");
+        s.remove_device(DeviceKind::Mouse);
+        assert_eq!(s.devices.len(), 1);
+        assert_eq!(s.devices[0].display_name(), "A50");
+    }
+
     #[test]
     fn low_battery_ignores_charging_and_disconnected() {
         let mut s = AppState::default();
-        let m = s.device_mut(DeviceKind::Mouse).unwrap();
+        let m = s.device_entry(DeviceKind::Mouse);
+        m.name = "PRO X 2".into();
         m.connected = true;
         m.battery = Some(BatteryState {
             percent: 10,
             charging: true,
         });
         assert!(!s.any_low_battery());
-        s.device_mut(DeviceKind::Mouse).unwrap().battery = Some(BatteryState {
+        s.device_entry(DeviceKind::Mouse).battery = Some(BatteryState {
             percent: 10,
             charging: false,
         });
         assert!(s.any_low_battery());
-        assert_eq!(s.tray_lines(), vec!["PRO X Superlight 2: 10%".to_owned()]);
-        s.device_mut(DeviceKind::Mouse).unwrap().connected = false;
+        assert_eq!(s.tray_lines(), vec!["PRO X 2: 10%".to_owned()]);
+        s.device_entry(DeviceKind::Mouse).connected = false;
         assert!(!s.any_low_battery());
         assert!(s.tray_lines().is_empty());
     }
 
     #[test]
     fn layout_orders_and_hides() {
-        let mut s = AppState::default();
+        let mut s = three();
         let kinds = |list: Vec<&DeviceState>| list.iter().map(|d| d.kind).collect::<Vec<_>>();
         assert_eq!(
             kinds(s.panel_devices()),
@@ -206,6 +268,13 @@ mod tests {
         assert_eq!(
             s.moved(2, 0),
             Some(vec!["keyboard".into(), "headset".into(), "mouse".into()])
+        );
+        // Отсутствующее устройство не теряет место в сохранённом порядке.
+        s.layout.order = vec!["headset".into(), "mouse".into(), "keyboard".into()];
+        s.remove_device(DeviceKind::Keyboard);
+        assert_eq!(
+            s.moved(1, 0),
+            Some(vec!["mouse".into(), "headset".into(), "keyboard".into()])
         );
     }
 }

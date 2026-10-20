@@ -627,6 +627,11 @@ export component SettingsWindow inherits Window {
                     wrap: word-wrap;
                 }
 
+                if root.devices.length == 0: Caption {
+                    text: @tr("No Logitech devices found. Connect a device or its receiver.");
+                    wrap: word-wrap;
+                }
+
                 ScrollView {
                     vertical-stretch: 1;
 
