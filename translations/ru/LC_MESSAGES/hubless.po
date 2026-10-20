@@ -110,3 +110,28 @@ msgstr "или введите, например, cs2.exe"
 
 msgid "A profile switches on by itself while one of its programs is in the foreground."
 msgstr "Профиль включается сам, пока активна одна из его программ."
+
+# Отчёт об устройствах
+msgid "Device report"
+msgstr "Отчёт об устройствах"
+
+msgid "Help add support for your Logitech devices: create a report and send it as a GitHub issue. The report lists your Logitech devices and the HID++ features they support. It only reads from the devices, contains no serial numbers or personal data, and Hubless sends nothing by itself."
+msgstr "Помогите добавить поддержку ваших устройств Logitech: создайте отчёт и отправьте его через issue на GitHub. В отчёте — список ваших устройств Logitech и поддерживаемых ими функций HID++. Он только читает данные с устройств, не содержит серийных номеров и личных данных, а сам Hubless ничего никуда не отправляет."
+
+msgid "G Hub is running: close it completely for an accurate report."
+msgstr "Запущен G Hub: закройте его полностью, чтобы отчёт был точным."
+
+msgid "Collecting…"
+msgstr "Сбор…"
+
+msgid "Create report"
+msgstr "Создать отчёт"
+
+msgid "Copy"
+msgstr "Скопировать"
+
+msgid "Open folder"
+msgstr "Открыть папку"
+
+msgid "Open GitHub issue"
+msgstr "Открыть issue на GitHub"

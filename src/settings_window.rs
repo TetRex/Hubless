@@ -32,6 +32,10 @@ pub enum SettingsAction {
     AddProgram(i32, String),
     RemoveProgram(i32, String),
     RefreshRunning,
+    CreateReport,
+    OpenReports,
+    CopyReport,
+    OpenIssue,
     Closed,
 }
 
@@ -74,6 +78,8 @@ pub struct SettingsController {
     ui: Option<ui::SettingsWindow>,
     /// Запущенные программы для привязки (обновляются при открытии и по кнопке).
     running: Vec<String>,
+    /// Последний отчёт об устройствах (живёт, пока открыто окно).
+    report: Option<crate::report::Report>,
 }
 
 impl SettingsController {
@@ -95,8 +101,9 @@ impl SettingsController {
         }
         let Some(w) = &self.ui else { return };
         if let Some(page) = page {
-            w.set_page(page.min(1) as i32);
+            w.set_page(page.min(2) as i32);
         }
+        w.set_ghub_running(crate::report::ghub_running());
         self.set_theme(theme);
         self.refresh(None);
         if let Err(e) = w.show() {
@@ -110,6 +117,47 @@ impl SettingsController {
     pub fn close(&mut self) {
         if let Some(w) = self.ui.take() {
             let _ = w.hide();
+        }
+        self.report = None;
+    }
+
+    /// Начат сбор отчёта: кнопка показывает «Сбор…».
+    pub fn report_started(&self) {
+        if let Some(w) = &self.ui {
+            w.set_report_busy(true);
+            w.set_report_status(SharedString::new());
+            w.set_ghub_running(crate::report::ghub_running());
+        }
+    }
+
+    pub fn report_finished(&mut self, result: Result<crate::report::Report, String>) {
+        let Some(w) = &self.ui else { return };
+        w.set_report_busy(false);
+        match result {
+            Ok(r) => {
+                w.set_report_text(r.text.as_str().into());
+                w.set_report_path(r.path.display().to_string().into());
+                w.set_report_status(
+                    i18n::tr("Saved: {}")
+                        .replace("{}", &r.path.display().to_string())
+                        .into(),
+                );
+                self.report = Some(r);
+            }
+            Err(e) => {
+                tracing::warn!("отчёт об устройствах: {e}");
+                w.set_report_status(i18n::tr("Couldn't create the report").into());
+            }
+        }
+    }
+
+    pub fn report(&self) -> Option<&crate::report::Report> {
+        self.report.as_ref()
+    }
+
+    pub fn set_report_status(&self, message: &str) {
+        if let Some(w) = &self.ui {
+            w.set_report_status(message.into());
         }
     }
 
@@ -196,6 +244,10 @@ fn wire(w: &ui::SettingsWindow) {
     w.on_add_program(move |i, exe| post(SettingsAction::AddProgram(i, exe.into())));
     w.on_remove_program(move |i, exe| post(SettingsAction::RemoveProgram(i, exe.into())));
     w.on_refresh_running(move || post(SettingsAction::RefreshRunning));
+    w.on_create_report(move || post(SettingsAction::CreateReport));
+    w.on_open_reports(move || post(SettingsAction::OpenReports));
+    w.on_copy_report(move || post(SettingsAction::CopyReport));
+    w.on_open_issue(move || post(SettingsAction::OpenIssue));
     w.window().on_close_requested(move || {
         post(SettingsAction::Closed);
         slint::CloseRequestResponse::HideWindow

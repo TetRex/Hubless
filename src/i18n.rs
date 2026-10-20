@@ -130,6 +130,13 @@ const RU: &[(&str, &str)] = &[
         "Без программ — включается вручную",
     ),
     ("Add a running program…", "Добавить запущенную программу…"),
+    ("Saved: {}", "Сохранено: {}"),
+    ("Couldn't create the report", "Не удалось создать отчёт"),
+    ("Copied to the clipboard", "Скопировано в буфер обмена"),
+    (
+        "Couldn't copy to the clipboard",
+        "Не удалось скопировать в буфер обмена",
+    ),
 ];
 
 #[cfg(test)]

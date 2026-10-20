@@ -2,7 +2,7 @@
 // Окно настроек: слева меню разделов, справа страница раздела.
 // «Общие» — язык и автозапуск; «Профили» — карточки профилей, раскрывается выбранная.
 // Создаётся по требованию и уничтожается при закрытии.
-import { Button, ComboBox, LineEdit, ScrollView, Switch } from "std-widgets.slint";
+import { Button, ComboBox, LineEdit, ScrollView, Switch, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { IconButton } from "widgets.slint";
 
@@ -284,7 +284,7 @@ component ProfileCard inherits Rectangle {
 }
 
 export component SettingsWindow inherits Window {
-    // Раздел: 0 — «Общие», 1 — «Профили».
+    // Раздел: 0 — «Общие», 1 — «Профили», 2 — «Отчёт об устройствах».
     in-out property <int> page;
     // Общие
     in-out property <int> language;           // 0 — английский, 1 — русский
@@ -295,6 +295,13 @@ export component SettingsWindow inherits Window {
     in property <[string]> running;
     // Сообщение об ошибке последнего действия (пусто — нет ошибки).
     in property <string> error;
+    // Отчёт об устройствах: идёт сбор, текст и путь готового отчёта, строка состояния,
+    // запущен ли G Hub.
+    in property <bool> report-busy;
+    in property <string> report-text;
+    in property <string> report-path;
+    in property <string> report-status;
+    in property <bool> ghub-running;
 
     callback set-language(int);
     callback set-autostart(bool);
@@ -306,6 +313,10 @@ export component SettingsWindow inherits Window {
     callback add-program(int, string);
     callback remove-program(int, string);
     callback refresh-running();
+    callback create-report();
+    callback open-reports();
+    callback copy-report();
+    callback open-issue();
 
     title: @tr("Hubless — Settings");
     preferred-width: Theme.settings-width;
@@ -339,6 +350,15 @@ export component SettingsWindow inherits Window {
                 selected: root.page == 1;
                 clicked => {
                     root.page = 1;
+                }
+            }
+
+            NavItem {
+                glyph: Theme.glyph-report;
+                label: @tr("Device report");
+                selected: root.page == 2;
+                clicked => {
+                    root.page = 2;
                 }
             }
         }
@@ -458,6 +478,76 @@ export component SettingsWindow inherits Window {
                             }
                         }
                     }
+                }
+            }
+
+            if root.page == 2: VerticalLayout {
+                spacing: Theme.spacing-s;
+
+                Text {
+                    text: @tr("Device report");
+                    font-size: Theme.font-title;
+                    font-weight: Theme.weight-semibold;
+                    color: Theme.text-primary;
+                }
+
+                Caption {
+                    text: @tr("Help add support for your Logitech devices: create a report and send it as a GitHub issue. The report lists your Logitech devices and the HID++ features they support. It only reads from the devices, contains no serial numbers or personal data, and Hubless sends nothing by itself.");
+                    wrap: word-wrap;
+                }
+
+                if root.ghub-running: Text {
+                    text: @tr("G Hub is running: close it completely for an accurate report.");
+                    color: Theme.error-text;
+                    font-size: Theme.font-caption;
+                    wrap: word-wrap;
+                }
+
+                HorizontalLayout {
+                    spacing: Theme.spacing-s;
+                    alignment: start;
+
+                    Button {
+                        text: root.report-busy ? @tr("Collecting…") : @tr("Create report");
+                        primary: true;
+                        enabled: !root.report-busy;
+                        clicked => {
+                            root.create-report();
+                        }
+                    }
+
+                    if root.report-text != "": Button {
+                        text: @tr("Copy");
+                        clicked => {
+                            root.copy-report();
+                        }
+                    }
+
+                    if root.report-text != "": Button {
+                        text: @tr("Open folder");
+                        clicked => {
+                            root.open-reports();
+                        }
+                    }
+
+                    if root.report-text != "": Button {
+                        text: @tr("Open GitHub issue");
+                        clicked => {
+                            root.open-issue();
+                        }
+                    }
+                }
+
+                if root.report-status != "": Caption {
+                    text: root.report-status;
+                    wrap: word-wrap;
+                }
+
+                if root.report-text != "": TextEdit {
+                    vertical-stretch: 1;
+                    read-only: true;
+                    wrap: no-wrap;
+                    text: root.report-text;
                 }
             }
 

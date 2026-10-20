@@ -259,6 +259,10 @@ Solaar (GPL-2.0), HeadsetControl (GPL-3.0), OpenRGB (GPL-2.0) и libratbag (MIT)
   или по имени exe. Открывается пунктом «Настройки…» в меню трея, шестерёнкой в панели и `hubless --settings`.
   Интерфейс переведён на английский и русский (`@tr` + `translations/ru/LC_MESSAGES/hubless.po`, строки
   из Rust — `src/i18n.rs`); CLI — только на английском.
+- Сделано 2026-10-20: **отчёт об устройствах** для поддержки других моделей — раздел окна настроек и
+  `hubless --report`. Тот же опрос, что `--dump` (только чтение, серийники маскируются), плюс версии
+  Hubless и Windows и признак запущенного G Hub; файл в `%LOCALAPPDATA%\Hubless\reports`, предпросмотр,
+  копирование, кнопка формы issue (`.github/ISSUE_TEMPLATE/device-report.yml`). Hubless в сеть не ходит.
 
 ## 12. Процедура сниффинга (для неизвестных функций)
 

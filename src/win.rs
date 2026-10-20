@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Мелкие Win32-помощники: строки, реестр HKCU.
+//! Мелкие Win32-помощники: строки, реестр.
 
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, WIN32_ERROR};
 use windows::Win32::System::Registry::{
-    HKEY_CURRENT_USER, REG_SZ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegDeleteKeyValueW, RegGetValueW,
-    RegSetKeyValueW,
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_SZ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
+    RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
 };
 use windows::core::PCWSTR;
 
@@ -40,12 +40,20 @@ pub fn hkcu_read_dword(subkey: &str, value: &str) -> Option<u32> {
 }
 
 pub fn hkcu_read_string(subkey: &str, value: &str) -> Option<String> {
+    read_string(HKEY_CURRENT_USER, subkey, value)
+}
+
+pub fn hklm_read_string(subkey: &str, value: &str) -> Option<String> {
+    read_string(HKEY_LOCAL_MACHINE, subkey, value)
+}
+
+fn read_string(root: HKEY, subkey: &str, value: &str) -> Option<String> {
     let (subkey, value) = (wide(subkey), wide(value));
     let mut size = 0u32;
     // SAFETY: первый вызов только узнаёт размер, второй пишет в буфер этого размера.
     unsafe {
         check(RegGetValueW(
-            HKEY_CURRENT_USER,
+            root,
             PCWSTR(subkey.as_ptr()),
             PCWSTR(value.as_ptr()),
             RRF_RT_REG_SZ,
@@ -56,7 +64,7 @@ pub fn hkcu_read_string(subkey: &str, value: &str) -> Option<String> {
         .ok()?;
         let mut buf = vec![0u16; (size as usize).div_ceil(2)];
         check(RegGetValueW(
-            HKEY_CURRENT_USER,
+            root,
             PCWSTR(subkey.as_ptr()),
             PCWSTR(value.as_ptr()),
             RRF_RT_REG_SZ,

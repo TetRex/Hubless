@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `hubless --dump`: все устройства Logitech, их HID++ фичи — в консоль и в JSON.
+//! `hubless --dump`: все устройства Logitech, их HID++ фичи — текстом и в JSON.
 //! Только чтение. Серийные номера и unit id маскируются.
+//!
+//! Текст копится в буфере потока ([`out!`]): его печатает CLI и показывает окно настроек
+//! (отчёт об устройствах для новых моделей).
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -19,31 +23,60 @@ use crate::hidpp::{Device, Error, receiver};
 const MASK: &str = "XXXXXXXX";
 pub const DEFAULT_FILE: &str = "hubless-dump.json";
 
-pub fn run(out: Option<PathBuf>) -> ExitCode {
-    let api = match HidApi::new() {
-        Ok(api) => api,
-        Err(e) => {
-            eprintln!("hidapi: {e}");
-            return ExitCode::FAILURE;
-        }
+thread_local! {
+    static TEXT: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+/// Строка в текстовую часть отчёта (как `println!`).
+macro_rules! out {
+    ($($arg:tt)*) => {
+        TEXT.with_borrow_mut(|t| {
+            use std::fmt::Write as _;
+            let _ = writeln!(t, $($arg)*);
+        })
     };
+}
+
+/// Отчёт об устройствах: текст для человека и JSON.
+pub struct Dump {
+    pub text: String,
+    pub json: Value,
+}
+
+/// Опросить все устройства Logitech (только чтение).
+pub fn collect() -> Result<Dump, String> {
+    let api = HidApi::new().map_err(|e| format!("hidapi: {e}"))?;
+    TEXT.with_borrow_mut(String::clear);
     let interfaces = transport::enumerate(&api);
     if interfaces.is_empty() {
-        println!("No Logitech devices found.");
+        out!("No Logitech devices found.");
     }
-
     let mut json_ifaces = Vec::new();
     for info in interfaces {
         json_ifaces.push(dump_interface(&api, info));
     }
-
-    let doc = json!({
+    let json = json!({
         "tool": format!("hubless {}", env!("CARGO_PKG_VERSION")),
         "generated_utc": crate::timeutil::iso_utc(),
         "interfaces": json_ifaces,
     });
+    Ok(Dump {
+        text: TEXT.with_borrow_mut(std::mem::take),
+        json,
+    })
+}
+
+pub fn run(out: Option<PathBuf>) -> ExitCode {
+    let dump = match collect() {
+        Ok(d) => d,
+        Err(e) => {
+            eprintln!("{e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    print!("{}", dump.text);
     let path = out.unwrap_or_else(|| PathBuf::from(DEFAULT_FILE));
-    match write_json(&path, &doc) {
+    match write_json(&path, &dump.json) {
         Ok(()) => {
             println!("\nJSON: {}", path.display());
             ExitCode::SUCCESS
@@ -64,16 +97,19 @@ fn write_json(path: &Path, doc: &Value) -> std::io::Result<()> {
 fn dump_interface(api: &HidApi, info: Interface) -> Value {
     let known = registry::lookup(info.pid);
     let title = known.map_or(info.product.as_str(), |k| k.name);
-    println!(
+    out!(
         "\n== {:04X} {} (interface {}, \"{}\") ==",
-        info.pid, title, info.interface, info.product
+        info.pid,
+        title,
+        info.interface,
+        info.product
     );
     let collections: Vec<String> = info
         .collections
         .iter()
         .map(|c| format!("{:04X}:{:04X}", c.usage_page, c.usage))
         .collect();
-    println!("  collections: {}", collections.join(" "));
+    out!("  collections: {}", collections.join(" "));
 
     let mut j = json!({
         "pid": format!("{:04X}", info.pid),
@@ -94,14 +130,14 @@ fn dump_interface(api: &HidApi, info: Interface) -> Value {
         return j;
     }
     if !info.is_hidpp() {
-        println!("  no HID++ collections (page FF00), skipped");
+        out!("  no HID++ collections (page FF00), skipped");
         return j;
     }
 
     let transport = match Transport::open(api, &info) {
         Ok(t) => t,
         Err(e) => {
-            println!("  could not open: {e}");
+            out!("  could not open: {e}");
             j["error"] = json!(e.to_string());
             return j;
         }
@@ -118,16 +154,16 @@ fn dump_interface(api: &HidApi, info: Interface) -> Value {
     };
     match &self_protocol {
         Ok(Protocol::V1) => {
-            println!("  0xFF: HID++ 1.0 receiver");
+            out!("  0xFF: HID++ 1.0 receiver");
             is_receiver = true;
         }
         Ok(Protocol::V2(major, minor)) => {
-            println!("  0xFF: HID++ {major}.{minor}");
+            out!("  0xFF: HID++ {major}.{minor}");
             let d = dump_device(&transport, DEVICE_SELF, (*major, *minor));
             is_receiver |= d["type"] == "receiver";
             devices.push(d);
         }
-        Err(e) => println!("  0xFF: {e}"),
+        Err(e) => out!("  0xFF: {e}"),
     }
     j["self_protocol"] = protocol_json(&self_protocol);
 
@@ -147,13 +183,13 @@ fn dump_interface(api: &HidApi, info: Interface) -> Value {
             };
             match result {
                 Ok(Protocol::V2(major, minor)) => {
-                    println!("  slot {slot}: HID++ {major}.{minor}");
+                    out!("  slot {slot}: HID++ {major}.{minor}");
                     devices.push(dump_device(&transport, slot, (major, minor)));
                 }
-                Ok(Protocol::V1) => println!("  slot {slot}: HID++ 1.0 (not supported)"),
-                Err(Error::Timeout) if !paired => println!("  slot {slot}: not paired"),
-                Err(Error::Timeout) => println!("  slot {slot}: no reply (asleep or off)"),
-                Err(e) => println!("  slot {slot}: {e}"),
+                Ok(Protocol::V1) => out!("  slot {slot}: HID++ 1.0 (not supported)"),
+                Err(Error::Timeout) if !paired => out!("  slot {slot}: not paired"),
+                Err(Error::Timeout) => out!("  slot {slot}: no reply (asleep or off)"),
+                Err(e) => out!("  slot {slot}: {e}"),
             }
         }
         j["registers"] = Value::Array(registers);
@@ -186,7 +222,7 @@ fn dump_registers(t: &Transport) -> Vec<Value> {
             });
             match &reg.result {
                 Ok(raw) => {
-                    println!("  reg  {:<20} {}", reg.label, hex(raw));
+                    out!("  reg  {:<20} {}", reg.label, hex(raw));
                     v["raw"] = json!(hex(raw));
                     if reg.label.starts_with("pairing_info")
                         && let Some(wpid) = receiver::pairing_wpid(raw)
@@ -195,7 +231,7 @@ fn dump_registers(t: &Transport) -> Vec<Value> {
                     }
                 }
                 Err(e) => {
-                    println!("  reg  {:<20} {e}", reg.label);
+                    out!("  reg  {:<20} {e}", reg.label);
                     v["error"] = json!(e.to_string());
                 }
             }
@@ -209,7 +245,7 @@ fn dump_device(t: &Transport, index: u8, protocol: (u8, u8)) -> Value {
     let table = match root::enumerate(t, index) {
         Ok(table) => table,
         Err(e) => {
-            println!("    feature table: {e}");
+            out!("    feature table: {e}");
             errors.push(format!("feature table: {e}"));
             Vec::new()
         }
@@ -222,7 +258,7 @@ fn dump_device(t: &Transport, index: u8, protocol: (u8, u8)) -> Value {
     let kind = device_name::kind(&dev)
         .inspect_err(|e| errors.push(format!("type: {e}")))
         .ok();
-    println!(
+    out!(
         "    {} ({})",
         name.as_deref().unwrap_or("?"),
         kind.map_or("?", |k| k.1)
@@ -243,7 +279,7 @@ fn dump_device(t: &Transport, index: u8, protocol: (u8, u8)) -> Value {
                 raw_hex[i] = "XX".into();
             }
             let models: Vec<String> = info.model_ids.iter().map(|m| format!("{m:04X}")).collect();
-            println!(
+            out!(
                 "    model {} transport {:04X}, firmware entities: {}",
                 models.join("/"),
                 info.transport,
@@ -262,7 +298,7 @@ fn dump_device(t: &Transport, index: u8, protocol: (u8, u8)) -> Value {
             for entity in 0..info.entity_count {
                 match device_info::firmware(&dev, entity) {
                     Ok(f) => {
-                        println!("    {:<12} {}", f.kind, f.version);
+                        out!("    {:<12} {}", f.kind, f.version);
                         fw.push(json!({
                             "entity": f.entity,
                             "kind": f.kind,
@@ -278,12 +314,12 @@ fn dump_device(t: &Transport, index: u8, protocol: (u8, u8)) -> Value {
         Err(e) => errors.push(format!("device info: {e}")),
     }
 
-    println!("    features ({}):", table.len());
-    println!("      idx  id    ver  flags             name");
+    out!("    features ({}):", table.len());
+    out!("      idx  id    ver  flags             name");
     j["features"] = Value::Array(table.iter().map(feature_json).collect());
     if !errors.is_empty() {
         for e in &errors {
-            println!("    ! {e}");
+            out!("    ! {e}");
         }
         j["errors"] = json!(errors);
     }
@@ -293,7 +329,7 @@ fn dump_device(t: &Transport, index: u8, protocol: (u8, u8)) -> Value {
 fn feature_json(f: &FeatureEntry) -> Value {
     let flags = root::flag_names(f.flags);
     let name = features::name(f.id);
-    println!(
+    out!(
         "      {:>3}  {:04X}  {:>3}  {:<16}  {}{}",
         f.index,
         f.id,
@@ -320,7 +356,7 @@ fn dump_centurion(api: &HidApi, path: &std::ffi::CStr) -> Value {
     let mut a = match centurion::Adapter::open(api, path) {
         Ok(a) => a,
         Err(e) => {
-            println!("  Centurion: could not open: {e}");
+            out!("  Centurion: could not open: {e}");
             return json!({ "error": e.to_string() });
         }
     };
@@ -330,7 +366,7 @@ fn dump_centurion(api: &HidApi, path: &std::ffi::CStr) -> Value {
         list.iter()
             .map(|f| {
                 let name = centurion::feature_name(f.id);
-                println!(
+                out!(
                     "      {:>3}  {:04X}  {:>3}  {:02X}     {}",
                     f.index,
                     f.id,
@@ -351,19 +387,19 @@ fn dump_centurion(api: &HidApi, path: &std::ffi::CStr) -> Value {
 
     match a.adapter_features() {
         Ok(list) => {
-            println!("  Centurion, adapter features ({}):", list.len());
-            println!("      idx  id    ver  flags  name");
+            out!("  Centurion, adapter features ({}):", list.len());
+            out!("      idx  id    ver  flags  name");
             j["adapter_features"] = json!(features_json(&list));
         }
         Err(e) => errors.push(format!("adapter features: {e}")),
     }
     match a.find_bridge() {
         Ok(index) => {
-            println!("  bridge (0x0003): index {index}");
+            out!("  bridge (0x0003): index {index}");
             j["bridge_index"] = json!(index);
         }
         Err(e) => {
-            println!("  bridge (0x0003): {e}");
+            out!("  bridge (0x0003): {e}");
             errors.push(format!("bridge: {e}"));
             j["errors"] = json!(errors);
             j["frames"] = json!(a.log);
@@ -372,26 +408,26 @@ fn dump_centurion(api: &HidApi, path: &std::ffi::CStr) -> Value {
     }
     match a.bridge_status() {
         Ok(s) => {
-            println!("  bridge state: {}", hex(&s));
+            out!("  bridge state: {}", hex(&s));
             j["bridge_status"] = json!(hex(&s));
         }
         Err(e) => errors.push(format!("bridge status: {e}")),
     }
     match a.headset_features() {
         Ok(list) => {
-            println!("  headset features ({}):", list.len());
-            println!("      idx  id    ver  flags  name");
+            out!("  headset features ({}):", list.len());
+            out!("      idx  id    ver  flags  name");
             j["headset_features"] = json!(features_json(&list));
         }
         Err(e) => {
-            println!("  headset features: {e}");
+            out!("  headset features: {e}");
             errors.push(format!("headset features: {e}"));
         }
     }
     match a.battery() {
         Ok(b) => {
             let charging = matches!(b.charging_state, 1 | 2);
-            println!(
+            out!(
                 "  battery: {}%{} (raw {})",
                 b.percent,
                 if charging { ", charging" } else { "" },
@@ -404,7 +440,7 @@ fn dump_centurion(api: &HidApi, path: &std::ffi::CStr) -> Value {
             });
         }
         Err(e) => {
-            println!("  battery: {e}");
+            out!("  battery: {e}");
             errors.push(format!("battery: {e}"));
         }
     }

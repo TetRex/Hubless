@@ -16,6 +16,7 @@ mod hidpp;
 mod i18n;
 mod logging;
 mod panel;
+mod report;
 mod settings;
 mod settings_window;
 mod single_instance;
@@ -39,6 +40,7 @@ Hubless — a lightweight G Hub replacement
 Usage:
   hubless                   run in the tray
   hubless --dump [file]     devices and HID++ feature tables (default hubless-dump.json)
+  hubless --report          save a device report to send as a GitHub issue
   hubless --test-toast      show a test notification (Hubless must be running)
   hubless --settings [profiles]  open the settings window of the running Hubless
   hubless --quit            quit the running Hubless (like Exit in the menu)
@@ -87,6 +89,22 @@ fn main() -> ExitCode {
             } else {
                 eprintln!("Hubless is not running: notifications are shown by the tray app.");
                 ExitCode::FAILURE
+            }
+        }
+        Some("--report") => {
+            attach_console();
+            let (cfg, _) = config::Config::load();
+            logging::init(&cfg);
+            match report::create() {
+                Ok(r) => {
+                    println!("Device report saved: {}", r.path.display());
+                    println!("Send it as a GitHub issue: {}", report::ISSUE_URL);
+                    ExitCode::SUCCESS
+                }
+                Err(e) => {
+                    eprintln!("{e}");
+                    ExitCode::FAILURE
+                }
             }
         }
         Some("--settings") => {

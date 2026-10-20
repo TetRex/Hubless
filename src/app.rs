@@ -18,6 +18,7 @@ use crate::foreground::ForegroundHook;
 use crate::hidden_window::HiddenWindow;
 use crate::i18n::{self, tr};
 use crate::panel::PanelController;
+use crate::report;
 use crate::settings::{self, DeviceSettings, Lighting, SettingsFile};
 use crate::settings_window::{self, SettingsAction, SettingsController};
 use crate::state::{AppState, BatteryState, DeviceKind, LOW_BATTERY, Link};
@@ -155,6 +156,8 @@ pub enum AppEvent {
     OpenSettings(Option<usize>),
     /// Действие в окне настроек.
     Settings(SettingsAction),
+    /// Отчёт об устройствах собран (в фоновом потоке).
+    ReportReady(Result<report::Report, String>),
 }
 
 struct App {
@@ -250,6 +253,7 @@ impl App {
             AppEvent::Foreground(exe) => self.on_foreground(exe),
             AppEvent::OpenSettings(page) => self.open_settings(page),
             AppEvent::Settings(action) => self.on_settings(action),
+            AppEvent::ReportReady(result) => self.settings.report_finished(result),
             AppEvent::Device(role, s) => self.on_device(role, s),
             AppEvent::Panel(action) => self.on_panel(action),
             AppEvent::DpiSettled(v) => self.set_free_dpi(v),
@@ -420,6 +424,29 @@ impl App {
             SettingsAction::Closed => self.settings.close(),
             SettingsAction::Select(i) => self.settings.refresh(Some(i.max(0) as usize)),
             SettingsAction::RefreshRunning => self.settings.refresh_running(),
+            SettingsAction::CreateReport => {
+                self.settings.report_started();
+                // Опрос устройств занимает секунды — не на главном потоке.
+                let spawned = std::thread::Builder::new()
+                    .name("device-report".into())
+                    .spawn(|| post(AppEvent::ReportReady(report::create())));
+                if let Err(e) = spawned {
+                    self.settings.report_finished(Err(format!("thread: {e}")));
+                }
+            }
+            SettingsAction::OpenReports => open_folder(&report::reports_dir()),
+            SettingsAction::CopyReport => {
+                let copied = self
+                    .settings
+                    .report()
+                    .is_some_and(|r| report::copy_to_clipboard(&r.text));
+                self.settings.set_report_status(if copied {
+                    tr("Copied to the clipboard")
+                } else {
+                    tr("Couldn't copy to the clipboard")
+                });
+            }
+            SettingsAction::OpenIssue => open_folder(std::path::Path::new(report::ISSUE_URL)),
             SettingsAction::Autostart(on) => {
                 if let Err(e) = autostart::set_enabled(on) {
                     tracing::error!("автозапуск: {e}");
