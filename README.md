@@ -1,56 +1,79 @@
 # Hubless
-Hubless open-source alternative of Logitech G Hub
 
-A lightweight tray replacement for G Hub on Windows: a single exe with no installer, about 13 MB of memory
-and ~0% CPU while idle. Tested with the PRO X Superlight 2 mouse, the PRO X TKL Lightspeed keyboard and
-the PRO X 2 LIGHTSPEED headset.
+An open-source, lightweight alternative to Logitech G Hub for Windows.
 
-Work in progress: see [Plan.md](Plan.md). Protocol findings are in [docs/devices](docs/devices/README.md).
+Hubless is a single exe that lives in the tray: no installer, no services, no account. It uses about 13 MB of memory
+and ~0% CPU while idle. It talks to Logitech mice and keyboards over HID++ 2.0 (through a LIGHTSPEED receiver or a USB
+cable) and to Logitech headsets over Centurion. Devices are found automatically, and every card shows only the
+settings the device actually supports.
 
-## Features
+Hubless is under active development; the roadmap is in [Plan.md](Plan.md), protocol findings are in
+[docs/devices](docs/devices/README.md).
 
-- **Tray:** battery level of every device in the tooltip; a dot on the icon and a notification when a battery
-  drops below the threshold you choose (15% by default), and a notification when a device has fully charged.
-  There is no right-click menu: any click on the icon opens the panel.
-- **Panel** (click the tray icon). The header has the settings (gear) and Exit (power) buttons.
-  - mouse: DPI presets plus any value via the slider or input field, polling rate 125 Hz to 8 kHz;
-  - keyboard: brightness, lighting effect (static, breathe, cycle, wave, ripple) and colour, plus your own colours;
-    colours of single keys are set in Settings → Devices;
-  - headset: sidetone (how loud you hear your own voice) and the equalizer preset.
-- **Solaar-style keyboard lighting:** while an effect is selected, Hubless controls the lighting itself and
-  turns it off when you're idle (after 5, 15 or 30 minutes, or never: Settings → Devices); on exit, control
-  goes back to the keyboard.
-- **Settings window** (the gear in the panel): interface language (English or Russian), start with Windows,
-  battery notifications and the update check (optionally at startup); the order of devices in the panel and
-  which ones it shows, device settings (mouse onboard/host mode and lift-off distance, headset auto power-off
-  and 5-band equalizer with built-in and your own presets, keyboard key colours: click or drag over a keyboard
-  layout); profiles and binding them to programs; logs and
-  the device report (Advanced).
-- **Profiles:** sets of mouse, keyboard (including key colours) and headset equalizer settings. Switch them from the panel header, or let them switch
-  automatically while a bound program's window is active (`hubless profile bind <name> cs2.exe`).
-- **Onboard and host:** in onboard mode the mouse settings live in the mouse's memory and work without Hubless;
-  in host mode Hubless applies them every time the device connects.
+## Download
 
-Game Mode is not supported yet. Key colours show with the static effect (or with the lighting off) and are
-saved in the profile. The headset equalizer is the one built into the headset;
-there will be no Blue VO!CE or DTS: those are audio processing inside G Hub itself, not commands sent to the
-device.
+1. Download `hubless.exe` from [Releases](https://github.com/TetRex/Hubless/releases/latest).
+2. Close G Hub completely (`lghub`, `lghub_agent`, `lghub_system_tray`; the `lghub_updater` service doesn't get in
+   the way): the two programs can't control the devices at the same time.
+3. Run `hubless.exe`. To start it with Windows, turn that on in Settings → General.
 
-Close G Hub before starting Hubless (`lghub`, `lghub_agent`, `lghub_system_tray`; the `lghub_updater` service
-doesn't get in the way): the two programs can't control the devices at the same time.
+The exe is unsigned, so Windows SmartScreen may warn on first launch.
 
-## Other Logitech devices
+## Supported devices
 
-Hubless has been tested on three devices, but many Logitech mice and keyboards speak the same HID++ protocol.
-To help add support for your device:
+| Device | Type | Connection | Status | What works |
+|---|---|---|---|---|
+| PRO X Superlight 2 | Mouse | LIGHTSPEED receiver, USB | Tested | Battery, DPI (presets and any value), polling rate up to 8 kHz, lift-off distance, onboard/host mode |
+| PRO X TKL LIGHTSPEED | Keyboard | LIGHTSPEED receiver, USB | Tested | Battery, brightness, lighting effects and colours, colours of single keys (ANSI and ISO), lighting timeout |
+| PRO X 2 LIGHTSPEED | Headset | USB adapter | Tested | Battery, sidetone, auto power-off, built-in 5-band equalizer with presets |
+| G903 LIGHTSPEED | Mouse | LIGHTSPEED receiver | Partly tested by users | Battery (from voltage), DPI, polling rate |
+| G815 | Keyboard | USB | Partly tested by users | Brightness, lighting effects on all zones |
+| Other HID++ 2.0 mice and keyboards | Mouse, keyboard | LIGHTSPEED receiver, USB | Should work | Whatever the device supports: battery, DPI, polling rate, brightness, lighting |
+| Other Centurion headsets | Headset | USB adapter | Should work | Battery, sidetone, auto power-off |
+
+**Tested** means checked on hardware by the author; **partly tested by users** means the device is found and the main
+features were confirmed through user reports; **should work** means the device uses the same protocol, but nobody has
+reported on it yet. Unifying and Bolt
+receivers are detected but not tested. Bluetooth is not supported.
+
+Your device isn't in the table, or something is missing? Send a device report, it helps add support:
 
 1. Close G Hub completely.
 2. Open **Settings → Advanced → Create report** (or run `hubless --report`).
 3. Click **Open GitHub issue** and attach the report file (or paste its text using the **Copy** button).
 
-The report only reads data from the devices and contains no serial numbers or personal data; Hubless itself
-sends nothing anywhere. The only network request is the update check: when you press the button, or at startup
-if you turn that on.
+The report only reads data from the devices and contains no serial numbers or personal data.
+
+## Features
+
+- **Tray:** the battery level of every device in the tooltip; a dot on the icon and a notification when a battery
+  drops below the threshold you choose (15% by default), and a notification when a device has fully charged.
+  Any click on the icon opens the panel.
+- **Panel:** quick controls for every device. The header has the profile list, the settings (gear) and Exit (power)
+  buttons.
+  - Mouse: DPI presets plus any value via the slider or input field, polling rate.
+  - Keyboard: brightness, lighting effect (static, breathe, cycle, wave, ripple) and colour, plus your own colours.
+  - Headset: sidetone (how loud you hear your own voice) and the equalizer preset.
+- **Settings window** (the gear in the panel):
+  - General: interface language (English or Russian), start with Windows, battery notifications, update check
+    (optionally at startup).
+  - Devices: the order of devices in the panel and which ones it shows, plus device settings: mouse onboard/host mode
+    and lift-off; keyboard lighting timeout and an editor for the colours of single keys (click or drag over the
+    keyboard layout); headset auto power-off and the 5-band equalizer with built-in and your own presets.
+  - Profiles: create profiles and bind them to programs.
+  - Advanced: logs and the device report.
+- **Profiles:** sets of mouse, keyboard (including key colours) and headset equalizer settings. Switch them from the
+  panel header, or let them switch automatically while a bound program's window is active
+  (`hubless profile bind <name> cs2.exe`).
+- **Solaar-style keyboard lighting:** while an effect is selected, Hubless controls the lighting itself and turns it
+  off when you're idle; on exit, control goes back to the keyboard.
+- **Onboard and host:** in onboard mode the mouse settings live in the mouse's memory and work without Hubless; in host
+  mode Hubless applies them every time the device connects.
+- **Privacy:** Hubless sends nothing anywhere. The only network request is the update check: when you press the button,
+  or at startup if you turn that on.
+
+Not supported yet: Game Mode, writing profiles to the mouse's onboard memory, macros and key remapping. Blue VO!CE and
+DTS are not planned: they are audio processing inside G Hub itself, not commands sent to the device.
 
 ## Command line
 
@@ -62,7 +85,7 @@ hubless --settings [section]  open the settings window of the running Hubless (d
 hubless --quit                quit the running Hubless (like Exit in the panel)
 hubless mouse ...             DPI, polling rate, lift-off, onboard/host mode
 hubless keyboard ...          brightness, lighting and effects, key colours (keyboard keys wasd ff0000)
-hubless headset ...           sidetone, auto power-off
+hubless headset ...           sidetone, auto power-off, equalizer
 hubless profile ...           settings profiles, binding to exe files
 hubless --help                full list of commands
 ```
@@ -81,10 +104,10 @@ The result is `target/release/hubless.exe`.
 
 ## Files
 
-- `%APPDATA%\Hubless\config.toml`: app settings (log level, HID tracing, language, battery notifications, update check at
-  startup).
-- `%APPDATA%\Hubless\devices.toml`: device settings, profiles, the panel layout, your keyboard colours and
-  equalizer presets; written by Hubless itself.
+- `%APPDATA%\Hubless\config.toml`: app settings (log level, HID tracing, language, battery notifications, update check
+  at startup).
+- `%APPDATA%\Hubless\devices.toml`: device settings, profiles, the panel layout, your keyboard colours and equalizer
+  presets; written by Hubless itself.
 - `%APPDATA%\Hubless\backups\`: backups of the mouse's onboard memory.
 - `%LOCALAPPDATA%\Hubless\logs\`: logs; set the environment variable `HUBLESS_LOG=debug` for verbose ones.
 - `%LOCALAPPDATA%\Hubless\reports\`: device reports.
