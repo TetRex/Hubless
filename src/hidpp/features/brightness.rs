@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `0x8040` Brightness Control (раскладка — по Solaar `BrightnessControl`).
+//! `0x8040` Brightness Control (layout per Solaar `BrightnessControl`).
 //!
-//! - fn0 `getInfo` → `[max(2), steps|flags, caps, min(2)]`; caps бит 2 — есть отдельное вкл/выкл;
+//! - fn0 `getInfo` → `[max(2), steps|flags, caps, min(2)]`; caps bit 2 means a separate on/off;
 //! - fn1 `getBrightness` → `[value(2)]`;
-//! - fn3 `getIllumination` → бит 0 — подсветка включена.
+//! - fn3 `getIllumination` → bit 0 means the lighting is on.
 
 use crate::hidpp::{Device, Error};
 
@@ -16,7 +16,7 @@ const GET_ILLUMINATION: u8 = 3;
 pub struct Info {
     pub min: u16,
     pub max: u16,
-    /// Число ступеней (младшая тетрада байта steps|flags), 0 — плавно.
+    /// The number of steps (the low nibble of the steps|flags byte); 0 means smooth.
     pub steps: u8,
     pub on_off: bool,
 }
@@ -38,7 +38,7 @@ pub fn current(dev: &Device) -> Result<u16, Error> {
     Ok(u16::from_be_bytes([p[0], p[1]]))
 }
 
-/// Включена ли подсветка (только если `Info::on_off`).
+/// Whether the lighting is on (only if `Info::on_off`).
 pub fn illumination(dev: &Device) -> Result<bool, Error> {
     Ok(dev.call(ID, GET_ILLUMINATION, &[])?.params()[0] & 0x01 != 0)
 }

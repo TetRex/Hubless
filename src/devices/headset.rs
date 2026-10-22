@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Поток гарнитуры (PRO X 2 LIGHTSPEED, протокол Centurion — см. `centurion.rs`).
+//! Headset thread (PRO X 2 LIGHTSPEED, Centurion protocol; see `centurion.rs`).
 //!
-//! Адаптер держит один HID-handle, поэтому чтение событий и запросы идут из одного потока:
-//! блокирующее чтение с таймаутом 1 с (как у читателей HID++ транспорта), между чтениями —
-//! команды менеджера. Подключение/отключение гарнитуры приходит событием моста,
-//! батарея опрашивается раз в 5 минут. Sidetone и автоотключение хранит сама гарнитура —
-//! панель шлёт их командами сюда, без `devices.toml`.
+//! The adapter has a single HID handle, so reading events and sending requests happen on one thread:
+//! a blocking read with a 1 s timeout (like the HID++ transport readers), and manager commands
+//! between reads. The headset connecting/disconnecting arrives as a bridge event; the battery is
+//! polled every 5 minutes. Sidetone and auto power-off are stored in the headset itself, so the
+//! panel sends them here as commands, without `devices.toml`.
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError};
 use std::time::{Duration, Instant};
@@ -26,11 +26,11 @@ pub(super) struct Worker {
     on_update: Box<dyn Fn(Option<Snapshot>) + Send>,
     api: Option<HidApi>,
     adapter: Option<Adapter>,
-    /// Имя гарнитуры — строка продукта адаптера.
+    /// The headset name is the adapter's product string.
     name: String,
     snapshot: Option<Snapshot>,
     next_poll: Instant,
-    /// Ошибка последней записи из панели.
+    /// The error of the last write from the panel.
     error: Option<String>,
 }
 
@@ -69,11 +69,11 @@ impl Worker {
         tracing::info!(role = ?Role::Headset, "поток устройства остановлен");
     }
 
-    /// Обработать команду; `true` — выход.
+    /// Handles a command; `true` means exit.
     fn command(&mut self, c: Command) -> bool {
         match c {
             Command::Quit => true,
-            Command::Apply => false,
+            Command::Apply | Command::Keys(_) => false,
             Command::Sidetone(v) => {
                 self.write(|a| {
                     let state = a.sidetone()?;
@@ -87,7 +87,7 @@ impl Worker {
             }
             Command::Eq(gains, save) => {
                 self.write(|a| {
-                    // Частоты полос — те, что сообщает гарнитура.
+                    // The band frequencies are the ones the headset reports.
                     let eq = a.eq()?;
                     if eq.bands.len() != headset_eq::BANDS {
                         return Err(centurion::Error::Malformed);
@@ -115,7 +115,7 @@ impl Worker {
     }
 
     fn rescan(&mut self) {
-        // Адаптер на месте — ничего не делать.
+        // The adapter is still there: nothing to do.
         if let Some(a) = &mut self.adapter
             && a.bridge_status().is_ok()
         {
@@ -153,7 +153,7 @@ impl Worker {
         }
     }
 
-    /// Ждать кадр адаптера или команду; `true` — выход.
+    /// Waits for an adapter frame or a command; `true` means exit.
     fn wait_adapter(&mut self) -> bool {
         loop {
             match self.rx.try_recv() {
@@ -200,7 +200,7 @@ impl Worker {
         false
     }
 
-    /// Запись из панели: отправить, затем перечитать состояние (панель откатит неприменённое).
+    /// A write from the panel: send it, then reread the state (the panel rolls back what wasn't applied).
     fn write(
         &mut self,
         build: impl FnOnce(&mut Adapter) -> Result<centurion::Write, centurion::Error>,
@@ -224,7 +224,7 @@ impl Worker {
         }
     }
 
-    /// Прочитать батарею и настройки; гарнитура выключена — карточка «не подключено».
+    /// Reads the battery and settings; if the headset is off, the card shows "not connected".
     fn poll(&mut self) {
         self.next_poll = Instant::now() + BATTERY_POLL;
         let Some(a) = &mut self.adapter else { return };

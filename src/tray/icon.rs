@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Монохромная иконка трея (контур мыши), рисуется в коде под цвет панели задач.
+//! A monochrome tray icon (a mouse outline), drawn in code to match the taskbar colour.
 
 use tray_icon::Icon;
 
 const SIZE: u32 = 32;
 const STROKE: f32 = 2.4;
-/// Цвет индикатора низкого заряда (системный красный Windows).
+/// The low battery indicator colour (the Windows system red).
 const LOW_BATTERY: [u8; 3] = [0xe8, 0x11, 0x23];
 
 pub fn render(taskbar_light: bool, low_battery: bool) -> Icon {
@@ -23,31 +23,31 @@ pub fn render(taskbar_light: bool, low_battery: bool) -> Icon {
 
 fn pixel(p: (f32, f32), fg: [u8; 3], low_battery: bool) -> ([u8; 3], f32) {
     if low_battery {
-        // Точка в правом нижнем углу с вырезом вокруг неё.
+        // A dot in the bottom-right corner with a cutout around it.
         let d = length(p.0 - 25.0, p.1 - 25.0);
         if d < 6.0 + 1.0 {
             return (LOW_BATTERY, coverage(d - 6.0));
         }
     }
-    // Корпус: скруглённый прямоугольник 18×26, радиус 9.
+    // Body: a rounded 18×26 rectangle, radius 9.
     let body = rounded_rect(p, (16.0, 16.0), (9.0, 13.0), 9.0).abs() - STROKE / 2.0;
-    // Колесо: короткий вертикальный отрезок сверху.
+    // Wheel: a short vertical segment at the top.
     let wheel = segment(p, (16.0, 7.5), (16.0, 12.0)) - STROKE / 2.0;
     (fg, coverage(body.min(wheel)))
 }
 
-/// Фон иконки приложения — синий акцент Windows 11.
+/// The app icon background: the Windows 11 blue accent.
 const APP_BACKGROUND: [u8; 3] = [0x00, 0x67, 0xc0];
 
-/// Иконка приложения (exe, окно настроек): белый контур мыши на синем скруглённом квадрате.
-/// Рисуется теми же фигурами, что и значок трея, в сетке 32×32, масштабированной до `size`.
+/// The app icon (exe, settings window): a white mouse outline on a blue rounded square.
+/// Drawn with the same shapes as the tray icon, on a 32×32 grid scaled to `size`.
 pub fn app_icon_rgba(size: u32) -> Vec<u8> {
     let scale = size as f32 / SIZE as f32;
     let mut rgba = Vec::with_capacity((size * size * 4) as usize);
     for y in 0..size {
         for x in 0..size {
             let p = ((x as f32 + 0.5) / scale, (y as f32 + 0.5) / scale);
-            // Расстояния считаются в сетке 32×32, сглаживание — в пикселях иконки.
+            // Distances are computed on the 32×32 grid, antialiasing in icon pixels.
             let bg = coverage(rounded_rect(p, (16.0, 16.0), (15.5, 15.5), 7.0) * scale);
             let body = rounded_rect(p, (16.0, 16.0), (8.0, 11.5), 8.0).abs() - STROKE / 2.0;
             let wheel = segment(p, (16.0, 8.5), (16.0, 12.5)) - STROKE / 2.0;
@@ -60,8 +60,8 @@ pub fn app_icon_rgba(size: u32) -> Vec<u8> {
     rgba
 }
 
-/// Файл `.ico` с иконкой приложения нужных размеров (32-битные DIB, без PNG — без зависимостей).
-/// Нужен только генератору `res/hubless.ico` (тест `write_exe_icon`).
+/// An `.ico` file with the app icon in the needed sizes (32-bit DIBs, no PNG, no dependencies).
+/// Only needed by the `res/hubless.ico` generator (the `write_exe_icon` test).
 #[cfg(test)]
 fn app_icon_ico(sizes: &[u32]) -> Vec<u8> {
     let images: Vec<Vec<u8>> = sizes.iter().map(|&s| ico_dib(s)).collect();
@@ -84,8 +84,8 @@ fn app_icon_ico(sizes: &[u32]) -> Vec<u8> {
     out
 }
 
-/// Одна картинка ICO: BITMAPINFOHEADER (высота удвоена — с маской), BGRA снизу вверх,
-/// пустая маска AND (прозрачность — из альфы).
+/// One ICO image: BITMAPINFOHEADER (height doubled, with the mask), BGRA bottom-up,
+/// an empty AND mask (transparency comes from alpha).
 #[cfg(test)]
 fn ico_dib(size: u32) -> Vec<u8> {
     let rgba = app_icon_rgba(size);
@@ -110,7 +110,7 @@ fn ico_dib(size: u32) -> Vec<u8> {
     out
 }
 
-/// Покрытие пикселя по знаковому расстоянию (простое сглаживание на 1 px).
+/// Pixel coverage from the signed distance (simple 1 px antialiasing).
 fn coverage(d: f32) -> f32 {
     (0.5 - d).clamp(0.0, 1.0)
 }
@@ -136,25 +136,25 @@ fn segment(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
 mod tests {
     use super::*;
 
-    /// Размеры иконки exe: от значка в списке файлов до плитки «Огромные значки».
+    /// The exe icon sizes: from the file list icon to the "Extra large icons" tile.
     const EXE_SIZES: [u32; 7] = [16, 20, 24, 32, 48, 64, 256];
 
     #[test]
     fn ico_layout() {
         let ico = app_icon_ico(&[16, 32]);
         assert_eq!(&ico[..6], &[0, 0, 1, 0, 2, 0]);
-        // Первая картинка сразу за каталогом, её размер — заголовок + пиксели + маска.
+        // The first image follows the directory right away; its size is header + pixels + mask.
         let len = u32::from_le_bytes(ico[14..18].try_into().unwrap());
         let offset = u32::from_le_bytes(ico[18..22].try_into().unwrap());
         assert_eq!((len, offset), (40 + 16 * 16 * 4 + 4 * 16, 6 + 32));
-        // Угол прозрачный, центр контура мыши — белый.
+        // The corner is transparent, the centre of the mouse outline is white.
         let rgba = app_icon_rgba(32);
         assert_eq!(rgba[3], 0);
         let at = |x: usize, y: usize| &rgba[(y * 32 + x) * 4..(y * 32 + x) * 4 + 4];
         assert_eq!(at(16, 10), &[255, 255, 255, 255]);
     }
 
-    /// Перегенерировать `res/hubless.ico`: `cargo test --release write_exe_icon -- --ignored`.
+    /// Regenerates `res/hubless.ico`: `cargo test --release write_exe_icon -- --ignored`.
     #[test]
     #[ignore]
     fn write_exe_icon() {

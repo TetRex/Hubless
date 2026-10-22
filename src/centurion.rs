@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Протокол Logitech «Centurion» (гарнитура PRO X 2 LIGHTSPEED, адаптер PID `0x0AF7`).
+//! The Logitech "Centurion" protocol (PRO X 2 LIGHTSPEED headset, adapter PID `0x0AF7`).
 //!
-//! Справочник — HeadsetControl (GPL-3.0), `lib/devices/protocols/logitech_centurion_protocol.hpp`.
-//! Кадры по 64 байта на коллекции usage page `0xFFA0`:
+//! Reference: HeadsetControl (GPL-3.0), `lib/devices/protocols/logitech_centurion_protocol.hpp`.
+//! 64-byte frames on a collection with usage page `0xFFA0`:
 //! `[0x51][len = payload + 1][flags][payload...]`.
-//! Прямой запрос к адаптеру: payload `[feature_index][function | sw_id][params...]`.
-//! Запрос к гарнитуре идёт через фичу-мост `0x0003` адаптера:
+//! A direct request to the adapter: payload `[feature_index][function | sw_id][params...]`.
+//! A request to the headset goes through the adapter's bridge feature `0x0003`:
 //! `[bridge][0x10 | sw_id][size_hi][size_lo][0x00][sub_index][function | sw_id][params...]`;
-//! адаптер сначала подтверждает (ACK, sw_id = наш), затем присылает событие с ответом (sw_id = 0).
+//! the adapter first acknowledges (ACK, sw_id = ours), then sends an event with the reply (sw_id = 0).
 
 use std::time::{Duration, Instant};
 
@@ -28,10 +28,10 @@ pub const BATTERY_SOC: u16 = 0x0104;
 pub const AUTO_SLEEP: u16 = 0x0108;
 pub const SIDETONE: u16 = 0x0604;
 
-/// Чтение и запись значения у `SIDETONE` и `AUTO_SLEEP` (по HeadsetControl).
+/// Reading and writing the value of `SIDETONE` and `AUTO_SLEEP` (per HeadsetControl).
 const FN_GET: u8 = 0x00;
 const FN_SET: u8 = 0x10;
-/// Sidetone: id микрофона и максимум шкалы устройства (HeadsetControl, PRO X 2).
+/// Sidetone: the microphone ID and the device's scale maximum (HeadsetControl, PRO X 2).
 const SIDETONE_MIC: u8 = 0x01;
 pub const SIDETONE_MAX: u8 = 100;
 
@@ -42,7 +42,7 @@ const BRIDGE_STATUS: u8 = 0x00;
 const BRIDGE_SEND: u8 = 0x10;
 const BATTERY_GET: u8 = 0x00;
 
-/// Имена фич (справочник — HeadsetControl). Только для отображения.
+/// Feature names (reference: HeadsetControl). For display only.
 pub fn feature_name(id: u16) -> Option<&'static str> {
     Some(match id {
         0x0000 => "ROOT",
@@ -64,9 +64,9 @@ pub fn feature_name(id: u16) -> Option<&'static str> {
 pub enum Error {
     Hid(hidapi::HidError),
     Timeout,
-    /// Адаптер ответил, что гарнитура не подключена (выключена).
+    /// The adapter replied that the headset isn't connected (it is off).
     Offline,
-    /// Ошибка в формате HID++ 2.0: `[0xFF, feature, function|sw, code]`.
+    /// An error in the HID++ 2.0 format: `[0xFF, feature, function|sw, code]`.
     Rejected(u8),
     FeatureMissing(u16),
     Malformed,
@@ -102,12 +102,12 @@ pub struct Feature {
 #[derive(Debug, Clone)]
 pub struct Battery {
     pub percent: u8,
-    /// 1 или 2 — заряжается (по HeadsetControl), остальное — от батареи.
+    /// 1 or 2 means charging (per HeadsetControl), anything else is on battery.
     pub charging_state: u8,
     pub raw: Vec<u8>,
 }
 
-/// Кадр: `[0x51][len][flags=0][payload...]`, дополненный нулями до 64 байт.
+/// A frame: `[0x51][len][flags=0][payload...]`, padded with zeros to 64 bytes.
 pub fn build_frame(payload: &[u8]) -> [u8; FRAME_LEN] {
     assert!(payload.len() <= FRAME_LEN - 3, "payload too long");
     let mut frame = [0u8; FRAME_LEN];
@@ -117,11 +117,11 @@ pub fn build_frame(payload: &[u8]) -> [u8; FRAME_LEN] {
     frame
 }
 
-/// Сколько байт сообщения помещается в кадр (как у G Hub: длина `0x3d` = флаги + 60).
+/// How many bytes of a message fit in a frame (as in G Hub: length `0x3d` = flags + 60).
 const CHUNK: usize = 60;
 
-/// Сообщение в кадры: длинное режется по 60 байт, флаги `(номер << 1) | ещё_будут`
-/// (захват эквалайзера G Hub 2026-10-20: `01 03 05 07 08`). Короткое — один кадр с флагами 0.
+/// A message into frames: a long one is split into 60-byte chunks with flags `(number << 1) | more_follow`
+/// (G Hub equalizer capture 2026-10-20: `01 03 05 07 08`). A short one is a single frame with flags 0.
 pub fn build_frames(payload: &[u8]) -> Vec<[u8; FRAME_LEN]> {
     let chunks: Vec<&[u8]> = payload.chunks(CHUNK).collect();
     let last = chunks.len().saturating_sub(1);
@@ -136,7 +136,7 @@ pub fn build_frames(payload: &[u8]) -> Vec<[u8; FRAME_LEN]> {
         .collect()
 }
 
-/// Payload кадра (после байтов длины и флагов).
+/// The frame payload (after the length and flags bytes).
 pub fn parse_frame(frame: &[u8]) -> Option<&[u8]> {
     if frame.len() < 3 || frame[0] != REPORT_ID {
         return None;
@@ -151,13 +151,13 @@ pub fn parse_frame(frame: &[u8]) -> Option<&[u8]> {
 pub struct Adapter {
     dev: HidDevice,
     bridge: Option<u8>,
-    /// Индексы фич гарнитуры за мостом (кеш на время сессии).
+    /// Indices of the headset's features behind the bridge (cached for the session).
     headset_index: std::collections::HashMap<u16, u8>,
-    /// Все кадры, полученные во время запросов (для дампа).
+    /// All frames received during requests (for the dump).
     pub log: Vec<String>,
 }
 
-/// Запись в гарнитуру через мост (аналог `hidpp::Write`).
+/// A write to the headset through the bridge (the counterpart of `hidpp::Write`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Write {
     pub feature: u16,
@@ -166,10 +166,10 @@ pub struct Write {
     pub what: String,
 }
 
-/// Sidetone (громкость своего голоса в наушниках), 0–100.
+/// Sidetone (how loud you hear your own voice in the headphones), 0–100.
 pub fn set_sidetone(state: &[u8], level: u8) -> Write {
     let level = level.min(SIDETONE_MAX);
-    // HeadsetControl: если ответ на чтение ≥ 4 байт — формат v2 с байтом 0xFF.
+    // HeadsetControl: if the read reply is ≥ 4 bytes, it is the v2 format with a 0xFF byte.
     let params = if state.len() >= 4 {
         vec![SIDETONE_MIC, 0xFF, level]
     } else {
@@ -183,7 +183,7 @@ pub fn set_sidetone(state: &[u8], level: u8) -> Write {
     }
 }
 
-/// Автоотключение через `minutes` минут без звука (0 — никогда, по HeadsetControl).
+/// Auto power-off after `minutes` minutes without sound (0 = never, per HeadsetControl).
 pub fn set_auto_sleep(minutes: u8) -> Write {
     Write {
         feature: AUTO_SLEEP,
@@ -207,8 +207,8 @@ impl Adapter {
         })
     }
 
-    /// Первый адаптер Centurion (коллекция `0xFFA0` у устройства Logitech) с найденным мостом
-    /// и его имя (строка продукта USB).
+    /// The first Centurion adapter (a `0xFFA0` collection on a Logitech device) with a bridge found,
+    /// and its name (the USB product string).
     pub fn find(api: &HidApi) -> Option<(Self, String)> {
         api.device_list()
             .filter(|d| {
@@ -236,7 +236,7 @@ impl Adapter {
             })
     }
 
-    /// Следующий асинхронный кадр (payload) или `None`, если за `timeout` ничего не пришло.
+    /// The next asynchronous frame (payload), or `None` if nothing came within `timeout`.
     pub fn next_event(&mut self, timeout: Duration) -> Result<Option<Vec<u8>>, Error> {
         match self.recv(Instant::now() + timeout) {
             Ok(p) => Ok(Some(p)),
@@ -245,19 +245,19 @@ impl Adapter {
         }
     }
 
-    /// Событие моста о подключении гарнитуры: `[bridge, 0x00, 0x00, connected]`.
+    /// The bridge event about the headset connecting: `[bridge, 0x00, 0x00, connected]`.
     pub fn connection_event(&self, p: &[u8]) -> Option<bool> {
         let bridge = self.bridge?;
         (p.len() >= 4 && p[0] == bridge && p[1] == 0x00 && p[2] == 0x00).then(|| p[3] != 0)
     }
 
-    /// Подключена ли гарнитура к адаптеру (по состоянию моста).
+    /// Whether the headset is connected to the adapter (by the bridge state).
     pub fn headset_connected(&mut self) -> Result<bool, Error> {
         let s = self.bridge_status()?;
         Ok(s.len() >= 4 && s[3] != 0)
     }
 
-    /// Индекс фичи гарнитуры (с кешем).
+    /// The index of a headset feature (cached).
     fn index_of(&mut self, id: u16) -> Result<u8, Error> {
         if let Some(&i) = self.headset_index.get(&id) {
             return Ok(i);
@@ -267,36 +267,36 @@ impl Adapter {
         Ok(i)
     }
 
-    /// Уровень sidetone 0–100: последний байт ответа fn0 (`01 01 32` → 50, проверено 2026-10-19).
+    /// Sidetone level 0–100: the last byte of the fn0 reply (`01 01 32` → 50, verified 2026-10-19).
     pub fn sidetone_level(&mut self) -> Result<u8, Error> {
         self.sidetone()?.last().copied().ok_or(Error::Malformed)
     }
 
-    /// Автоотключение в минутах, 0 — никогда: первый байт ответа fn0 (проверено 2026-10-19).
+    /// Auto power-off in minutes, 0 = never: the first byte of the fn0 reply (verified 2026-10-19).
     pub fn auto_sleep_minutes(&mut self) -> Result<u8, Error> {
         self.auto_sleep()?.first().copied().ok_or(Error::Malformed)
     }
 
-    /// Сырой ответ `SIDETONE` fn0.
+    /// The raw `SIDETONE` fn0 reply.
     pub fn sidetone(&mut self) -> Result<Vec<u8>, Error> {
         let i = self.index_of(SIDETONE)?;
         self.bridged(i, FN_GET, &[])
     }
 
-    /// Сырой ответ `AUTO_SLEEP` fn0.
+    /// The raw `AUTO_SLEEP` fn0 reply.
     pub fn auto_sleep(&mut self) -> Result<Vec<u8>, Error> {
         let i = self.index_of(AUTO_SLEEP)?;
         self.bridged(i, FN_GET, &[])
     }
 
-    /// Кадры, которые уйдут в адаптер для записи (без отправки).
+    /// The frames that will go to the adapter for a write (without sending them).
     pub fn preview(&mut self, w: &Write) -> Result<Vec<[u8; FRAME_LEN]>, Error> {
         let i = self.index_of(w.feature)?;
         let payload = self.bridge_payload(i, w.function, &w.params)?;
         Ok(build_frames(&payload))
     }
 
-    /// Текущая кривая встроенного эквалайзера гарнитуры.
+    /// The current curve of the headset's built-in equalizer.
     pub fn eq(&mut self) -> Result<crate::headset_eq::Eq, Error> {
         let i = self.index_of(crate::headset_eq::FEATURE)?;
         let (function, params) = crate::headset_eq::read_request();
@@ -304,7 +304,7 @@ impl Adapter {
         crate::headset_eq::parse(&r).ok_or(Error::Malformed)
     }
 
-    /// Отправить запись; ответ гарнитуры (данные после индекса и функции).
+    /// Sends a write; returns the headset's reply (the data after the index and function).
     pub fn apply(&mut self, w: &Write) -> Result<Vec<u8>, Error> {
         let i = self.index_of(w.feature)?;
         self.bridged(i, w.function, &w.params)
@@ -319,7 +319,7 @@ impl Adapter {
         Ok(())
     }
 
-    /// Следующий payload до дедлайна.
+    /// The next payload before the deadline.
     fn recv(&mut self, deadline: Instant) -> Result<Vec<u8>, Error> {
         let mut buf = [0u8; FRAME_LEN];
         loop {
@@ -341,7 +341,7 @@ impl Adapter {
         }
     }
 
-    /// Прямой запрос к фиче адаптера; ответ `[feature_index][function|sw][data...]`.
+    /// A direct request to an adapter feature; the reply is `[feature_index][function|sw][data...]`.
     pub fn direct(
         &mut self,
         feature_index: u8,
@@ -364,7 +364,7 @@ impl Adapter {
         }
     }
 
-    /// Индекс фичи адаптера по ID (Root.GetFeature: `[index, type, version]`).
+    /// The adapter feature index by ID (Root.GetFeature: `[index, type, version]`).
     pub fn get_feature(&mut self, id: u16) -> Result<Feature, Error> {
         let r = self.direct(0x00, ROOT_GET_FEATURE, &id.to_be_bytes())?;
         match r.as_slice() {
@@ -379,21 +379,21 @@ impl Adapter {
         }
     }
 
-    /// Найти мост и запомнить его индекс.
+    /// Finds the bridge and remembers its index.
     pub fn find_bridge(&mut self) -> Result<u8, Error> {
         let f = self.get_feature(BRIDGE)?;
         self.bridge = Some(f.index);
         Ok(f.index)
     }
 
-    /// Состояние моста (прямой запрос): по HeadsetControl `03 e8 00 01 01` — гарнитура
-    /// подключена, `03 e8 00 00 01` — нет.
+    /// The bridge state (a direct request): per HeadsetControl, `03 e8 00 01 01` means the headset
+    /// is connected, `03 e8 00 00 01` that it isn't.
     pub fn bridge_status(&mut self) -> Result<Vec<u8>, Error> {
         let bridge = self.bridge.ok_or(Error::FeatureMissing(BRIDGE))?;
         self.direct(bridge, BRIDGE_STATUS, &[])
     }
 
-    /// Запрос к гарнитуре через мост.
+    /// A request to the headset through the bridge.
     pub fn bridged(
         &mut self,
         sub_index: u8,
@@ -409,7 +409,7 @@ impl Adapter {
         loop {
             let r = match self.recv(deadline) {
                 Err(Error::Timeout) => {
-                    // ACK без ответа или тишина: спросим мост, есть ли гарнитура.
+                    // An ACK without a reply, or silence: ask the bridge whether the headset is there.
                     return match self.bridge_status() {
                         Ok(s) if s.len() >= 4 && s[2] == 0 && s[3] == 0 => Err(Error::Offline),
                         _ => Err(Error::Timeout),
@@ -426,7 +426,7 @@ impl Adapter {
             if r.len() < 2 || r[0] != bridge {
                 continue;
             }
-            // Событие подключения/отключения гарнитуры: [bridge, 0x00, 0x00, connected].
+            // The headset connecting/disconnecting event: [bridge, 0x00, 0x00, connected].
             if r[1] == 0x00 {
                 if r.len() >= 4 && r[3] == 0 {
                     return Err(Error::Offline);
@@ -434,7 +434,7 @@ impl Adapter {
                 continue;
             }
             if r[1] >> 4 != BRIDGE_SEND >> 4 || r[1] & 0x0F != 0 {
-                continue; // ACK (sw_id = наш) или чужое
+                continue; // ACK (sw_id = ours) or someone else's
             }
             // [bridge, 0x10, len_hi, len_lo, 0x00, sub_index | 0xFF, ...]
             if r.len() < 7 || r[4] != 0x00 {
@@ -449,7 +449,7 @@ impl Adapter {
         }
     }
 
-    /// Payload запроса к гарнитуре через мост:
+    /// The payload of a request to the headset through the bridge:
     /// `[bridge][0x10|sw][size_hi][size_lo][0x00][sub_index][function|sw][params...]`.
     fn bridge_payload(&self, sub_index: u8, function: u8, params: &[u8]) -> Result<Vec<u8>, Error> {
         let bridge = self.bridge.ok_or(Error::FeatureMissing(BRIDGE))?;
@@ -465,7 +465,7 @@ impl Adapter {
         Ok(payload)
     }
 
-    /// Индекс фичи гарнитуры по ID через мост.
+    /// The headset feature index by ID through the bridge.
     pub fn headset_feature(&mut self, id: u16) -> Result<Feature, Error> {
         let r = self.bridged(0x00, ROOT_GET_FEATURE, &id.to_be_bytes())?;
         match r.as_slice() {
@@ -486,7 +486,7 @@ impl Adapter {
         }
     }
 
-    /// Таблица фич адаптера (FeatureSet напрямую).
+    /// The adapter's feature table (FeatureSet directly).
     pub fn adapter_features(&mut self) -> Result<Vec<Feature>, Error> {
         let fs = self.get_feature(FEATURE_SET)?;
         let count = *self
@@ -501,7 +501,7 @@ impl Adapter {
         Ok(list)
     }
 
-    /// Таблица фич гарнитуры (FeatureSet через мост).
+    /// The headset's feature table (FeatureSet through the bridge).
     pub fn headset_features(&mut self) -> Result<Vec<Feature>, Error> {
         let fs = self.headset_feature(FEATURE_SET)?;
         let count = *self
@@ -531,8 +531,8 @@ impl Adapter {
     }
 }
 
-/// Ответ FeatureSet.GetFeatureID у Centurion: `[echo index?][id_hi][id_lo][version][flags]`
-/// (раскладка по HeadsetControl, который берёт ID из байтов 1..3).
+/// The FeatureSet.GetFeatureID reply on Centurion: `[echo index?][id_hi][id_lo][version][flags]`
+/// (layout per HeadsetControl, which takes the ID from bytes 1..3).
 fn parse_feature_entry(index: u8, r: &[u8]) -> Result<Feature, Error> {
     if r.len() < 3 {
         return Err(Error::Malformed);
@@ -551,7 +551,7 @@ mod tests {
 
     #[test]
     fn long_messages_are_split_like_g_hub() {
-        // Запись эквалайзера: 4 байта моста + 256 = 260 байт → кадры 60×4 + 20.
+        // An equalizer write: 4 bridge bytes + 256 = 260 bytes → frames 60×4 + 20.
         let payload: Vec<u8> = (0..260).map(|i| i as u8).collect();
         let frames = build_frames(&payload);
         let flags: Vec<u8> = frames.iter().map(|f| f[2]).collect();

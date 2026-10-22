@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `0x8061` Extended Adjustable Report Rate (по Solaar `ExtendedReportRate`).
-//! fn1 — битовая маска поддерживаемых частот (u16), fn2 — текущий индекс для типа связи,
-//! fn3 — запись индекса (для текущей связи; мышь подтверждает событием fn0 `[связь, индекс]`).
+//! `0x8061` Extended Adjustable Report Rate (per Solaar `ExtendedReportRate`).
+//! fn1 is a bitmask of the supported rates (u16), fn2 the current index for a link type,
+//! fn3 writes the index (for the current link; the mouse confirms with an fn0 event `[link, index]`).
 
 use crate::hidpp::message::DEVICE_SELF;
 use crate::hidpp::{Device, Error, Write};
@@ -13,14 +13,14 @@ const SET_RATE: u8 = 3;
 const LINK_WIRED: u8 = 0;
 const LINK_WIRELESS: u8 = 1;
 
-/// Индекс частоты → Гц: 8 мс, 4 мс, 2 мс, 1 мс, 500 мкс, 250 мкс, 125 мкс.
+/// Rate index → Hz: 8 ms, 4 ms, 2 ms, 1 ms, 500 µs, 250 µs, 125 µs.
 pub const RATES_HZ: [u32; 7] = [125, 250, 500, 1000, 2000, 4000, 8000];
 
 pub fn hz(index: u8) -> Option<u32> {
     RATES_HZ.get(index as usize).copied()
 }
 
-/// Поддерживаемые индексы частот.
+/// The supported rate indices.
 pub fn supported(dev: &Device) -> Result<Vec<u8>, Error> {
     let r = dev.call(ID, GET_SUPPORTED, &[])?;
     let p = r.params();
@@ -30,10 +30,10 @@ pub fn supported(dev: &Device) -> Result<Vec<u8>, Error> {
         .collect())
 }
 
-/// Текущая частота для связи, через которую подключена мышь. У fn2 параметр — тип связи:
-/// `01` — радио, `00` — кабель (у каждой своя частота; проверено через ресивер 2026-10-20:
-/// после записи 500 Гц `[01]` → `02`, `[00]` → `03`). Без параметра читалась частота кабеля,
-/// отсюда ложный вывод 2026-10-19, что запись не работает.
+/// The current rate for the link the mouse is connected through. The fn2 parameter is the link type:
+/// `01` wireless, `00` cable (each has its own rate; verified through the receiver 2026-10-20:
+/// after writing 500 Hz, `[01]` → `02`, `[00]` → `03`). Without the parameter the cable rate was read,
+/// hence the false conclusion on 2026-10-19 that the write didn't work.
 pub fn current(dev: &Device) -> Result<u8, Error> {
     let link = if dev.index == DEVICE_SELF {
         LINK_WIRED
@@ -43,15 +43,15 @@ pub fn current(dev: &Device) -> Result<u8, Error> {
     Ok(dev.call(ID, GET_RATE, &[link])?.params()[0])
 }
 
-/// Старая `0x8060` Report Rate (спецификация Logitech и Solaar `ReportRate`):
-/// fn0 — битовая маска интервалов (бит n — n+1 мс), fn1 — текущий интервал, мс,
-/// fn2 — запись интервала, мс. Запись не проверена на железе — только в экспериментальном режиме.
+/// The old `0x8060` Report Rate (Logitech spec and Solaar `ReportRate`):
+/// fn0 is a bitmask of intervals (bit n means n+1 ms), fn1 the current interval in ms,
+/// fn2 writes the interval in ms. The write is not verified on hardware: experimental mode only.
 pub const OLD_ID: u16 = 0x8060;
 const OLD_GET_LIST: u8 = 0;
 const OLD_GET_RATE: u8 = 1;
 const OLD_SET_RATE: u8 = 2;
 
-/// Поддерживаемые частоты по `0x8060`, Гц, по возрастанию.
+/// The rates supported by `0x8060`, Hz, ascending.
 pub fn old_supported_hz(dev: &Device) -> Result<Vec<u32>, Error> {
     let mask = dev.call(OLD_ID, OLD_GET_LIST, &[])?.params()[0];
     let mut list: Vec<u32> = (0..8u32)
@@ -63,7 +63,7 @@ pub fn old_supported_hz(dev: &Device) -> Result<Vec<u32>, Error> {
     Ok(list)
 }
 
-/// Запись частоты по `0x8060` (интервал в мс; `None` — частота не делит 1000 мс нацело).
+/// Writes the rate through `0x8060` (interval in ms; `None` if the rate doesn't divide 1000 ms evenly).
 pub fn old_set(hz: u32) -> Option<Write> {
     let ms = u8::try_from(1000 / hz.max(1)).ok().filter(|ms| *ms > 0)?;
     (1000 / u32::from(ms) == hz).then(|| Write {
@@ -75,7 +75,7 @@ pub fn old_set(hz: u32) -> Option<Write> {
     })
 }
 
-/// Текущая частота по `0x8060`, Гц.
+/// The current rate through `0x8060`, Hz.
 pub fn old_current_hz(dev: &Device) -> Result<u32, Error> {
     let ms = dev.call(OLD_ID, OLD_GET_RATE, &[])?.params()[0];
     if ms == 0 {
@@ -84,12 +84,12 @@ pub fn old_current_hz(dev: &Device) -> Result<u32, Error> {
     Ok(1000 / u32::from(ms))
 }
 
-/// Индекс частоты по значению в Гц.
+/// The rate index for a value in Hz.
 pub fn index_of_hz(hz: u32) -> Option<u8> {
     RATES_HZ.iter().position(|&r| r == hz).map(|i| i as u8)
 }
 
-/// Запись частоты. Short-отчётом, как G Hub (захват 2026-10-20).
+/// Writes the rate. As a short report, like G Hub (capture 2026-10-20).
 pub fn set(index: u8) -> Write {
     Write {
         feature: ID,

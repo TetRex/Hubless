@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Автозапуск через `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
+//! Start with Windows through `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`.
 
 use crate::win::{hkcu_delete_value, hkcu_read_string, hkcu_write_string};
 
@@ -11,7 +11,7 @@ fn command() -> Option<String> {
     Some(format!("\"{}\"", exe.display()))
 }
 
-/// Включён, только если запись указывает на текущий exe.
+/// On only if the entry points to the current exe.
 pub fn is_enabled() -> bool {
     match (hkcu_read_string(RUN_KEY, VALUE), command()) {
         (Some(current), Some(ours)) => current.eq_ignore_ascii_case(&ours),

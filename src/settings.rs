@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Настройки устройств для режима host: `%APPDATA%\Hubless\devices.toml`.
+//! Device settings for host mode: `%APPDATA%\Hubless\devices.toml`.
 //!
-//! Файл пишет само приложение (CLI-команды записи), отдельно от редактируемого вручную
-//! `config.toml`. В режиме host приложение применяет эти значения при каждом подключении мыши.
+//! The app writes this file itself (and the CLI write commands), separately from the hand-edited
+//! `config.toml`. In host mode the app applies these values every time the mouse connects.
 //!
-//! Профили: `[mouse]`/`[keyboard]` в корне файла — профиль «Обычный», остальные — `[[profile]]`
-//! с именем и списком exe для автопереключения. `active` — профиль, выбранный вручную;
-//! автопереключение по активному окну живёт только в памяти трея ([`set_auto_profile`]).
-//! [`DeviceSettings::load`] возвращает настройки действующего профиля, [`DeviceSettings::update`]
-//! меняет его же.
+//! Profiles: `[mouse]`/`[keyboard]` at the root of the file are the "Default" profile, the others are `[[profile]]`
+//! with a name and a list of exe names for automatic switching. `active` is the profile selected by hand;
+//! automatic switching by the foreground window lives only in the tray's memory ([`set_auto_profile`]).
+//! [`DeviceSettings::load`] returns the active profile's settings, and [`DeviceSettings::update`]
+//! changes that same profile.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -21,9 +22,9 @@ use crate::hidpp::features::rgb_effects::Direction;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Mode {
-    /// Настройки берутся из памяти мыши, приложение ничего не применяет.
+    /// The settings come from the mouse's memory; the app applies nothing.
     Onboard,
-    /// Приложение применяет настройки при каждом подключении.
+    /// The app applies the settings every time the device connects.
     Host,
 }
 
@@ -45,7 +46,7 @@ pub struct MouseSettings {
     pub rate_hz: Option<u32>,
 }
 
-/// Подсветка клавиатуры, которую держит Hubless (`None` — управляет сама клавиатура).
+/// The keyboard lighting Hubless holds (`None`: the keyboard controls it itself).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase", tag = "effect")]
 pub enum Lighting {
@@ -77,7 +78,7 @@ pub enum Lighting {
 }
 
 impl Lighting {
-    /// Цвет эффекта, если он у эффекта есть.
+    /// The effect's colour, if the effect has one.
     pub fn color(&self) -> Option<[u8; 3]> {
         match self {
             Self::Static { color } | Self::Breathe { color, .. } | Self::Ripple { color, .. } => {
@@ -87,7 +88,7 @@ impl Lighting {
         }
     }
 
-    /// Тот же эффект с другим цветом; эффект без цвета становится статичным цветом.
+    /// The same effect with another colour; an effect without a colour becomes a static colour.
     pub fn with_color(self, rgb: [u8; 3]) -> Self {
         match self {
             Self::Breathe {
@@ -110,41 +111,102 @@ impl Lighting {
 pub struct KeyboardSettings {
     pub brightness: Option<u16>,
     pub lighting: Option<Lighting>,
+    /// Turn the lighting off after this many idle minutes (`0` = never, unset = as in the firmware).
+    /// Works while Hubless controls the lighting, and not earlier than the keyboard reports idle
+    /// (5 minutes on the PRO X TKL).
+    pub lighting_off_min: Option<u16>,
+    /// Colours of single keys over the static effect (or with the lighting off):
+    /// key name → `rrggbb`, `[keyboard.keys]`. The names are the same as in `hubless keyboard keys`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub keys: BTreeMap<String, String>,
 }
 
-/// Настройки одного профиля.
+impl KeyboardSettings {
+    /// Key colours (strings that don't parse as `rrggbb` are skipped).
+    pub fn key_colors(&self) -> BTreeMap<String, [u8; 3]> {
+        self.keys
+            .iter()
+            .filter_map(|(name, hex)| {
+                let rgb = crate::hidpp::features::rgb_effects::parse_rgb(hex)?;
+                Some((name.to_ascii_lowercase(), rgb))
+            })
+            .collect()
+    }
+
+    /// Sets (`Some`) or removes (`None`) a key's colour.
+    pub fn set_key(&mut self, name: &str, rgb: Option<[u8; 3]>) {
+        let name = name.to_ascii_lowercase();
+        match rgb {
+            Some([r, g, b]) => {
+                self.keys.insert(name, format!("{r:02x}{g:02x}{b:02x}"));
+            }
+            None => {
+                self.keys.remove(&name);
+            }
+        }
+    }
+}
+
+/// Headset settings of a profile.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HeadsetSettings {
+    /// The built-in equalizer curve, dB per band from low to high (unset: the "Default" profile's curve).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eq: Option<Vec<i8>>,
+}
+
+impl HeadsetSettings {
+    pub fn is_empty(&self) -> bool {
+        self.eq.is_none()
+    }
+}
+
+/// The settings of one profile.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DeviceSettings {
     pub mouse: MouseSettings,
     pub keyboard: KeyboardSettings,
+    #[serde(skip_serializing_if = "HeadsetSettings::is_empty")]
+    pub headset: HeadsetSettings,
 }
 
-/// Имя профиля из корня файла.
+/// The name of the profile at the root of the file.
 pub const BASE_PROFILE: &str = "Default";
 
-/// Своих цветов в палитре — не больше, чем помещается во второй ряд кружков панели.
+/// No more of your own palette colours than fit in the second row of circles in the panel.
 pub const MAX_COLORS: usize = 10;
+
+/// A limit on your own equalizer presets: the list in the panel should stay short.
+pub const MAX_EQ_PRESETS: usize = 20;
+
+/// Your own preset for the headset's built-in equalizer: a name and band gains, dB (from low to high).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EqPreset {
+    pub name: String,
+    pub gains: Vec<i8>,
+}
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
-    /// Имена exe (без пути, без учёта регистра), при активном окне которых профиль включается сам.
+    /// Exe names (without the path, case-insensitive) whose foreground window turns the profile on by itself.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exe: Vec<String>,
     #[serde(flatten)]
     pub settings: DeviceSettings,
 }
 
-/// Карточки панели: порядок и скрытые устройства (общие для всех профилей).
-/// Устройства — по ключу [`DeviceKind::key`](crate::state::DeviceKind::key).
+/// Panel cards: the order and hidden devices (shared by all profiles).
+/// Devices are identified by [`DeviceKind::key`](crate::state::DeviceKind::key).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PanelLayout {
-    /// Порядок карточек; не перечисленные идут следом в обычном порядке.
+    /// The card order; devices not listed follow in the normal order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub order: Vec<String>,
-    /// Устройства, которых нет в панели.
+    /// Devices not shown in the panel.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hidden: Vec<String>,
 }
@@ -165,7 +227,7 @@ impl PanelLayout {
         }
     }
 
-    /// Место устройства в порядке (не перечисленные — после всех перечисленных).
+    /// The device's place in the order (those not listed come after all listed ones).
     pub fn rank(&self, key: &str) -> usize {
         self.order
             .iter()
@@ -174,29 +236,35 @@ impl PanelLayout {
     }
 }
 
-/// Файл `devices.toml` целиком.
+/// The whole `devices.toml` file.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SettingsFile {
-    /// Профиль, выбранный вручную (`None` — «Обычный»).
+    /// The profile selected by hand (`None` means "Default").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active: Option<String>,
-    /// Свои цвета подсветки клавиатуры для палитры панели, `"rrggbb"` (общие для профилей).
+    /// Your own keyboard lighting colours for the panel palette, `"rrggbb"` (shared by all profiles).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub colors: Vec<String>,
-    /// Порядок и видимость карточек панели.
+    /// The keyboard layout in the key colour editor: `ansi` (no value) or `iso`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keyboard_layout: Option<String>,
+    /// The order and visibility of the panel cards.
     #[serde(skip_serializing_if = "PanelLayout::is_empty")]
     pub panel: PanelLayout,
     #[serde(flatten)]
     pub base: DeviceSettings,
+    /// Your own headset equalizer presets (shared by all profiles).
+    #[serde(rename = "eq_preset", skip_serializing_if = "Vec::is_empty")]
+    pub eq_presets: Vec<EqPreset>,
     #[serde(rename = "profile", skip_serializing_if = "Vec::is_empty")]
     pub profiles: Vec<Profile>,
 }
 
-/// Профиль, включённый автопереключением по активному окну (только в процессе трея).
+/// The profile switched on automatically by the foreground window (only in the tray process).
 static AUTO_PROFILE: Mutex<Option<String>> = Mutex::new(None);
 
-/// Включить профиль по активному окну (`None` — вернуться к выбранному вручную).
+/// Switches on a profile by the foreground window (`None` goes back to the one selected by hand).
 pub fn set_auto_profile(name: Option<String>) {
     *AUTO_PROFILE.lock().unwrap_or_else(|e| e.into_inner()) = name;
 }
@@ -213,7 +281,7 @@ impl SettingsFile {
         config_dir().join("devices.toml")
     }
 
-    /// Отсутствующий или повреждённый файл — пустые настройки (ошибка в лог).
+    /// A missing or broken file gives empty settings (the error goes to the log).
     pub fn load() -> Self {
         match std::fs::read_to_string(Self::path()) {
             Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
@@ -226,19 +294,21 @@ impl SettingsFile {
 
     pub fn save(&self) -> Result<(), String> {
         let text = toml::to_string_pretty(self).map_err(|e| e.to_string())?;
-        let header = "# Hubless: настройки устройств для режима host. Файл пишет приложение.\n\n";
+        // The user sees the header, so it is in English, like the CLI and the documentation.
+        let header =
+            "# Hubless: device settings for host mode. This file is written by the app.\n\n";
         std::fs::create_dir_all(config_dir()).map_err(|e| e.to_string())?;
         std::fs::write(Self::path(), format!("{header}{text}")).map_err(|e| e.to_string())
     }
 
-    /// Имена всех профилей, «Обычный» первым.
+    /// The names of all profiles, "Default" first.
     pub fn names(&self) -> Vec<String> {
         std::iter::once(BASE_PROFILE.to_owned())
             .chain(self.profiles.iter().map(|p| p.name.clone()))
             .collect()
     }
 
-    /// Действующий профиль: автопереключение, иначе выбранный вручную (несуществующий — «Обычный»).
+    /// The active profile: the automatic one, otherwise the one selected by hand (a missing one means "Default").
     pub fn current_name(&self) -> String {
         auto_profile()
             .or_else(|| self.active.clone())
@@ -279,7 +349,7 @@ impl SettingsFile {
         self.find_mut(&name).expect("профиль найден выше")
     }
 
-    /// Новый профиль — копия действующего.
+    /// A new profile is a copy of the active one.
     pub fn add(&mut self, name: &str) -> Result<(), String> {
         let name = name.trim();
         if name.is_empty() {
@@ -312,7 +382,7 @@ impl SettingsFile {
         Ok(())
     }
 
-    /// Выбрать профиль вручную.
+    /// Selects a profile by hand.
     pub fn select(&mut self, name: &str) -> Result<(), String> {
         if self.find(name).is_none() {
             return Err(format!("no profile \"{name}\""));
@@ -321,7 +391,7 @@ impl SettingsFile {
         Ok(())
     }
 
-    /// Привязать exe к профилю (имя файла без пути, например `cs2.exe`).
+    /// Binds an exe to a profile (the file name without the path, for example `cs2.exe`).
     pub fn bind(&mut self, name: &str, exe: &str) -> Result<(), String> {
         let exe = exe.trim().to_lowercase();
         if exe.is_empty() {
@@ -340,7 +410,7 @@ impl SettingsFile {
         Ok(())
     }
 
-    /// Убрать привязку exe от профиля.
+    /// Removes the binding of an exe from a profile.
     pub fn unbind(&mut self, name: &str, exe: &str) -> Result<(), String> {
         let profile = self
             .profiles
@@ -351,7 +421,7 @@ impl SettingsFile {
         Ok(())
     }
 
-    /// Переименовать профиль («Обычный» не переименовывается).
+    /// Renames a profile ("Default" can't be renamed).
     pub fn rename(&mut self, old: &str, new: &str) -> Result<(), String> {
         let new = new.trim();
         if new.is_empty() {
@@ -375,7 +445,7 @@ impl SettingsFile {
         Ok(())
     }
 
-    /// Свои цвета палитры (строки, которые не разбираются как `rrggbb`, пропускаются).
+    /// Your own palette colours (strings that don't parse as `rrggbb` are skipped).
     pub fn custom_colors(&self) -> Vec<[u8; 3]> {
         self.colors
             .iter()
@@ -383,7 +453,7 @@ impl SettingsFile {
             .collect()
     }
 
-    /// Добавить свой цвет в конец палитры (повтор не добавляется).
+    /// Adds your own colour at the end of the palette (a repeat isn't added).
     pub fn add_color(&mut self, rgb: [u8; 3]) -> Result<(), String> {
         let colors = self.custom_colors();
         if colors.contains(&rgb) {
@@ -400,14 +470,14 @@ impl SettingsFile {
         Ok(())
     }
 
-    /// Убрать свой цвет из палитры по значению.
+    /// Removes your own colour from the palette by value.
     pub fn remove_color_value(&mut self, rgb: [u8; 3]) {
         if let Some(i) = self.custom_colors().iter().position(|c| *c == rgb) {
             self.remove_color(i);
         }
     }
 
-    /// Убрать свой цвет по индексу в палитре.
+    /// Removes your own colour by its index in the palette.
     pub fn remove_color(&mut self, index: usize) {
         let mut colors = self.custom_colors();
         if index < colors.len() {
@@ -419,7 +489,62 @@ impl SettingsFile {
             .collect();
     }
 
-    /// Профиль, привязанный к exe (сравнение без учёта регистра).
+    /// The equalizer curve of profile `name`: its own, otherwise the "Default" profile's.
+    pub fn eq_for(&self, name: &str) -> Option<Vec<i8>> {
+        self.find(name)
+            .and_then(|p| p.headset.eq.clone())
+            .or_else(|| self.base.headset.eq.clone())
+            .filter(|g| g.len() == crate::headset_eq::BANDS)
+    }
+
+    /// Saves an equalizer curve in profile `name`. The first curve saved in another profile also gives
+    /// "Default" the curve that was on before (`previous`), so switching back to it restores that curve.
+    pub fn set_eq(&mut self, name: &str, gains: &[i8], previous: Option<&[i8]>) {
+        if name != BASE_PROFILE
+            && self.base.headset.eq.is_none()
+            && let Some(previous) = previous
+        {
+            self.base.headset.eq = Some(previous.to_vec());
+        }
+        if let Some(p) = self.find_mut(name) {
+            p.headset.eq = Some(gains.to_vec());
+        }
+    }
+
+    /// Your own equalizer presets with a name and the full number of bands (ones broken by hand are skipped).
+    pub fn custom_eq_presets(&self) -> Vec<EqPreset> {
+        self.eq_presets
+            .iter()
+            .filter(|p| p.gains.len() == crate::headset_eq::BANDS && !p.name.trim().is_empty())
+            .cloned()
+            .collect()
+    }
+
+    /// Saves a curve as your own preset; a preset with the same name is overwritten.
+    pub fn save_eq_preset(&mut self, name: &str, gains: &[i8]) -> Result<(), String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("empty preset name".into());
+        }
+        if let Some(p) = self.eq_presets.iter_mut().find(|p| p.name == name) {
+            p.gains = gains.to_vec();
+            return Ok(());
+        }
+        if self.eq_presets.len() >= MAX_EQ_PRESETS {
+            return Err(format!("no more than {MAX_EQ_PRESETS} presets"));
+        }
+        self.eq_presets.push(EqPreset {
+            name: name.to_owned(),
+            gains: gains.to_vec(),
+        });
+        Ok(())
+    }
+
+    pub fn remove_eq_preset(&mut self, name: &str) {
+        self.eq_presets.retain(|p| p.name != name);
+    }
+
+    /// The profile bound to an exe (case-insensitive comparison).
     pub fn profile_for_exe(&self, exe: &str) -> Option<&str> {
         let exe = exe.to_lowercase();
         self.profiles
@@ -429,7 +554,7 @@ impl SettingsFile {
     }
 }
 
-/// Цвет в файле как строка `"ff8000"`.
+/// A colour in the file as a string `"ff8000"`.
 mod rgb_hex {
     use serde::{Deserialize, Deserializer, Serializer, de::Error};
 
@@ -453,12 +578,12 @@ impl DeviceSettings {
         SettingsFile::path()
     }
 
-    /// Настройки действующего профиля.
+    /// The active profile's settings.
     pub fn load() -> Self {
         SettingsFile::load().current().clone()
     }
 
-    /// Изменить действующий профиль и сохранить файл; возвращает новые настройки профиля.
+    /// Changes the active profile and saves the file; returns the profile's new settings.
     pub fn update(f: impl FnOnce(&mut DeviceSettings)) -> Result<DeviceSettings, String> {
         let mut file = SettingsFile::load();
         f(file.current_mut());
@@ -479,6 +604,7 @@ mod tests {
                 lighting: Some(Lighting::Static {
                     color: [0xff, 0x80, 0x00],
                 }),
+                ..KeyboardSettings::default()
             },
             mouse: MouseSettings {
                 mode: Some(Mode::Host),
@@ -486,6 +612,9 @@ mod tests {
                 dpi_y: Some(1600),
                 lift_off: Some(LiftOff::High),
                 rate_hz: None,
+            },
+            headset: HeadsetSettings {
+                eq: Some(vec![6, 3, 0, 0, 0]),
             },
         };
         let text = toml::to_string_pretty(&s).unwrap();
@@ -506,6 +635,7 @@ mod tests {
                     direction: Direction::CenterOut,
                     intensity: 100,
                 }),
+                ..KeyboardSettings::default()
             },
             ..Default::default()
         };
@@ -517,7 +647,7 @@ mod tests {
 
     #[test]
     fn profiles_roundtrip_and_old_files() {
-        // Старый файл без профилей читается как профиль «Обычный».
+        // An old file without profiles is read as the "Default" profile.
         let old: SettingsFile = toml::from_str("[mouse]\ndpi = 800\n").unwrap();
         assert_eq!(old.current().mouse.dpi, Some(800));
         assert_eq!(old.names(), vec![BASE_PROFILE.to_owned()]);
@@ -571,6 +701,94 @@ mod tests {
         }
         assert_eq!(f.colors.len(), MAX_COLORS);
         assert!(f.add_color([9, 9, 9]).is_err());
+    }
+
+    #[test]
+    fn key_colours_roundtrip() {
+        let mut f: SettingsFile = toml::from_str(
+            "[keyboard]
+brightness = 50
+
+[keyboard.lighting]
+effect = \"static\"
+color = \"0080ff\"
+",
+        )
+        .unwrap();
+        f.base.keyboard.set_key("W", Some([0xff, 0, 0]));
+        f.base.keyboard.set_key("lctrl", Some([0, 0xff, 0]));
+        f.base.keyboard.set_key("lctrl", None);
+        f.base.keyboard.keys.insert("a".into(), "nonsense".into());
+        let text = toml::to_string_pretty(&f).unwrap();
+        let back: SettingsFile = toml::from_str(&text).unwrap();
+        let keys = back.base.keyboard.key_colors();
+        assert_eq!(keys.len(), 1, "{text}");
+        assert_eq!(keys.get("w"), Some(&[0xff, 0, 0]));
+        assert_eq!(back.base.keyboard.brightness, Some(50));
+        assert!(back.base.keyboard.lighting.is_some(), "{text}");
+    }
+
+    #[test]
+    fn eq_curve_per_profile() {
+        let mut f: SettingsFile =
+            toml::from_str("[mouse]\ndpi = 800\n\n[[profile]]\nname = \"Game\"\n").unwrap();
+        assert_eq!(
+            f.eq_for("Game"),
+            None,
+            "nothing saved yet: the curve isn't touched"
+        );
+        f.set_eq("Game", &[6, 3, 0, 0, 0], Some(&[0, 0, 0, 0, 0]));
+        assert_eq!(f.eq_for("Game"), Some(vec![6, 3, 0, 0, 0]));
+        assert_eq!(
+            f.eq_for(BASE_PROFILE),
+            Some(vec![0; 5]),
+            "Default keeps the curve that was on before"
+        );
+        f.set_eq(BASE_PROFILE, &[1, 1, 1, 1, 1], None);
+        f.set_eq("Game", &[2, 2, 2, 2, 2], Some(&[9, 9, 9, 9, 9]));
+        assert_eq!(
+            f.eq_for(BASE_PROFILE),
+            Some(vec![1; 5]),
+            "Default isn't overwritten"
+        );
+        let text = toml::to_string_pretty(&f).unwrap();
+        let back: SettingsFile = toml::from_str(&text).unwrap();
+        assert_eq!(back.eq_for("Game"), Some(vec![2; 5]), "{text}");
+        assert_eq!(back.base.mouse.dpi, Some(800));
+        // A profile without its own curve gets Default's.
+        f.profiles.push(Profile {
+            name: "Work".into(),
+            ..Profile::default()
+        });
+        assert_eq!(f.eq_for("Work"), Some(vec![1; 5]));
+    }
+
+    #[test]
+    fn eq_presets_roundtrip() {
+        let mut f: SettingsFile =
+            toml::from_str("[mouse]\ndpi = 800\n\n[[profile]]\nname = \"Игры\"\n").unwrap();
+        f.save_eq_preset(" Моя ", &[1, 2, 3, 4, 5]).unwrap();
+        f.save_eq_preset("Моя", &[0, 0, 0, 0, -3]).unwrap();
+        f.save_eq_preset("Музыка", &[3, 1, 0, 1, 3]).unwrap();
+        assert!(f.save_eq_preset("  ", &[0; 5]).is_err());
+        let text = toml::to_string_pretty(&f).unwrap();
+        let back: SettingsFile = toml::from_str(&text).unwrap();
+        let presets = back.custom_eq_presets();
+        assert_eq!(presets.len(), 2, "{text}");
+        assert_eq!(
+            (presets[0].name.as_str(), presets[0].gains.as_slice()),
+            ("Моя", [0, 0, 0, 0, -3].as_slice())
+        );
+        assert_eq!(back.base.mouse.dpi, Some(800));
+        assert_eq!(back.profiles.len(), 1);
+        f.remove_eq_preset("Моя");
+        assert_eq!(f.custom_eq_presets().len(), 1);
+        // A preset with the wrong number of bands (edited by hand) is skipped.
+        f.eq_presets.push(EqPreset {
+            name: "x".into(),
+            gains: vec![1, 2],
+        });
+        assert_eq!(f.custom_eq_presets().len(), 1);
     }
 
     #[test]

@@ -1,0 +1,207 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The editor of single key colours (settings → "Devices" → keyboard): the brush is a palette colour
+// or the eraser, "Fill all" / "Clear all", and the keyboard layout; a click or a drag over
+// keys paints them. Rust works out which key was hit (from the layout units).
+import { Button, ComboBox } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export struct KeyCap {
+    label: string,
+    // The key's place and size in units (the width of a normal key); the height is in rows (2 for the ISO Enter).
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    // The colour on the keyboard, its own or the effect's; `lit` means the colour is known (otherwise the key is grey).
+    color: color,
+    lit: bool,
+    // The key has its own colour.
+    custom: bool,
+    // The key is light, so the label is dark.
+    dark-text: bool,
+}
+
+// A brush circle: a palette colour or the eraser (a glyph without a fill).
+component BrushSwatch inherits Rectangle {
+    in property <color> value;
+    in property <string> glyph;
+    in property <string> label;
+    in property <bool> selected;
+    callback picked();
+
+    width: Theme.swatch-size;
+    height: Theme.swatch-size;
+    border-radius: self.width / 2;
+    background: root.glyph != "" ? transparent : root.value;
+    border-width: root.selected ? 2px : 1px;
+    border-color: root.selected || focus.has-focus ? Theme.swatch-ring : Theme.card-stroke;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => {
+        root.picked();
+    }
+
+    if root.glyph != "": Text {
+        text: root.glyph;
+        font-family: Theme.icon-font;
+        font-size: Theme.font-caption;
+        color: Theme.text-primary;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == " " || event.text == Key.Return) {
+                root.picked();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    // Above the FocusScope: otherwise the first click only takes focus.
+    TouchArea {
+        clicked => {
+            focus.focus();
+            root.picked();
+        }
+    }
+}
+
+export component KeyboardEditor inherits VerticalLayout {
+    in property <[KeyCap]> keys;
+    // Your own palette colours (shared with the keyboard card in the panel).
+    in property <[color]> custom-colors;
+    // Key colours are visible: the static effect, or the lighting is off.
+    in property <bool> active;
+    // The profile the colours are saved in.
+    in property <string> profile;
+    // The layout size, units.
+    in property <float> layout-width;
+    in property <float> layout-height;
+    // Layout: 0 ANSI, 1 ISO.
+    in-out property <int> layout;
+    callback set-layout(int);
+    // A click or a drag: a point in layout units, the brush colour; `erase` removes the key's own colour.
+    callback paint(float, float, color, bool);
+    // All keys in the brush colour; with the eraser, remove all their own colours.
+    callback fill(color, bool);
+
+    property <color> brush: Theme.swatches[0];
+    property <bool> erasing;
+
+    spacing: Theme.spacing-s;
+
+    Text {
+        text: root.active
+            ? @tr("Click or drag over keys to colour them. The colours are saved in the profile “{}”.", root.profile)
+            : @tr("Key colours show with the Static effect: choose it in the keyboard card in the panel.");
+        font-size: Theme.font-caption;
+        color: root.active ? Theme.text-secondary : Theme.error-text;
+        wrap: word-wrap;
+    }
+
+    HorizontalLayout {
+        spacing: Theme.spacing-s;
+
+        for c in Theme.swatches: BrushSwatch {
+            value: c;
+            label: @tr("Colour");
+            selected: !root.erasing && root.brush == c;
+            picked => {
+                root.brush = c;
+                root.erasing = false;
+            }
+        }
+
+        for c in root.custom-colors: BrushSwatch {
+            value: c;
+            label: @tr("Colour");
+            selected: !root.erasing && root.brush == c;
+            picked => {
+                root.brush = c;
+                root.erasing = false;
+            }
+        }
+
+        BrushSwatch {
+            glyph: Theme.glyph-eraser;
+            label: @tr("Eraser: back to the effect colour");
+            selected: root.erasing;
+            picked => {
+                root.erasing = true;
+            }
+        }
+
+        Rectangle {
+            horizontal-stretch: 1;
+        }
+
+        // Layout names aren't translated.
+        ComboBox {
+            width: Theme.key-layout-combo-width;
+            model: ["ANSI", "ISO"];
+            current-index <=> root.layout;
+            selected => {
+                root.set-layout(self.current-index);
+            }
+        }
+
+        Button {
+            text: root.erasing ? @tr("Clear all") : @tr("Fill all");
+            clicked => {
+                root.fill(root.brush, root.erasing);
+            }
+        }
+    }
+
+    // The layout is centred; the unit is chosen so that it fits the width.
+    area := Rectangle {
+        vertical-stretch: 1;
+        property <length> unit: min(Theme.key-unit, self.width / root.layout-width);
+
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: 0;
+            width: root.layout-width * area.unit;
+            height: root.layout-height * area.unit;
+
+            for key in root.keys: Rectangle {
+                x: key.x * area.unit + Theme.key-gap / 2;
+                y: key.y * area.unit + Theme.key-gap / 2;
+                width: key.w * area.unit - Theme.key-gap;
+                height: key.h * area.unit - Theme.key-gap;
+                border-radius: Theme.radius-control;
+                background: key.lit ? key.color : Theme.key-unlit;
+                border-width: key.custom ? 2px : 1px;
+                border-color: key.custom ? Theme.swatch-ring : Theme.card-stroke;
+
+                Text {
+                    text: key.label;
+                    font-size: Theme.key-font-size;
+                    color: !key.lit ? Theme.text-secondary
+                        : key.dark-text ? Theme.key-text-dark : Theme.key-text-light;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
+
+            // One area for the whole layout: a drag goes across keys, whereas with an area per key
+            // the press would stay with the first one.
+            TouchArea {
+                mouse-cursor: MouseCursor.pointer;
+                pointer-event(event) => {
+                    if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                        root.paint(self.mouse-x / area.unit, self.mouse-y / area.unit, root.brush, root.erasing);
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        root.paint(self.mouse-x / area.unit, self.mouse-y / area.unit, root.brush, root.erasing);
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `0x0000` Root и `0x0001` FeatureSet.
+//! `0x0000` Root and `0x0001` FeatureSet.
 
 use super::Error;
 use super::transport::Transport;
 
-/// Root всегда живёт на индексе 0.
+/// Root always lives at index 0.
 const ROOT_INDEX: u8 = 0x00;
 const ROOT_GET_FEATURE: u8 = 0;
 const ROOT_PING: u8 = 1;
@@ -13,7 +13,7 @@ pub const FEATURE_SET: u16 = 0x0001;
 const FS_GET_COUNT: u8 = 0;
 const FS_GET_FEATURE_ID: u8 = 1;
 
-/// Произвольный байт, который устройство должно вернуть в ответе на ping.
+/// An arbitrary byte the device must return in its reply to a ping.
 const PING_DATA: u8 = 0x5A;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,7 +24,7 @@ pub struct FeatureEntry {
     pub version: u8,
 }
 
-/// Флаги типа фичи (байт `type` в ответе FeatureSet/GetFeature).
+/// Feature type flags (the `type` byte in the FeatureSet/GetFeature reply).
 pub fn flag_names(flags: u8) -> Vec<&'static str> {
     [
         (0x80, "obsolete"),
@@ -43,11 +43,11 @@ pub fn flag_names(flags: u8) -> Vec<&'static str> {
 pub enum Protocol {
     /// HID++ 2.0+ (major, minor).
     V2(u8, u8),
-    /// Отвечает как HID++ 1.0 (ресивер или старое устройство).
+    /// Answers as HID++ 1.0 (a receiver or an old device).
     V1,
 }
 
-/// Ping через Root: версия протокола. Ошибка 1.0 «invalid sub id» означает HID++ 1.0.
+/// Ping through Root: the protocol version. The 1.0 error "invalid sub id" means HID++ 1.0.
 pub fn ping(t: &Transport, device: u8) -> Result<Protocol, Error> {
     match t.call_short(device, ROOT_INDEX, ROOT_PING, &[0, 0, PING_DATA]) {
         Ok(r) => {
@@ -59,7 +59,7 @@ pub fn ping(t: &Transport, device: u8) -> Result<Protocol, Error> {
     }
 }
 
-/// Root.GetFeature: индекс фичи или `None`, если не поддерживается.
+/// Root.GetFeature: the feature index, or `None` if it isn't supported.
 pub fn get_feature(t: &Transport, device: u8, id: u16) -> Result<Option<FeatureEntry>, Error> {
     let r = t.call(device, ROOT_INDEX, ROOT_GET_FEATURE, &id.to_be_bytes())?;
     let p = r.params();
@@ -71,7 +71,7 @@ pub fn get_feature(t: &Transport, device: u8, id: u16) -> Result<Option<FeatureE
     }))
 }
 
-/// Полная таблица фич через FeatureSet (индекс 0 — сам Root).
+/// The full feature table through FeatureSet (index 0 is Root itself).
 pub fn enumerate(t: &Transport, device: u8) -> Result<Vec<FeatureEntry>, Error> {
     let fs = get_feature(t, device, FEATURE_SET)?.ok_or(Error::FeatureMissing(FEATURE_SET))?;
     let count = t.call(device, fs.index, FS_GET_COUNT, &[])?.params()[0];

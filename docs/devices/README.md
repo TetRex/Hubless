@@ -1,121 +1,156 @@
-# Дампы устройств
+# Device dumps
 
-Получены командой `hubless --dump <файл>` (только чтение: Root, FeatureSet, `0x0003`, `0x0005`, регистры ресивера HID++ 1.0;
-для гарнитуры — Centurion: Root, FeatureSet, состояние моста, батарея).
-Серийные номера USB и unit id заменены на `XXXXXXXX` / `XX`.
+Made with `hubless --dump <file>` (read-only: Root, FeatureSet, `0x0003`, `0x0005`, HID++ 1.0 receiver
+registers; for the headset, Centurion: Root, FeatureSet, bridge state, battery).
+USB serial numbers and unit IDs are replaced with `XXXXXXXX` / `XX`.
 
-| Файл | Подключение |
+| File | Connection |
 |---|---|
-| [receivers.json](receivers.json) / [.txt](receivers.txt) | мышь и клавиатура через свои LIGHTSPEED-ресиверы |
-| [wired.json](wired.json) / [.txt](wired.txt) | мышь и клавиатура по USB-кабелю |
-| [headset.json](headset.json) / [.txt](headset.txt) | гарнитура через свой адаптер (Centurion), сырые кадры в `centurion.frames` |
+| [receivers.json](receivers.json) / [.txt](receivers.txt) | mouse and keyboard through their own LIGHTSPEED receivers |
+| [wired.json](wired.json) / [.txt](wired.txt) | mouse and keyboard over a USB cable |
+| [headset.json](headset.json) / [.txt](headset.txt) | headset through its own adapter (Centurion); raw frames in `centurion.frames` |
 
-## Устройства
+## Devices
 
-| Устройство | Имя по HID++ | USB PID (кабель) | Ресивер (PID) | wPID | HID++ | Прошивка |
+| Device | HID++ name | USB PID (cable) | Receiver (PID) | wPID | HID++ | Firmware |
 |---|---|---|---|---|---|---|
 | PRO X Superlight 2 | `PRO X 2` | `C09B` | `C54D` | `40A9` | 4.2 | MPM 32.05.B0029 |
 | PRO X TKL Lightspeed | `PRO X TKL` | `C352` | `C547` | `40B0` | 4.2 | MPK 23.00.B0008 |
-| PRO X 2 LIGHTSPEED (гарнитура) | — | `0AF7` | свой адаптер | — | нет (Centurion) | — |
+| PRO X 2 LIGHTSPEED (headset) | — | `0AF7` | its own adapter | — | none (Centurion) | — |
 
-## Наблюдения
+## Findings
 
-- **Индексы фич зависят от подключения.** У клавиатуры по кабелю нет `0x0007` и все индексы с 6-го сдвинуты; DFU-фича
-  `0x00D0` (радио) заменяется на `0x00C2` (кабель). У мыши по кабелю `0x1500` заменяется на `0x00C3`.
-  Индексы всегда берутся через `Root.GetFeature` и кешируются на сессию.
-- Ресиверы на HID++ 2.0 ping по индексу `0xFF` не отвечают (ни long, ни short); на чтение регистров отвечают.
-  Слоты 2–6 у обоих ресиверов не отвечают вовсе — это одно-слотовые LIGHTSPEED-ресиверы.
-- Когда клавиатура подключена кабелем, её слот на ресивере перестаёт отвечать.
-- Фичи для следующих фаз:
-  - мышь: `1004` батарея, `2202` DPI, `8061` частота опроса, `8100` onboard-профили, `8090` mode status;
-  - клавиатура: `1004` батарея, `8071` эффекты, `8081` per-key, `8040` яркость, `8100` onboard-профили,
-    `8060` частота опроса, `4523` — **нет `0x4522` из плана**, кандидат для Game Mode — `0x4523` (не изучена).
-- Не опознаны (нет в справочнике): мышь `2250`, `2251`, `80E0`, `1500`, `1602`; клавиатура `40A3`, `1B10`, `4523`.
-- **Гарнитура — PRO X 2 LIGHTSPEED, а не PRO X Wireless из плана.** HID++ на ней нет; протокол — Logitech «Centurion»
-  (справочник — HeadsetControl): 64-байтные кадры с report id `0x51` на коллекции `FFA0:0001`, интерфейс 3.
-  - Адаптер: `0000`, `0001`, `0100`, `0003` (мост, индекс 3), `010A`. Состояние моста `03 7a 00 01 01` — гарнитура подключена.
-  - Гарнитура (через мост): `0000`, `0001`, `0101`, `0100`, `0104` батарея, `010A`, `0108` автоотключение,
-    `0604` sidetone, `0602`, `0636` onboard EQ. Нет `020D` (advanced EQ), `0601` (LED mute), `0621` (подсветка).
-  - Батарея (`0104`, функция 0): ответ `08 08 00` → 8 %, байт 2 = 0 — не заряжается. Смысл байта 1 не известен.
-  - Sidetone (`0604`), проверено 2026-10-19: чтение (функция 0) → `01 01 <уровень>`; запись (функция 1)
-    в формате v1 `[01 <уровень>]`, уровень 0–100, ответ `01 00 <уровень>`. Запись 50 → чтение `01 01 32`.
-  - Автоотключение (`0108`), проверено 2026-10-19: чтение (функция 0) → `<минуты>`, 0 — никогда; запись (функция 1)
-    `[<минуты>]`, ответ пустой. Запись 30 → чтение `1e`.
-  - **Эквалайзер (`0636`, индекс 9)** — захват G Hub 2026-10-20 (`captures/headset_eq.pcapng`, в захвате гарнитура —
-    USB-устройство 1 на USBPcap4: запросы — управляющие SET_REPORT, ответы — прерывания `0x84`):
-    - fn1 `[00]` — чтение: `[флаг, 05, (частота u16 BE, усиление дБ i8, 02) × 5]`, полосы 80/240/750/2200/6600 Гц;
-      флаг `80` — кривая сохранена в гарнитуре.
-    - fn2 — запись, 253 байта: та же шапка (флаг `00` — промежуточная запись, `80` — сохранить; G Hub шлёт `80`
-      последней), постоянные 11 байт `05 5a e3 00 03 0e 00 02 00 00 00` и два блока `[01|02, 00 35 00 05 00,
-      5 biquad × (b0, b1/2, b2, a1/2, a2), усиление]` — для 44,1 и 48 кГц. Коэффициент — Q1.23 в байтах
-      `[средний, старший, 00, младший]`. Фильтры — peaking по Audio EQ Cookbook, Q = 2, по убыванию усиления;
-      числитель нормирован по b0 (b0 = 1), произведение b0 × 0x04C28F — в «усиление»; числитель первого фильтра
-      × 0x6B9022 (≈ −1,5 дБ). Модель совпадает со всеми 10 записями G Hub до 1 младшего разряда, одна — байт в байт
-      (тест в `src/headset_eq.rs`).
-    - Сообщение длиннее кадра режется по 60 байт, флаги кадров `(номер << 1) | ещё_будут`: `01 03 05 07 08`.
-    - Запись из Hubless проверена 2026-10-21 (ползунки в настройках: ответы без ошибок, сохранение `80` проходит).
-  - Раскладка версии/флагов в ответе FeatureSet не проверена (в таблице может быть неверной); ID фич совпадают с HeadsetControl.
-- Мышь PRO X 2, `0x2202` setDpi (функция 6), 2026-10-19 через ресивер: lift-off `00` (LOW по Solaar) отвергается
-  ошибкой `11 01 ff 09 6x 02` (INVALID_ARGUMENT); `01` (medium) и `02` (high) принимаются. В панели «низкого» нет.
-- **Захваты G Hub (2026-10-20, через ресиверы, файлы в `captures/`, не в git):**
-  - **Game Mode — `0x4523`** (в Solaar `KEYBOARD_DISABLE_CONTROLS`, без реализации), индекс `0x0D` у клавиатуры:
-    - G Hub задаёт список блокируемых клавиш функцией 0: `11 01 0d 0x <битовая маска>`, ответ — нули.
-      Caps Lock → `00 00 00 00 00 01`, Caps Lock + F1 → `00 00 01 00 00 01`, пустой список → нули.
-      Одна клавиша = один бит маски (16 байт). Нумерация не по HID и не по зонам подсветки — похоже на позиции
-      в матрице клавиатуры, формулы нет. Захват `keyboard_gamemode_sequence` (клавиши по одной):
-      Esc — байт 2 бит 0, F1 — байт 0 бит 1, F2 — байт 3 бит 0, `1` — байт 6 бит 0, Q — байт 7 бит 0,
-      A — байт 8 бит 2, Z — байт 9 бит 2, пробел — байт 9 бит 0, левый Ctrl — байт 11 бит 6;
-      Caps Lock (другой захват) — байт 5 бит 0. Расхождение: в `keyboard_gamemode_add_two` «F1» дал байт 2 бит 0,
-      как Esc здесь — в одном из захватов клавиша была другая. Для полной таблицы нужен захват всех клавиш по рядам.
-      Win и Menu в G Hub недоступны — их блокирует прошивка.
-    - Кнопка Game Mode на клавиатуре шлёт событие функции 0 (sw_id 0): `11 01 0d 00 01` — включён, `… 00 00` — выключен.
-  - **Per-key — `0x8081`**, индекс `0x09`: функция 5 `[первая, последняя зона, R, G, B]` красит диапазон
-    (`14 14 f8 2f 25`), затем функция 7 `[00]` — применить кадр. Совпадает с Solaar; по радио тоже работает.
-    Зона `0x14` — клавиша T: номер зоны = код HID клавиши − 3 (T = `0x17`; A = 1 … Z = 26).
-  - **Частота опроса — `0x8061`**, индекс `0x0C` у мыши: G Hub шлёт ту же функцию 3, но **коротким** отчётом
-    `10 01 0c 3x 02` (500 Гц), перед ней `0x2202` функцию 6 (текущий DPI) и функцию 7 `[00 01]` (не изучена).
-    Мышь подтверждает событием `11 01 0c 00 <связь> <индекс>`. **Разгадка (2026-10-20):** функция 2 (чтение) принимает
-    тип связи — `[00]` кабель, `[01]` радио — и у каждой своя частота. Без параметра читалась частота кабеля (`03`),
-    поэтому казалось, что запись 500 Гц не применяется. После записи: `[01]` → `02` (500 Гц), `[00]` → `03`.
-    Запись работает и длинным, и коротким отчётом; функция 7 `0x2202` `[00 01]` не нужна.
-  - `0x8110` (индекс `0x0E`) — события нажатия кнопок мыши (`… 0e 00 00 01` / `… 00 00`), к настройкам не относятся.
-- `HID VHF Driver` с PID, равным wPID/PID клавиатуры, — виртуальное HID-устройство (вероятно, Windows Dynamic Lighting).
+- **Feature indices depend on the connection.** Over the cable the keyboard has no `0x0007`, so every index
+  from the 6th on is shifted; the DFU feature `0x00D0` (wireless) becomes `0x00C2` (cable). Over the cable the
+  mouse's `0x1500` becomes `0x00C3`. Indices are always resolved through `Root.GetFeature` and cached for the
+  session.
+- The receivers don't answer an HID++ 2.0 ping at index `0xFF` (neither long nor short), but they do answer
+  register reads. Slots 2–6 don't answer at all on either receiver: these are single-slot LIGHTSPEED receivers.
+- While the keyboard is connected by cable, its slot on the receiver stops answering.
+- Features for the next phases:
+  - mouse: `1004` battery, `2202` DPI, `8061` polling rate, `8100` onboard profiles, `8090` mode status;
+  - keyboard: `1004` battery, `8071` effects, `8081` per-key, `8040` brightness, `8100` onboard profiles,
+    `8060` polling rate, `4523`: **no `0x4522` from the plan**; the Game Mode candidate is `0x4523` (not studied).
+- Not identified (missing from the reference): mouse `2250`, `2251`, `80E0`, `1500`, `1602`; keyboard `40A3`,
+  `1B10`, `4523`.
+- **The headset is a PRO X 2 LIGHTSPEED, not the PRO X Wireless from the plan.** It has no HID++; the protocol is
+  Logitech "Centurion" (reference: HeadsetControl): 64-byte frames with report ID `0x51` on collection
+  `FFA0:0001`, interface 3.
+  - Adapter: `0000`, `0001`, `0100`, `0003` (bridge, index 3), `010A`. Bridge state `03 7a 00 01 01` means the
+    headset is connected.
+  - Headset (through the bridge): `0000`, `0001`, `0101`, `0100`, `0104` battery, `010A`, `0108` auto power-off,
+    `0604` sidetone, `0602`, `0636` onboard EQ. No `020D` (advanced EQ), `0601` (LED mute), `0621` (lighting).
+  - Battery (`0104`, function 0): reply `08 08 00` → 8%; byte 2 = 0 means not charging. The meaning of byte 1 is
+    unknown.
+  - Sidetone (`0604`), verified 2026-10-19: read (function 0) → `01 01 <level>`; write (function 1) in the v1
+    format `[01 <level>]`, level 0–100, reply `01 00 <level>`. Writing 50 → reading `01 01 32`.
+  - Auto power-off (`0108`), verified 2026-10-19: read (function 0) → `<minutes>`, 0 = never; write
+    (function 1) `[<minutes>]`, empty reply. Writing 30 → reading `1e`.
+  - **Equalizer (`0636`, index 9)**: G Hub capture 2026-10-20 (`captures/headset_eq.pcapng`; in the capture the
+    headset is USB device 1 on USBPcap4: requests are control SET_REPORTs, replies are interrupts on `0x84`):
+    - fn1 `[00]` is the read: `[flag, 05, (frequency u16 BE, gain dB i8, 02) × 5]`, bands
+      80/240/750/2200/6600 Hz; flag `80` means the curve is saved in the headset.
+    - fn2 is the write, 253 bytes: the same header (flag `00` is an intermediate write, `80` saves; G Hub sends
+      `80` last), a constant 11 bytes `05 5a e3 00 03 0e 00 02 00 00 00` and two blocks
+      `[01|02, 00 35 00 05 00, 5 biquads × (b0, b1/2, b2, a1/2, a2), gain]` for 44.1 and 48 kHz. Each coefficient
+      is Q1.23 in the byte order `[middle, high, 00, low]`. The filters are peaking filters from the Audio EQ
+      Cookbook, Q = 2, sorted by gain in descending order; the numerator is normalized by b0 (b0 = 1), the
+      product of b0 × 0x04C28F goes into "gain"; the first filter's numerator is multiplied by 0x6B9022
+      (≈ −1.5 dB). The model matches all 10 G Hub writes to within 1 LSB, one of them byte for byte (test in
+      `src/headset_eq.rs`).
+    - A message longer than one frame is split into 60-byte chunks; frame flags are
+      `(number << 1) | more_follow`: `01 03 05 07 08`.
+    - Writing from Hubless verified 2026-10-21 (sliders in the settings: replies without errors, the `80` save
+      goes through).
+    - The read (fn1) returns the **saved** curve: after a write with flag `00` it still returns the old one; the
+      new one is visible only after a write with `80` (log 2026-10-22: "Flat" over "+6 +3 0 0 0" read back as
+      `80 Hz +6` before the save).
+  - The layout of the version/flags bytes in the FeatureSet reply is not verified (the table may be wrong);
+    the feature IDs match HeadsetControl.
+- PRO X 2 mouse, `0x2202` setDpi (function 6), 2026-10-19 through the receiver: lift-off `00` (LOW per Solaar) is
+  rejected with error `11 01 ff 09 6x 02` (INVALID_ARGUMENT); `01` (medium) and `02` (high) are accepted. The panel
+  has no "low".
+- **G Hub captures (2026-10-20, through the receivers; files in `captures/`, not in git):**
+  - **Game Mode: `0x4523`** (in Solaar `KEYBOARD_DISABLE_CONTROLS`, not implemented), index `0x0D` on the
+    keyboard:
+    - G Hub sets the list of blocked keys with function 0: `11 01 0d 0x <bitmask>`, the reply is all zeros.
+      Caps Lock → `00 00 00 00 00 01`, Caps Lock + F1 → `00 00 01 00 00 01`, empty list → zeros.
+      One key = one bit of the mask (16 bytes). The numbering follows neither HID usages nor lighting zones; it
+      looks like positions in the keyboard matrix, with no formula. Capture `keyboard_gamemode_sequence` (keys one
+      by one): Esc — byte 2 bit 0, F1 — byte 0 bit 1, F2 — byte 3 bit 0, `1` — byte 6 bit 0, Q — byte 7 bit 0,
+      A — byte 8 bit 2, Z — byte 9 bit 2, space — byte 9 bit 0, left Ctrl — byte 11 bit 6; Caps Lock (another
+      capture) — byte 5 bit 0. A mismatch: in `keyboard_gamemode_add_two` "F1" gave byte 2 bit 0, like Esc here,
+      so in one of the captures the key was a different one. A full table needs a capture of all keys, row by row.
+      Win and Menu are not available in G Hub: the firmware blocks them.
+    - The Game Mode button on the keyboard sends a function 0 event (sw_id 0): `11 01 0d 00 01` on,
+      `… 00 00` off.
+  - **Per-key: `0x8081`**, index `0x09`: function 5 `[first zone, last zone, R, G, B]` paints a range
+    (`14 14 f8 2f 25`), then function 7 `[00]` applies the frame. Matches Solaar; also works over the receiver.
+    Zone `0x14` is the T key: zone number = the key's HID usage − 3 (T = `0x17`; A = 1 … Z = 26).
+    Verified from Hubless 2026-10-22 (`hubless keyboard keys wasd ff0000`, wireless): fn5 replies with the first
+    zone number (`11 01 09 5x 17 00 …`), fn7 with an empty reply; only the given keys change colour, the others
+    keep the current `0x8071` effect. Writing a `0x8071` effect resets the frame (after "off" and back to a static
+    colour, WASD were no longer red).
+    The zone map is fn0 `[00, page]` (pages 0–2, as in Solaar); after 2 bytes the reply is a bitmap.
+    The PRO X TKL has 99 zones: 1–79, 97–111, 150, 152–155. Modifiers (`0xE0`–`0xE7`) are zones 104–111, not
+    "usage − 3" (221–228 are not in the map); the Menu key (`0x65`) is 98. What 97, 99–103 and 150–155 are on this
+    keyboard is not verified (97 is the ISO key, which ANSI doesn't have).
+    The zone map is the same for ANSI and ISO (46 `\`, 47 and 97 are all present), so the user picks the layout.
+    The user's PRO X TKL is ISO (tall Enter, `\|` to its left): "Fill all" in the ANSI layout didn't paint the key
+    next to Enter (photo 2026-10-22). It is `0x32` (non-US #), zone 47; in the ISO layout it does change colour
+    (verified by the user 2026-10-22).
+    `0x4540` KEYBOARD_LAYOUT_2, fn0 without parameters → `02 00 …` on this ISO keyboard; no table of layout codes
+    was found, so the code is not used.
+  - **Polling rate: `0x8061`**, index `0x0C` on the mouse: G Hub sends the same function 3, but as a **short**
+    report `10 01 0c 3x 02` (500 Hz), preceded by `0x2202` function 6 (current DPI) and function 7 `[00 01]` (not
+    studied). The mouse confirms with the event `11 01 0c 00 <link> <index>`. **Solved (2026-10-20):** function 2
+    (read) takes the link type, `[00]` cable and `[01]` wireless, and each has its own rate. Without the parameter
+    the cable rate (`03`) was read, so it looked like the 500 Hz write wasn't applied. After the write:
+    `[01]` → `02` (500 Hz), `[00]` → `03`. The write works with both long and short reports; `0x2202` function 7
+    `[00 01]` is not needed.
+  - `0x8110` (index `0x0E`): mouse button press events (`… 0e 00 00 01` / `… 00 00`), unrelated to settings.
+- `HID VHF Driver` with a PID equal to the keyboard's wPID/PID is a virtual HID device (probably Windows Dynamic
+  Lighting).
 
-## Отчёты пользователей
+## User reports
 
 ### 2026-10-20 — G903 + G815 ([reports/2026-10-20-g903-g815.txt](reports/2026-10-20-g903-g815.txt))
 
-Hubless 0.1.0, Windows 11 25H2, G Hub закрыт. Пользователь назвал клавиатуру «G915 X», но в отчёте
-она — `C33F` «G815 RGB MECHANICAL GAMING KEYBOARD» по кабелю; G915 X (ресивер, Bluetooth) в отчёте нет.
+Hubless 0.1.0, Windows 11 25H2, G Hub closed. The user called the keyboard a "G915 X", but in the report it is a
+`C33F` "G815 RGB MECHANICAL GAMING KEYBOARD" over the cable; there is no G915 X (receiver, Bluetooth) in the report.
 
-- **G903 LIGHTSPEED** (wPID `4087`, ресивер `C539` «USB Receiver», HID++ 4.2, MPM 23.01) — найдена.
-  Фичи старые: батарея `1001` (напряжение, нет `1004`), DPI `2201` (нет `2202`), частота `8060` (нет `8061`),
-  подсветка `8071`, onboard `8100`. Поддержано после отчёта: заряд по напряжению (кривая Solaar),
-  показ текущего DPI и частоты (только чтение).
-  - Ресивер `C539` отвечает на ping по `0xFF` как HID++ 1.0; пустые слоты pairing info — ошибка `0x03`.
-  - Поток событий `11 01 07 10 00…` — фича `8071` (индекс 7), функция 1; смысл не изучен
-    (у PRO X TKL событие `8071` — активность пользователя). Есть `HID VHF Driver` с wPID мыши — Dynamic Lighting.
-- **G815** по кабелю — **не найдена**: HID++ на usage page `FF43` (коллекции `0602` long, `0604` very long,
-  short нет), Hubless 0.1.0 искал только `FF00`. После отчёта `FF43` поддержан (по Solaar) — нужен новый
-  отчёт, чтобы увидеть таблицу фич.
+- **G903 LIGHTSPEED** (wPID `4087`, receiver `C539` "USB Receiver", HID++ 4.2, MPM 23.01): found.
+  Old features: battery `1001` (voltage, no `1004`), DPI `2201` (no `2202`), polling rate `8060` (no `8061`),
+  lighting `8071`, onboard `8100`. Supported after the report: battery level from voltage (Solaar's curve),
+  showing the current DPI and polling rate (read-only).
+  - Receiver `C539` answers a ping at `0xFF` as HID++ 1.0; empty pairing info slots return error `0x03`.
+  - A stream of events `11 01 07 10 00…`: feature `8071` (index 7), function 1; meaning not studied (on the
+    PRO X TKL the `8071` event is user activity). There is a `HID VHF Driver` with the mouse's wPID (Dynamic
+    Lighting).
+- **G815** over the cable: **not found**. Its HID++ is on usage page `FF43` (collections `0602` long, `0604` very
+  long, no short), and Hubless 0.1.0 only looked at `FF00`. After the report `FF43` is supported (per Solaar); a new
+  report is needed to see the feature table.
 
-### 2026-10-20 — тот же набор на 0.1.1 ([reports/2026-10-20-g903-g815-v0.1.1.txt](reports/2026-10-20-g903-g815-v0.1.1.txt))
+### 2026-10-20 — the same set on 0.1.1 ([reports/2026-10-20-g903-g815-v0.1.1.txt](reports/2026-10-20-g903-g815-v0.1.1.txt))
 
-- **G815** по кабелю теперь найдена через `FF43`: HID++ 4.2, U1 31.02.B0018. Фичи: `8040` яркость, `8060` частота,
-  `8071` эффекты, `8081` per-key v2, `8100` onboard, `4522` KEYBOARD_DISABLE_BY_USAGE (Game Mode по HID usage —
-  проще, чем `4523` у PRO X TKL), `4540` раскладка, `8010`/`8020`/`8030` G-клавиши, M-клавиши, MR. Батареи нет.
-  - Ошибка: карточка была всегда «Inactive» — связь бралась из чтения батареи, а у проводной клавиатуры её нет.
-    Исправлено: без фичи батареи связь проверяется ping'ом.
-- **G903**: ресивер `C539` отдаёт имя `G903 LS` (регистр `B5`/`40`) — имя спящей мыши.
+- **G815** over the cable is now found through `FF43`: HID++ 4.2, U1 31.02.B0018. Features: `8040` brightness,
+  `8060` polling rate, `8071` effects, `8081` per-key v2, `8100` onboard, `4522` KEYBOARD_DISABLE_BY_USAGE (Game
+  Mode by HID usage, simpler than `4523` on the PRO X TKL), `4540` layout, `8010`/`8020`/`8030` G keys, M keys,
+  MR. No battery.
+  - Bug: the card was always "Inactive", because the link state came from reading the battery, and a wired
+    keyboard has none. Fixed: without a battery feature, the link is checked with a ping.
+- **G903**: receiver `C539` reports the name `G903 LS` (register `B5`/`40`), used as the name of the sleeping mouse.
 
-### 2026-10-20 — тот же набор на 0.1.2 ([reports/2026-10-20-g903-g815-v0.1.2.txt](reports/2026-10-20-g903-g815-v0.1.2.txt))
+### 2026-10-20 — the same set on 0.1.2 ([reports/2026-10-20-g903-g815-v0.1.2.txt](reports/2026-10-20-g903-g815-v0.1.2.txt))
 
-- **G815:** эффект подсветки менял только логотип — Hubless слал эффект лишь зоне 0, а у G815 она, судя по
-  фото, логотип (клавиши — другая зона). Исправлено: эффект уходит всем зонам, которые его умеют (и в CLI).
-- **G903:** по словам пользователя, смена DPI кнопкой на мыши теперь видна в Hubless — значит, мышь шлёт
-  событие одной из фич `8100`/`2201`/`8060`. Запись DPI и частоты включена без переключателя (просьба пользователя).
-- **G903 на 0.1.3:** после смены DPI в Hubless кнопка DPI на мыши перестаёт работать до перезапуска мыши.
-  Причина: Hubless переводил мышь в режим host (`8100` setMode), а в нём onboard-профиль, который
-  обслуживает кнопку, выключен. Исправлено: у мышей со старыми фичами (`2201`/`8060`) режим host не
-  включается — DPI и частота пишутся в onboard-режиме, оставшийся host снимается, переключатель
-  host/onboard в карточке скрыт. Принимает ли G903 запись DPI в onboard-режиме — ждём проверки.
+- **G815:** the lighting effect only changed the logo. Hubless sent the effect to zone 0 only, and on the G815
+  that zone is, judging by the photo, the logo (the keys are another zone). Fixed: the effect goes to every zone
+  that supports it (in the CLI too).
+- **G903:** according to the user, changing DPI with the mouse button now shows in Hubless, so the mouse sends an
+  event from one of the features `8100`/`2201`/`8060`. Writing DPI and polling rate is enabled without a switch
+  (the user's request).
+- **G903 on 0.1.3:** after changing DPI in Hubless, the mouse's DPI button stops working until the mouse is
+  restarted. Cause: Hubless put the mouse into host mode (`8100` setMode), and in that mode the onboard profile that
+  handles the button is turned off. Fixed: mice with old features (`2201`/`8060`) are never put into host mode; DPI
+  and polling rate are written in onboard mode, a leftover host mode is cleared, and the host/onboard switch is
+  hidden in the card. Whether the G903 accepts DPI writes in onboard mode is still to be checked.

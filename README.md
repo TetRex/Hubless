@@ -6,30 +6,35 @@ and ~0% CPU while idle. Tested with the PRO X Superlight 2 mouse, the PRO X TKL 
 the PRO X 2 LIGHTSPEED headset.
 
 Work in progress: see [Plan.md](Plan.md). Protocol findings are in [docs/devices](docs/devices/README.md).
-Both are in Russian.
 
 ## Features
 
 - **Tray:** battery level of every device in the tooltip; a dot on the icon and a notification when a battery
-  drops below 15%; the right-click menu has just "Exit" (everything else is in the panel and the settings window).
-- **Panel** (left-click the tray icon):
-  - mouse: DPI presets plus any value via the slider or input field, polling rate 125 Hz to 8 kHz,
-    onboard/host mode, lift-off distance;
-  - keyboard: brightness, lighting effect (static, breathe, cycle, wave, ripple) and colour;
-  - headset: sidetone (how loud you hear your own voice) and auto power-off.
+  drops below the threshold you choose (15% by default), and a notification when a device has fully charged.
+  There is no right-click menu: any click on the icon opens the panel.
+- **Panel** (click the tray icon). The header has the settings (gear) and Exit (power) buttons.
+  - mouse: DPI presets plus any value via the slider or input field, polling rate 125 Hz to 8 kHz;
+  - keyboard: brightness, lighting effect (static, breathe, cycle, wave, ripple) and colour, plus your own colours;
+    colours of single keys are set in Settings → Devices;
+  - headset: sidetone (how loud you hear your own voice) and the equalizer preset.
 - **Solaar-style keyboard lighting:** while an effect is selected, Hubless controls the lighting itself and
-  turns it off when you're idle; on exit, control goes back to the keyboard.
-- **Settings window** ("Settings…" in the tray menu or the gear in the panel): interface language
-  (English or Russian), start with Windows, the order of devices in the panel and which ones it shows,
-  creating profiles and binding them to programs.
-- **Profiles:** sets of mouse and keyboard settings. Switch them from the panel header, or let them switch
+  turns it off when you're idle (after 5, 15 or 30 minutes, or never: Settings → Devices); on exit, control
+  goes back to the keyboard.
+- **Settings window** (the gear in the panel): interface language (English or Russian), start with Windows,
+  battery notifications and the update check (optionally at startup); the order of devices in the panel and
+  which ones it shows, device settings (mouse onboard/host mode and lift-off distance, headset auto power-off
+  and 5-band equalizer with built-in and your own presets, keyboard key colours: click or drag over a keyboard
+  layout); profiles and binding them to programs; logs and
+  the device report (Advanced).
+- **Profiles:** sets of mouse, keyboard (including key colours) and headset equalizer settings. Switch them from the panel header, or let them switch
   automatically while a bound program's window is active (`hubless profile bind <name> cs2.exe`).
 - **Onboard and host:** in onboard mode the mouse settings live in the mouse's memory and work without Hubless;
   in host mode Hubless applies them every time the device connects.
 
-Game Mode and per-key lighting are not supported yet. There will be no equalizer, Blue VO!CE or DTS: those are
-audio processing inside G Hub itself, not commands sent to the device. For an equalizer, use
-[Equalizer APO](https://sourceforge.net/projects/equalizerapo/).
+Game Mode is not supported yet. Key colours show with the static effect (or with the lighting off) and are
+saved in the profile. The headset equalizer is the one built into the headset;
+there will be no Blue VO!CE or DTS: those are audio processing inside G Hub itself, not commands sent to the
+device.
 
 Close G Hub before starting Hubless (`lghub`, `lghub_agent`, `lghub_system_tray`; the `lghub_updater` service
 doesn't get in the way): the two programs can't control the devices at the same time.
@@ -44,7 +49,8 @@ To help add support for your device:
 3. Click **Open GitHub issue** and attach the report file (or paste its text using the **Copy** button).
 
 The report only reads data from the devices and contains no serial numbers or personal data; Hubless itself
-sends nothing anywhere.
+sends nothing anywhere. The only network request is the update check: when you press the button, or at startup
+if you turn that on.
 
 ## Command line
 
@@ -52,10 +58,10 @@ sends nothing anywhere.
 hubless                       run in the tray
 hubless --dump [file]         devices and HID++ feature tables (JSON and text)
 hubless --report              device report for a GitHub issue
-hubless --settings [section]  open the settings window of the running Hubless (devices, profiles, eq, advanced)
-hubless --quit                quit the running Hubless (like "Exit" in the menu)
+hubless --settings [section]  open the settings window of the running Hubless (devices, profiles, eq, keys, advanced)
+hubless --quit                quit the running Hubless (like Exit in the panel)
 hubless mouse ...             DPI, polling rate, lift-off, onboard/host mode
-hubless keyboard ...          brightness, lighting and effects
+hubless keyboard ...          brightness, lighting and effects, key colours (keyboard keys wasd ff0000)
 hubless headset ...           sidetone, auto power-off
 hubless profile ...           settings profiles, binding to exe files
 hubless --help                full list of commands
@@ -75,8 +81,10 @@ The result is `target/release/hubless.exe`.
 
 ## Files
 
-- `%APPDATA%\Hubless\config.toml`: app settings (log level, HID tracing, language).
-- `%APPDATA%\Hubless\devices.toml`: device settings, profiles and the panel layout; written by Hubless itself.
+- `%APPDATA%\Hubless\config.toml`: app settings (log level, HID tracing, language, battery notifications, update check at
+  startup).
+- `%APPDATA%\Hubless\devices.toml`: device settings, profiles, the panel layout, your keyboard colours and
+  equalizer presets; written by Hubless itself.
 - `%APPDATA%\Hubless\backups\`: backups of the mouse's onboard memory.
 - `%LOCALAPPDATA%\Hubless\logs\`: logs; set the environment variable `HUBLESS_LOG=debug` for verbose ones.
 - `%LOCALAPPDATA%\Hubless\reports\`: device reports.

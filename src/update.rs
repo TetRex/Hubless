@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Проверка обновлений по кнопке в настройках («Advanced»): один запрос к GitHub API за
-//! последним релизом. Это единственное место, где Hubless ходит в сеть, и только по нажатию —
-//! фоновых проверок нет. HTTP — системный WinHTTP, без лишних зависимостей.
+//! Update check: one request to the GitHub API for the latest release, when you press the button in the
+//! settings ("General") and, if the user turned it on, once at startup (`check_updates` in
+//! `config.toml`, off by default). This is the only place where Hubless goes online;
+//! there are no periodic checks. HTTP is the system WinHTTP, with no extra dependencies.
 
 use windows::Win32::Networking::WinHttp::{
     INTERNET_DEFAULT_HTTPS_PORT, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE,
@@ -11,23 +12,23 @@ use windows::Win32::Networking::WinHttp::{
 };
 use windows::core::{PCWSTR, w};
 
-/// Страница последнего релиза — открывается кнопкой «Скачать».
+/// The latest release page, opened by the "Download" button.
 pub const RELEASES_URL: &str = "https://github.com/TetRex/Hubless/releases/latest";
 const API_HOST: windows::core::PCWSTR = w!("api.github.com");
 const API_PATH: windows::core::PCWSTR = w!("/repos/TetRex/Hubless/releases/latest");
-/// Таймауты WinHTTP, мс: поиск имени, соединение, отправка, ответ.
+/// WinHTTP timeouts, ms: name resolution, connect, send, receive.
 const TIMEOUT_MS: i32 = 10_000;
 
-/// Последний релиз на GitHub.
+/// The latest release on GitHub.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
-    /// Версия без `v`: `0.1.5`.
+    /// The version without `v`: `0.1.5`.
     pub version: String,
-    /// Страница релиза.
+    /// The release page.
     pub url: String,
 }
 
-/// Последний релиз (блокирующий запрос — вызывать не на главном потоке).
+/// The latest release (a blocking request: don't call it on the main thread).
 pub fn latest() -> Result<Release, String> {
     let body = get_latest_release()?;
     parse_release(&body)
@@ -42,7 +43,7 @@ fn parse_release(body: &[u8]) -> Result<Release, String> {
     })
 }
 
-/// Версия `latest` новее `current` (числа через точку; лишние части — нули).
+/// Whether version `latest` is newer than `current` (dot-separated numbers; missing parts are zeros).
 pub fn is_newer(latest: &str, current: &str) -> bool {
     let parse =
         |s: &str| -> Vec<u64> { s.split(['.', '-']).map_while(|p| p.parse().ok()).collect() };
@@ -59,12 +60,12 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     false
 }
 
-/// Хэндл WinHTTP, закрывается при drop.
+/// A WinHTTP handle, closed on drop.
 struct Handle(*mut core::ffi::c_void);
 
 impl Drop for Handle {
     fn drop(&mut self) {
-        // SAFETY: хэндл получен от WinHTTP и закрывается один раз.
+        // SAFETY: the handle came from WinHTTP and is closed once.
         let _ = unsafe { WinHttpCloseHandle(self.0) };
     }
 }
@@ -77,11 +78,11 @@ fn handle(h: *mut core::ffi::c_void, what: &str) -> Result<Handle, String> {
     }
 }
 
-/// GET `https://api.github.com/repos/.../releases/latest`: тело ответа при коде 200.
+/// GET `https://api.github.com/repos/.../releases/latest`: the response body on status 200.
 fn get_latest_release() -> Result<Vec<u8>, String> {
     let agent = format!("Hubless/{}\0", env!("CARGO_PKG_VERSION"));
     let agent: Vec<u16> = agent.encode_utf16().collect();
-    // SAFETY: все строки живут до конца функции, хэндлы закрываются в Drop в обратном порядке.
+    // SAFETY: all strings live until the end of the function; the handles are closed in Drop in reverse order.
     unsafe {
         let session = handle(
             WinHttpOpen(
@@ -179,7 +180,7 @@ mod tests {
 
 #[cfg(test)]
 mod network_tests {
-    /// Настоящий запрос к GitHub: `cargo test --release live_latest_release -- --ignored`.
+    /// A real request to GitHub: `cargo test --release live_latest_release -- --ignored`.
     #[test]
     #[ignore]
     fn live_latest_release() {

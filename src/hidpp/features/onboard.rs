@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `0x8100` Onboard Profiles (функции — по libratbag `hidpp20.c`, раскладка descriptor — оттуда же).
+//! `0x8100` Onboard Profiles (functions per libratbag `hidpp20.c`, and the descriptor layout from there too).
 //!
-//! Чтение: описание памяти, режим, активный профиль, индекс DPI, сектора (для бэкапа).
-//! Запись: только смена режима onboard/host; запись памяти профилей не реализована.
+//! Reads: memory description, mode, active profile, DPI index, sectors (for the backup).
+//! Writes: only switching between onboard and host mode; writing profile memory is not implemented.
 
 use crate::hidpp::{Device, Error, Write};
 
@@ -14,7 +14,7 @@ const GET_CURRENT_PROFILE: u8 = 0x4;
 const MEMORY_READ: u8 = 0x5;
 const GET_CURRENT_DPI_INDEX: u8 = 0xB;
 
-/// Сектора заводских (read-only) профилей начинаются с 0x0100.
+/// Sectors of the factory (read-only) profiles start at 0x0100.
 pub const ROM_BASE: u16 = 0x0100;
 const CHUNK: u16 = 16;
 
@@ -67,7 +67,7 @@ impl Mode {
     }
 }
 
-/// Режим: onboard — настройки из памяти мыши; host — их задаёт приложение.
+/// Mode: onboard means the settings come from the mouse's memory; host means the app sets them.
 pub fn set_mode(mode: Mode) -> Write {
     Write {
         feature: ID,
@@ -101,7 +101,7 @@ pub fn mode(dev: &Device) -> Result<Mode, Error> {
     ))
 }
 
-/// Активный профиль: (сектор/индекс как в ответе, сырые 2 байта).
+/// The active profile: (sector/index as in the reply, the raw 2 bytes).
 pub fn current_profile(dev: &Device) -> Result<u16, Error> {
     let r = dev.call(ID, GET_CURRENT_PROFILE, &[])?;
     let p = r.params();
@@ -112,8 +112,8 @@ pub fn current_dpi_index(dev: &Device) -> Result<u8, Error> {
     Ok(dev.call(ID, GET_CURRENT_DPI_INDEX, &[])?.params()[0])
 }
 
-/// Прочитать сектор целиком. Прошивка не даёт читать дальше `size - 16`,
-/// поэтому последний кусок читается со смещения `size - 16` (как в libratbag).
+/// Reads a whole sector. The firmware doesn't allow reading past `size - 16`,
+/// so the last chunk is read from offset `size - 16` (as in libratbag).
 pub fn read_sector(dev: &Device, sector: u16, size: u16) -> Result<Vec<u8>, Error> {
     if size < CHUNK {
         return Err(Error::Hidpp20(0x02));
@@ -131,7 +131,7 @@ pub fn read_sector(dev: &Device, sector: u16, size: u16) -> Result<Vec<u8>, Erro
     Ok(data)
 }
 
-/// CRC-16/CCITT-FALSE: последние 2 байта сектора (как проверяет libratbag/Solaar).
+/// CRC-16/CCITT-FALSE: the last 2 bytes of a sector (as libratbag/Solaar check it).
 pub fn crc16(data: &[u8]) -> u16 {
     let mut crc: u16 = 0xFFFF;
     for &b in data {
@@ -147,7 +147,7 @@ pub fn crc16(data: &[u8]) -> u16 {
     crc
 }
 
-/// Сектор с корректной CRC в последних двух байтах (big-endian).
+/// A sector with a valid CRC in its last two bytes (big-endian).
 pub fn sector_crc_ok(data: &[u8]) -> bool {
     let n = data.len();
     n >= 2 && crc16(&data[..n - 2]) == u16::from_be_bytes([data[n - 2], data[n - 1]])

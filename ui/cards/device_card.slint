@@ -10,43 +10,47 @@ export struct DeviceInfo {
     kind: DeviceKind,
     name: string,
     connected: bool,
-    // Подключено кабелем (USB), иначе — по радио.
+    // Connected by cable (USB), otherwise wireless.
     wired: bool,
-    // Заряд в процентах, -1 — неизвестен.
+    // Battery in percent, -1 if unknown.
     battery: int,
     charging: bool,
     low: bool,
-    // Мышь: текущий DPI (-1 — неизвестен) и быстрые кнопки.
+    // Mouse: the current DPI (-1 if unknown) and quick buttons.
     dpi: int,
     dpi-presets: [int],
-    // Мышь: диапазон допустимых DPI (0 — неизвестен) для ползунка и поля.
+    // Mouse: the range of allowed DPI (0 if unknown) for the slider and the field.
     dpi-min: int,
     dpi-max: int,
-    // Мышь: частота опроса, Гц (-1 — неизвестна), и быстрые кнопки.
+    // Mouse: polling rate, Hz (-1 if unknown), and quick buttons.
     rate: int,
     rate-presets: [int],
-    // Клавиатура: яркость (-1 — нет фичи) и её диапазон.
+    // Keyboard: brightness (-1 without the feature) and its range.
     brightness: int,
     brightness-min: int,
     brightness-max: int,
-    // Эффект подсветки (индекс в списке effect-names; 0 — управляет сама клавиатура) и его цвет.
+    // Lighting effect (index in the effect list; 0 means the keyboard controls it) and its colour.
     effect: int,
     color: color,
-    // Текущий цвет — один из своих цветов палитры (его можно убрать из палитры).
+    // The current colour is one of your own palette colours (it can be removed from the palette).
     color-custom: bool,
-    // Гарнитура: sidetone 0–100; -1 — неизвестно.
+    // Headset: sidetone 0–100; -1 if unknown.
     sidetone: int,
-    // Ошибка последней записи.
+    // Headset: the built-in equalizer presets (empty if there is no equalizer; the last one is "Custom"
+    // if the curve matches none of them) and the selected one.
+    eq-presets: [string],
+    eq-preset: int,
+    // The last write error.
     error: string,
 }
 
-// Заряд в заголовке карточки: значок зарядки, процент и батарейка с заливкой по заряду.
+// The battery in the card header: a charging icon, the percentage and a battery filled by charge.
 component BatteryIndicator inherits HorizontalLayout {
     in property <int> percent;
     in property <bool> charging;
     in property <bool> low;
 
-    // Свободное место строки — имени устройства, а не промежуткам между процентом и батарейкой.
+    // The free space of the row goes to the device name, not to the gaps between the percentage and the battery.
     horizontal-stretch: 0;
     alignment: end;
     spacing: Theme.spacing-xs;
@@ -66,7 +70,7 @@ component BatteryIndicator inherits HorizontalLayout {
         vertical-alignment: center;
     }
 
-    // Корпус и «носик»; без обёртки раскладка растянула бы их на всю высоту строки.
+    // Body and "nub"; without a wrapper the layout would stretch them to the full row height.
     VerticalLayout {
         alignment: center;
 
@@ -102,7 +106,7 @@ component BatteryIndicator inherits HorizontalLayout {
     }
 }
 
-// Кружок цвета: клик, Enter или пробел выбирают цвет.
+// A colour circle: a click, Enter or Space selects the colour.
 component Swatch inherits Rectangle {
     in property <color> value;
     in property <bool> selected;
@@ -125,8 +129,8 @@ component Swatch inherits Rectangle {
         }
     }
 
-    // Область клика поверх FocusScope: иначе первый клик только забирает фокус
-    // (FocusScope принимает нажатие, пока не в фокусе), и срабатывает лишь второй.
+    // The click area is above the FocusScope: otherwise the first click only takes focus
+    // (the FocusScope accepts the press while it isn't focused), and only the second one works.
     touch := TouchArea {
         clicked => {
             focus.focus();
@@ -135,7 +139,7 @@ component Swatch inherits Rectangle {
     }
 }
 
-// Ползунок канала цвета 0–255: подпись, ползунок, значение.
+// A colour channel slider 0–255: label, slider, value.
 component ChannelSlider inherits HorizontalLayout {
     in property <string> label;
     in-out property <int> value;
@@ -170,7 +174,7 @@ component ChannelSlider inherits HorizontalLayout {
     }
 }
 
-// Кружок «+» в палитре: открыть редактор своего цвета.
+// The "+" circle in the palette: opens the custom colour editor.
 component AddSwatch inherits Rectangle {
     in property <bool> active;
     callback clicked();
@@ -206,7 +210,7 @@ component AddSwatch inherits Rectangle {
         }
     }
 
-    // Поверх FocusScope — как у Swatch: иначе первый клик уходит на фокус.
+    // Above the FocusScope, as with Swatch: otherwise the first click goes to focus.
     touch := TouchArea {
         clicked => {
             focus.focus();
@@ -221,18 +225,18 @@ component Label inherits Text {
     vertical-alignment: center;
 }
 
-// Карточка устройства. Отключённое устройство — свёрнутая серая карточка без контролов.
+// A device card. A disconnected device is a collapsed grey card without controls.
 export component DeviceCard inherits Rectangle {
     in property <DeviceInfo> info;
-    // Свои цвета палитры клавиатуры — второй ряд кружков — и их предел.
+    // Your own keyboard palette colours (the second row of circles) and their limit.
     in property <[color]> custom-colors;
     in property <int> max-colors;
-    // Редактор своего цвета (кнопка «+»): открыт ли и значения ползунков.
+    // The custom colour editor (the "+" button): whether it is open, and the slider values.
     property <bool> editing-color;
     property <int> new-red;
     property <int> new-green;
     property <int> new-blue;
-    // Можно ли добавить ещё цвет.
+    // Whether one more colour can be added.
     property <bool> can-add: root.custom-colors.length < root.max-colors;
 
     function toggle-editor() {
@@ -250,10 +254,23 @@ export component DeviceCard inherits Rectangle {
     callback set-brightness(int);
     callback set-effect(int);
     callback pick-color(color);
-    // Свой цвет: добавить в палитру (и включить) и убрать из неё.
+    // Your own colour: add it to the palette (and turn it on), or remove it from the palette.
     callback add-color(int, int, int);
     callback remove-color(color);
     callback set-sidetone(int);
+    callback select-eq-preset(int);
+
+    // The selected list items. The `current-index: info.…` binding of a ComboBox is lost after the
+    // first selection with the mouse, and values from Rust (a profile switch, an edit in the settings) stopped
+    // reaching the list, hence these own properties, updated on every change of `info`.
+    // The effect list has no "Keyboard" item (index 0 in Rust): item = effect − 1, and when the
+    // keyboard controls the lighting or it is off, nothing is selected.
+    property <int> effect-index: info.effect - 1;
+    property <int> eq-index: info.eq-preset;
+    changed info => {
+        root.effect-index = info.effect - 1;
+        root.eq-index = info.eq-preset;
+    }
 
     background: info.connected ? Theme.card : Theme.card-disabled;
     border-radius: Theme.radius-card;
@@ -286,7 +303,7 @@ export component DeviceCard inherits Rectangle {
                 overflow: elide;
             }
 
-            // Связь значком, заряд — в конце строки.
+            // The connection as an icon, the battery at the end of the row.
             if info.connected: Text {
                 text: info.wired ? Theme.glyph-usb : Theme.glyph-wireless;
                 font-family: Theme.icon-font;
@@ -310,7 +327,7 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
-        // Мышь: быстрые кнопки DPI (новые мыши переводятся в режим host, G903 и др. — нет).
+        // Mouse: quick DPI buttons (new mice are switched to host mode, the G903 and others aren't).
         if info.connected && info.kind == DeviceKind.mouse && info.dpi-presets.length > 0: HorizontalLayout {
             spacing: Theme.spacing-xs;
 
@@ -328,13 +345,13 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
-        // Мышь: любое значение DPI — ползунок в логарифмическом масштабе и поле ввода.
-        // Значение подгоняется к допустимому в Rust; поле и ползунок следят за фактическим DPI.
+        // Mouse: any DPI value, a slider on a logarithmic scale and an input field.
+        // Rust snaps the value to an allowed one; the field and the slider follow the actual DPI.
         if info.connected && info.kind == DeviceKind.mouse && info.dpi-max > info.dpi-min: HorizontalLayout {
             spacing: Theme.spacing-s;
 
             dpi-slider := Slider {
-                // Положение 0…1 ↔ DPI: min · (max / min) ^ положение.
+                // Position 0…1 ↔ DPI: min · (max / min) ^ position.
                 property <float> ratio: info.dpi-max / info.dpi-min;
                 property <float> actual: info.dpi > 0 ? log(info.dpi / info.dpi-min, self.ratio) : 0;
                 horizontal-stretch: 1;
@@ -366,7 +383,7 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
-        // Мышь: частота опроса (новые мыши переводятся в режим host, G903 и др. — нет).
+        // Mouse: polling rate (new mice are switched to host mode, the G903 and others aren't).
         if info.connected && info.kind == DeviceKind.mouse && info.rate-presets.length > 0: HorizontalLayout {
             spacing: Theme.spacing-xs;
 
@@ -384,7 +401,7 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
-        // Значения без кнопок: список DPI или частот не прочитался.
+        // Values without buttons: the DPI or rate list couldn't be read.
         if info.connected && info.kind == DeviceKind.mouse && info.dpi > 0
             && info.dpi-presets.length == 0 && info.dpi-max <= info.dpi-min: HorizontalLayout {
             spacing: Theme.spacing-xs;
@@ -417,7 +434,7 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
-        // Клавиатура: яркость.
+        // Keyboard: brightness.
         if info.connected && info.kind == DeviceKind.keyboard && info.brightness >= 0: HorizontalLayout {
             spacing: Theme.spacing-s;
 
@@ -436,7 +453,7 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
-        // Клавиатура: эффект подсветки (всё, кроме «Клавиатура», держит Hubless) и палитра.
+        // Keyboard: the lighting effect (Hubless holds every effect) and the palette.
         if info.connected && info.kind == DeviceKind.keyboard: HorizontalLayout {
             spacing: Theme.spacing-s;
 
@@ -446,17 +463,17 @@ export component DeviceCard inherits Rectangle {
 
             ComboBox {
                 horizontal-stretch: 1;
-                // Порядок совпадает с effect_by_index в app.rs.
-                model: [@tr("Keyboard"), @tr("Static"), @tr("Breathe"), @tr("Cycle"), @tr("Wave"), @tr("Ripple")];
-                current-index: info.effect;
+                // The order matches effect_by_index in app.rs (there it starts at 1: 0 means "the keyboard controls it").
+                model: [@tr("Static"), @tr("Breathe"), @tr("Cycle"), @tr("Wave"), @tr("Ripple")];
+                current-index <=> root.effect-index;
                 selected => {
-                    root.set-effect(self.current-index);
+                    root.set-effect(self.current-index + 1);
                 }
             }
         }
 
-        // Палитра — для эффектов с цветом: статичный, дыхание, рябь. Свои цвета — вторым рядом,
-        // «+» в конце последнего ряда открывает редактор своего цвета.
+        // The palette is for effects with a colour: static, breathe, ripple. Your own colours are in the second row;
+        // "+" at the end of the last row opens the custom colour editor.
         if info.connected && info.kind == DeviceKind.keyboard
             && (info.effect == 1 || info.effect == 2 || info.effect == 5): VerticalLayout {
             spacing: Theme.spacing-s;
@@ -501,7 +518,7 @@ export component DeviceCard inherits Rectangle {
                 }
             }
 
-            // Редактор: предпросмотр и ползунки R/G/B; «Добавить» — в палитру и на клавиатуру.
+            // The editor: a preview and R/G/B sliders; "Add" puts the colour in the palette and on the keyboard.
             if root.editing-color: HorizontalLayout {
                 spacing: Theme.spacing-m;
 
@@ -563,7 +580,7 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
-        // Гарнитура: свой голос в наушниках.
+        // Headset: your own voice in the headphones.
         if info.connected && info.kind == DeviceKind.headset && info.sidetone >= 0: HorizontalLayout {
             spacing: Theme.spacing-s;
 
@@ -578,6 +595,24 @@ export component DeviceCard inherits Rectangle {
                 value: info.sidetone;
                 changed(v) => {
                     root.set-sidetone(round(v));
+                }
+            }
+        }
+
+        // Headset: the built-in equalizer preset (your own ones are created in "Settings → Devices").
+        if info.connected && info.kind == DeviceKind.headset && info.eq-presets.length > 0: HorizontalLayout {
+            spacing: Theme.spacing-s;
+
+            Label {
+                text: @tr("Equalizer");
+            }
+
+            ComboBox {
+                horizontal-stretch: 1;
+                model: info.eq-presets;
+                current-index <=> root.eq-index;
+                selected => {
+                    root.select-eq-preset(self.current-index);
                 }
             }
         }

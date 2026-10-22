@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Транспорт HID++ поверх hidapi.
+//! The HID++ transport on top of hidapi.
 //!
-//! На Windows каждая top-level collection — отдельный путь: short-отчёты живут в коллекции
-//! с usage `0x0001`, long — `0x0002` (page `0xFF00`). Открываем все коллекции интерфейса:
-//! пишем в ту, что поддерживает нужный размер, читаем ответы со всех.
-//! Для чтения у каждой коллекции свой handle и свой поток (blocking read с таймаутом),
-//! все входящие отчёты сводятся в один канал.
+//! On Windows every top-level collection is a separate path: short reports live in the collection
+//! with usage `0x0001`, long ones in `0x0002` (page `0xFF00`). We open all collections of the interface,
+//! write to the one that supports the needed size, and read replies from all of them.
+//! For reading, each collection has its own handle and its own thread (blocking read with a timeout),
+//! and all incoming reports go into one channel.
 
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
@@ -24,25 +24,25 @@ use super::message::{
 
 pub const LOGITECH_VID: u16 = 0x046D;
 pub const HIDPP_USAGE_PAGE: u16 = 0xFF00;
-/// HID++ у устройств G-серии (отчёт пользователя 2026-10-20: G815, коллекции `FF43:0602/0604`).
+/// HID++ on G-series devices (user report 2026-10-20: G815, collections `FF43:0602/0604`).
 pub const HIDPP_G_USAGE_PAGE: u16 = 0xFF43;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
-/// Быстрый режим для перебора слотов, которые скорее всего пусты: без повтора.
+/// Quick mode for probing slots that are most likely empty: no retry.
 const QUICK_TIMEOUT: Duration = Duration::from_millis(150);
-/// Отказ записи отчёта (`os error 31`, ERROR_GEN_FAILURE): LIGHTSPEED-ресивер иногда кратко
-/// отвергает отчёт — так было, пока спящая мышь переподключалась (2026-10-22), и тогда поиск не
-/// видел мышь или её имя. Через паузу запись проходит — повторяем.
+/// A report write failure (`os error 31`, ERROR_GEN_FAILURE): a LIGHTSPEED receiver sometimes briefly
+/// rejects a report. That happened while a sleeping mouse was reconnecting (2026-10-22), and then discovery
+/// didn't see the mouse or its name. After a pause the write goes through, so we retry.
 const WRITE_ATTEMPTS: u32 = 3;
 const WRITE_RETRY_DELAY: Duration = Duration::from_millis(50);
-/// Таймаут blocking read в потоке чтения: как часто поток проверяет флаг остановки.
+/// The blocking read timeout in the reader thread: how often the thread checks the stop flag.
 const READ_TIMEOUT_MS: i32 = 1000;
 
-/// HID++ 1.0: чтение короткого и длинного регистра.
+/// HID++ 1.0: reading a short and a long register.
 const GET_REGISTER: u8 = 0x81;
 const GET_LONG_REGISTER: u8 = 0x83;
 
-/// Одна top-level collection интерфейса.
+/// One top-level collection of an interface.
 #[derive(Debug, Clone)]
 pub struct Collection {
     pub path: CString,
@@ -51,9 +51,9 @@ pub struct Collection {
 }
 
 impl Collection {
-    /// Размер отчёта HID++, который принимает коллекция: usage `0x0001`/`0x0002`/`0x0004`
-    /// на page `0xFF00` или `0x0601`/`0x0602`/`0x0604` на page `0xFF43` (G-серия, по Solaar;
-    /// у G815 по кабелю есть только long и very long — short тогда уходит long-отчётом).
+    /// The HID++ report size the collection accepts: usage `0x0001`/`0x0002`/`0x0004`
+    /// on page `0xFF00`, or `0x0601`/`0x0602`/`0x0604` on page `0xFF43` (G series, per Solaar;
+    /// the G815 over the cable has only long and very long, so a short report then goes out as a long one).
     fn report_id(&self) -> Option<u8> {
         let size = match self.usage_page {
             HIDPP_USAGE_PAGE => self.usage,
@@ -69,7 +69,7 @@ impl Collection {
     }
 }
 
-/// USB-интерфейс устройства Logitech со всеми его коллекциями.
+/// A USB interface of a Logitech device with all its collections.
 #[derive(Debug, Clone)]
 pub struct Interface {
     pub pid: u16,
@@ -86,7 +86,7 @@ impl Interface {
     }
 }
 
-/// Все интерфейсы Logitech, сгруппированные по устройству и номеру интерфейса.
+/// All Logitech interfaces, grouped by device and interface number.
 pub fn enumerate(api: &HidApi) -> Vec<Interface> {
     let mut groups: BTreeMap<String, Interface> = BTreeMap::new();
     for info in api.device_list().filter(|d| d.vendor_id() == LOGITECH_VID) {
@@ -115,9 +115,9 @@ pub fn enumerate(api: &HidApi) -> Vec<Interface> {
     list
 }
 
-/// Ключ группировки коллекций одного интерфейса. Путь на Windows выглядит так:
-/// `\\?\hid#vid_046d&pid_c54d&mi_02&col01#a&df688c6&0&0000#{guid}` — у коллекций одного
-/// интерфейса совпадает всё, кроме `&colNN` и номера экземпляра в конце третьей части.
+/// The grouping key for the collections of one interface. On Windows a path looks like
+/// `\\?\hid#vid_046d&pid_c54d&mi_02&col01#a&df688c6&0&0000#{guid}`: for the collections of one
+/// interface everything matches except `&colNN` and the instance number at the end of the third part.
 fn interface_key(info: &DeviceInfo) -> String {
     let path = info.path().to_string_lossy().to_lowercase();
     let parts: Vec<&str> = path.split('#').collect();
@@ -132,17 +132,17 @@ fn interface_key(info: &DeviceInfo) -> String {
     format!("{ids}#{instance}")
 }
 
-/// Что приходит в канал транспорта.
+/// What arrives in the transport's channel.
 #[derive(Debug)]
 pub enum Inbound {
     Report(Report),
-    /// Разбудить поток, ждущий событий (есть команда для него).
+    /// Wakes the thread waiting for events (there is a command for it).
     Wake,
-    /// Поток чтения завершился: устройство отключено.
+    /// The reader thread has finished: the device is disconnected.
     Closed,
 }
 
-/// Результат ожидания событий устройства.
+/// The result of waiting for device events.
 #[derive(Debug)]
 pub enum Event {
     Report(Report),
@@ -156,7 +156,7 @@ pub struct Transport {
     rx: Receiver<Inbound>,
     tx: Sender<Inbound>,
     stop: Arc<AtomicBool>,
-    /// Асинхронные сообщения устройства, пришедшие во время ожидания ответа.
+    /// Asynchronous device messages that arrived while waiting for a reply.
     notifications: RefCell<Vec<Report>>,
     next_sw_id: Cell<u8>,
     quick: Cell<bool>,
@@ -177,7 +177,7 @@ impl Transport {
             writers.push((report_id, api.open_path(&c.path)?));
             let reader = api.open_path(&c.path)?;
             let (tx, stop) = (tx.clone(), stop.clone());
-            // Поток не ждём при закрытии: он сам выйдет по флагу `stop` в течение READ_TIMEOUT_MS.
+            // We don't wait for the thread on close: it exits by itself on the `stop` flag within READ_TIMEOUT_MS.
             std::thread::spawn(move || read_loop(&reader, &tx, &stop));
         }
         if writers.is_empty() {
@@ -196,7 +196,7 @@ impl Transport {
         })
     }
 
-    /// Ненулевой sw_id, отличающий наши ответы от уведомлений (у них sw_id = 0).
+    /// A non-zero sw_id that tells our replies apart from notifications (theirs is sw_id = 0).
     fn sw_id(&self) -> u8 {
         let id = self.next_sw_id.get();
         self.next_sw_id.set(if id >= 0x0F { 0x02 } else { id + 1 });
@@ -214,7 +214,7 @@ impl Transport {
         self.writer(report_id).is_some()
     }
 
-    /// Запросы внутри `f` — с коротким таймаутом и без повтора.
+    /// Requests inside `f` use a short timeout and no retry.
     pub fn quick<R>(&self, f: impl FnOnce() -> R) -> R {
         let prev = self.quick.replace(true);
         let result = f();
@@ -222,7 +222,7 @@ impl Transport {
         result
     }
 
-    /// Вызов функции HID++ 2.0. Long-отчёт, если коллекция есть; иначе short при ≤ 3 параметрах.
+    /// Calls an HID++ 2.0 function. A long report if the collection exists; otherwise a short one with ≤ 3 parameters.
     pub fn call(
         &self,
         device: u8,
@@ -233,8 +233,8 @@ impl Transport {
         self.call_as(false, device, feature_index, function, params)
     }
 
-    /// То же, но short-отчётом, если параметры помещаются. Ресиверы (HID++ 1.0)
-    /// на long-отчёт по индексу 0xFF не отвечают, а на short возвращают ошибку 1.0.
+    /// The same, but as a short report if the parameters fit. Receivers (HID++ 1.0)
+    /// don't answer a long report at index 0xFF and return a 1.0 error for a short one.
     pub fn call_short(
         &self,
         device: u8,
@@ -266,7 +266,7 @@ impl Transport {
             } else if let Some(code) = error_code(r, ERROR_20, feature_index, address) {
                 Some(Err(Error::Hidpp20(code)))
             } else {
-                // Так отвечает HID++ 1.0 (ресивер) на запрос 2.0.
+                // That's how HID++ 1.0 (a receiver) answers a 2.0 request.
                 error_code(r, ERROR_10, feature_index, address).map(|c| Err(Error::Hidpp10(c)))
             }
         })
@@ -287,7 +287,7 @@ impl Transport {
         }
     }
 
-    /// Запрос, который отправил бы [`Transport::call_as`], — без отправки (sw_id = 0).
+    /// The request [`Transport::call_as`] would send, without sending it (sw_id = 0).
     pub fn preview(
         &self,
         short: bool,
@@ -306,7 +306,7 @@ impl Transport {
         ))
     }
 
-    /// Чтение регистра HID++ 1.0 (только чтение — запись регистров не используется).
+    /// Reads an HID++ 1.0 register (read-only: register writes aren't used).
     pub fn read_register(
         &self,
         device: u8,
@@ -332,7 +332,7 @@ impl Transport {
         })
     }
 
-    /// Отправить запрос и дождаться ответа: таймаут ~1 с, один повтор (в быстром режиме — 300 мс без повтора).
+    /// Sends a request and waits for the reply: timeout ~1 s, one retry (in quick mode, 300 ms without a retry).
     fn transact(
         &self,
         request: &Report,
@@ -371,7 +371,7 @@ impl Transport {
         Err(Error::Timeout)
     }
 
-    /// Перенести накопившиеся отчёты в уведомления, чтобы не спутать их с ответом.
+    /// Moves the accumulated reports to the notifications so they aren't mistaken for the reply.
     fn drain(&self) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
@@ -382,12 +382,12 @@ impl Transport {
         }
     }
 
-    /// Отправитель, которым другой поток может разбудить [`Transport::next_event`].
+    /// A sender another thread can use to wake [`Transport::next_event`].
     pub fn waker(&self) -> Sender<Inbound> {
         self.tx.clone()
     }
 
-    /// Ждать следующего события устройства (уведомления, пробуждения или отключения).
+    /// Waits for the next device event (a notification, a wake-up or a disconnect).
     pub fn next_event(&self, timeout: Duration) -> Event {
         self.drain();
         if self.closed.get() {
@@ -444,14 +444,14 @@ fn read_loop(dev: &HidDevice, tx: &Sender<Inbound>, stop: &AtomicBool) {
     }
 }
 
-/// Код ошибки из ответа-ошибки на наш запрос. Раскладка (и для 2.0 `0xFF`, и для 1.0 `0x8F`):
+/// The error code from an error reply to our request. Layout (both for 2.0 `0xFF` and for 1.0 `0x8F`):
 /// `[report][device][marker][feature_index | sub_id][address][code]`.
 fn error_code(r: &Report, marker: u8, first: u8, address: u8) -> Option<u8> {
     let p = r.params();
     (r.sub_id() == marker && r.address() == first && p[0] == address).then_some(p[1])
 }
 
-/// Запись отчёта с повтором при отказе устройства (см. [`WRITE_ATTEMPTS`]).
+/// Writes a report, retrying when the device rejects it (see [`WRITE_ATTEMPTS`]).
 fn write_with_retry(writer: &HidDevice, bytes: &[u8]) -> Result<(), Error> {
     let mut attempt = 1;
     loop {
@@ -473,7 +473,7 @@ mod error_tests {
 
     #[test]
     fn hidpp20_error_matches_request() {
-        // Реальный ответ мыши на setDpi с lift-off 0 (2026-10-19): INVALID_ARGUMENT.
+        // A real mouse reply to setDpi with lift-off 0 (2026-10-19): INVALID_ARGUMENT.
         let mut b = vec![0x11, 0x01, 0xFF, 0x09, 0x6E, 0x02];
         b.resize(LONG_LEN, 0);
         let r = Report::from_bytes(&b).unwrap();
@@ -491,7 +491,7 @@ mod error_tests {
         };
         assert_eq!(c(0xFF00, 0x0001).report_id(), Some(SHORT));
         assert_eq!(c(0xFF00, 0x0002).report_id(), Some(LONG));
-        // G815 по кабелю (отчёт пользователя 2026-10-20).
+        // G815 over the cable (user report 2026-10-20).
         assert_eq!(c(0xFF43, 0x0602).report_id(), Some(LONG));
         assert_eq!(c(0xFF43, 0x0604).report_id(), Some(VERY_LONG));
         assert_eq!(c(0xFF43, 0x0002).report_id(), None);

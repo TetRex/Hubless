@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Мелкие Win32-помощники: строки, реестр.
+//! Small Win32 helpers: strings, registry.
 
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
@@ -11,7 +11,7 @@ use windows::Win32::System::Registry::{
 };
 use windows::core::PCWSTR;
 
-/// UTF-16 с завершающим нулём.
+/// UTF-16 with a terminating zero.
 pub fn wide(s: impl AsRef<OsStr>) -> Vec<u16> {
     s.as_ref().encode_wide().chain(Some(0)).collect()
 }
@@ -24,7 +24,7 @@ pub fn hkcu_read_dword(subkey: &str, value: &str) -> Option<u32> {
     let (subkey, value) = (wide(subkey), wide(value));
     let mut data = 0u32;
     let mut size = size_of::<u32>() as u32;
-    // SAFETY: буфер `data` размером `size` живёт до конца вызова.
+    // SAFETY: the buffer `data` of `size` bytes lives until the end of the call.
     let err = unsafe {
         RegGetValueW(
             HKEY_CURRENT_USER,
@@ -50,7 +50,7 @@ pub fn hklm_read_string(subkey: &str, value: &str) -> Option<String> {
 fn read_string(root: HKEY, subkey: &str, value: &str) -> Option<String> {
     let (subkey, value) = (wide(subkey), wide(value));
     let mut size = 0u32;
-    // SAFETY: первый вызов только узнаёт размер, второй пишет в буфер этого размера.
+    // SAFETY: the first call only learns the size, the second writes into a buffer of that size.
     unsafe {
         check(RegGetValueW(
             root,
@@ -80,7 +80,7 @@ fn read_string(root: HKEY, subkey: &str, value: &str) -> Option<String> {
 
 pub fn hkcu_write_string(subkey: &str, value: &str, data: &str) -> windows::core::Result<()> {
     let (subkey, value, data) = (wide(subkey), wide(value), wide(data));
-    // SAFETY: все буферы живут до конца вызова; размер в байтах включает завершающий ноль.
+    // SAFETY: all buffers live until the end of the call; the size in bytes includes the terminating zero.
     check(unsafe {
         RegSetKeyValueW(
             HKEY_CURRENT_USER,
@@ -93,10 +93,10 @@ pub fn hkcu_write_string(subkey: &str, value: &str, data: &str) -> windows::core
     })
 }
 
-/// Удаление отсутствующего значения считается успехом.
+/// Deleting a value that doesn't exist counts as success.
 pub fn hkcu_delete_value(subkey: &str, value: &str) -> windows::core::Result<()> {
     let (subkey, value) = (wide(subkey), wide(value));
-    // SAFETY: строки живут до конца вызова.
+    // SAFETY: the strings live until the end of the call.
     let err = unsafe {
         RegDeleteKeyValueW(
             HKEY_CURRENT_USER,

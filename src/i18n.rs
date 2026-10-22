@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Язык интерфейса: английский (исходный) или русский.
+//! Interface language: English (the source) or Russian.
 //!
-//! Строки `.slint` переводятся через `@tr(...)` и вшитый `translations/ru/LC_MESSAGES/hubless.po`
-//! (`slint::select_bundled_translation`). Строки из Rust (меню трея, уведомления) — через [`tr`]
-//! по той же английской строке. CLI и логи не переводятся.
+//! `.slint` strings are translated through `@tr(...)` and the embedded `translations/ru/LC_MESSAGES/hubless.po`
+//! (`slint::select_bundled_translation`). Strings from Rust (the tray tooltip, notifications) go through [`tr`]
+//! by the same English string. The CLI and logs aren't translated.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -15,10 +15,10 @@ pub enum Lang {
     Ru,
 }
 
-/// Выбор языка в настройках (`language` в `config.toml`).
+/// The language choice in the settings (`language` in `config.toml`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Choice {
-    /// По языку интерфейса Windows.
+    /// By the Windows interface language.
     System,
     Fixed(Lang),
 }
@@ -48,10 +48,10 @@ impl Choice {
     }
 }
 
-/// Язык интерфейса Windows: русский — по первичному идентификатору языка, иначе английский.
+/// The Windows interface language: Russian by the primary language ID, otherwise English.
 fn system_lang() -> Lang {
     const LANG_RUSSIAN: u16 = 0x19;
-    // SAFETY: функция без аргументов.
+    // SAFETY: a function without arguments.
     let id = unsafe { GetUserDefaultUILanguage() };
     if id & 0x3FF == LANG_RUSSIAN {
         Lang::Ru
@@ -69,14 +69,14 @@ pub fn current() -> Lang {
     }
 }
 
-/// Сменить язык строк из Rust и окон Slint (вызывать на главном потоке после создания окна).
+/// Switches the language of Rust strings and Slint windows (call on the main thread after a window is created).
 pub fn set(lang: Lang) {
     CURRENT.store(u8::from(lang == Lang::Ru), Ordering::Relaxed);
     apply_to_slint();
 }
 
-/// Переключить переводы Slint на текущий язык. Slint требует, чтобы к этому моменту уже был
-/// создан хотя бы один компонент, — поэтому вызывается и после создания каждого окна.
+/// Switches the Slint translations to the current language. Slint requires at least one component
+/// to exist by then, so it is also called after each window is created.
 pub fn apply_to_slint() {
     let code = match current() {
         Lang::Ru => "ru",
@@ -87,7 +87,7 @@ pub fn apply_to_slint() {
     }
 }
 
-/// Перевод строки из Rust: английский оригинал → строка на текущем языке.
+/// Translates a string from Rust: the English original → the string in the current language.
 pub fn tr(en: &'static str) -> &'static str {
     match current() {
         Lang::En => en,
@@ -95,10 +95,9 @@ pub fn tr(en: &'static str) -> &'static str {
     }
 }
 
-/// Русские строки для [`tr`] (строки `.slint` — в `translations/ru/LC_MESSAGES/hubless.po`).
+/// Russian strings for [`tr`] (`.slint` strings are in `translations/ru/LC_MESSAGES/hubless.po`).
 const RU: &[(&str, &str)] = &[
     ("No devices connected", "Нет подключённых устройств"),
-    ("Exit", "Выход"),
     (
         "Hubless: notification test",
         "Hubless: проверка уведомлений",
@@ -134,7 +133,7 @@ const RU: &[(&str, &str)] = &[
         "Couldn't copy to the clipboard",
         "Не удалось скопировать в буфер обмена",
     ),
-    // Названия типов — имя карточки, если устройство своего не сообщило.
+    // Type names: the card's name if the device didn't report its own.
     ("Mouse", "Мышь"),
     ("Keyboard", "Клавиатура"),
     ("Headset", "Гарнитура"),
@@ -151,6 +150,21 @@ const RU: &[(&str, &str)] = &[
     ("Log files deleted: {}", "Удалено файлов логов: {}"),
     ("Couldn't delete the logs", "Не удалось удалить логи"),
     ("{} kHz", "{} кГц"),
+    // Equalizer presets: the built-in ones and the "the curve matches none" item.
+    ("Flat", "Ровно"),
+    ("Bass boost", "Больше басов"),
+    ("Voice", "Голос"),
+    ("FPS", "Шутеры"),
+    ("Custom", "Своя"),
+    ("No more than {} presets", "Не больше {} пресетов"),
+    ("Couldn't save the preset", "Не удалось сохранить пресет"),
+    // Notifications: charging finished, a new version (the check at startup).
+    ("Fully charged", "Заряжено полностью"),
+    ("Hubless {} is available", "Доступна Hubless {}"),
+    (
+        "Download it in Settings → General.",
+        "Скачать — в «Настройки → Общие».",
+    ),
 ];
 
 #[cfg(test)]

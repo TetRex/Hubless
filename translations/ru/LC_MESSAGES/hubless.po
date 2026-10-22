@@ -1,5 +1,5 @@
-# Русский перевод интерфейса Hubless (строки `@tr(...)` из ui/*.slint).
-# Строки из Rust (меню трея, уведомления) — в src/i18n.rs.
+# Russian translation of the Hubless interface (the `@tr(...)` strings from ui/*.slint).
+# Strings from Rust (tray tooltip, notifications) are in src/i18n.rs.
 # SPDX-License-Identifier: GPL-3.0-or-later
 msgid ""
 msgstr ""
@@ -10,7 +10,7 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 
-# Панель
+# Panel
 
 msgid "inactive"
 msgstr "неактивно"
@@ -32,9 +32,6 @@ msgstr "Яркость"
 
 msgid "Effect"
 msgstr "Эффект"
-
-msgid "Keyboard"
-msgstr "Клавиатура"
 
 msgid "Static"
 msgstr "Статичный"
@@ -66,7 +63,17 @@ msgstr "{} мин"
 msgid "Settings"
 msgstr "Настройки"
 
-# Окно настроек
+# General: battery notifications
+msgid "Low battery warning below"
+msgstr "Предупреждать о заряде ниже"
+
+msgid "Notify when a device is fully charged"
+msgstr "Сообщать, когда устройство зарядилось"
+
+msgid "Exit"
+msgstr "Выход"
+
+# Settings window
 msgid "Hubless — Settings"
 msgstr "Hubless — настройки"
 
@@ -109,7 +116,7 @@ msgstr "или введите, например, cs2.exe"
 msgid "A profile switches on by itself while one of its programs is in the foreground."
 msgstr "Профиль включается сам, пока активна одна из его программ."
 
-# Отчёт об устройствах
+# Device report
 msgid "Device report"
 msgstr "Отчёт об устройствах"
 
@@ -134,7 +141,7 @@ msgstr "Открыть папку"
 msgid "Open GitHub issue"
 msgstr "Открыть issue на GitHub"
 
-# Окно настроек: устройства
+# Settings window: devices
 msgid "Devices"
 msgstr "Устройства"
 
@@ -156,7 +163,7 @@ msgstr "Показывать в панели"
 msgid "{} Hz"
 msgstr "{} Гц"
 
-# Панель: свой цвет палитры клавиатуры
+# Panel: a custom colour in the keyboard palette
 msgid "Add colour"
 msgstr "Добавить цвет"
 
@@ -169,24 +176,60 @@ msgstr "Устройства Logitech не найдены. Подключите 
 msgid "All devices are hidden. Choose which to show in Settings → Devices."
 msgstr "Все устройства скрыты. Выбрать, какие показывать, — в «Настройки → Устройства»."
 
-# Окно настроек, «Устройства»: эквалайзер в карточке гарнитуры
+# Settings window, "Devices": the equalizer in the headset card
 msgid "Equalizer"
 msgstr "Эквалайзер"
 
-msgid "Flat"
-msgstr "Ровно"
+msgid "The headset's built-in equalizer. The curve is saved in the profile “{}” and in the headset itself, so it also works without Hubless."
+msgstr "Встроенный эквалайзер гарнитуры. Кривая сохраняется в профиле «{}» и в самой гарнитуре, поэтому работает и без Hubless."
 
-msgid "The headset's built-in equalizer: the curve is stored in the headset and works without Hubless, on any computer."
-msgstr "Встроенный эквалайзер гарнитуры: кривая хранится в самой гарнитуре и работает без Hubless на любом компьютере."
+# Equalizer presets: in the headset card ("Devices") and in the panel
+msgid "Save as preset"
+msgstr "Сохранить как пресет"
 
-# Панель: значок связи в заголовке карточки (подпись для экранного диктора)
+msgid "Preset name"
+msgstr "Имя пресета"
+
+msgid "Save"
+msgstr "Сохранить"
+
+msgid "Cancel"
+msgstr "Отмена"
+
+msgid "Delete preset"
+msgstr "Удалить пресет"
+
+# Keyboard card ("Devices"): turning the lighting off after idle
+msgid "Turn off the lighting after"
+msgstr "Гасить подсветку через"
+
+# Colours of single keys: the editor in the keyboard card ("Devices")
+msgid "Click or drag over keys to colour them. The colours are saved in the profile “{}”."
+msgstr "Щёлкните по клавише или проведите по клавишам, чтобы покрасить их. Цвета сохраняются в профиле «{}»."
+
+msgid "Key colours show with the Static effect: choose it in the keyboard card in the panel."
+msgstr "Цвета клавиш видны со статичным эффектом: выберите его в карточке клавиатуры в панели."
+
+msgid "Colour"
+msgstr "Цвет"
+
+msgid "Eraser: back to the effect colour"
+msgstr "Ластик: вернуть цвет эффекта"
+
+msgid "Fill all"
+msgstr "Залить все"
+
+msgid "Clear all"
+msgstr "Очистить все"
+
+# Panel: the connection icon in the card header (a label for screen readers)
 msgid "USB"
 msgstr "USB"
 
 msgid "Wireless"
 msgstr "Беспроводная связь"
 
-# Окно настроек: «Дополнительно»
+# Settings window: "Advanced"
 msgid "Advanced"
 msgstr "Дополнительно"
 
@@ -202,8 +245,11 @@ msgstr "Проверка…"
 msgid "Check for updates"
 msgstr "Проверить обновления"
 
-msgid "Hubless connects to the internet only when you check for updates."
-msgstr "Hubless выходит в интернет, только когда вы проверяете обновления."
+msgid "Hubless connects to the internet only to check for updates: when you press the button, or at startup if that is on."
+msgstr "Hubless выходит в интернет только для проверки обновлений: по кнопке или при запуске, если это включено."
+
+msgid "Check for updates at startup"
+msgstr "Проверять обновления при запуске"
 
 msgid "Logs"
 msgstr "Логи"

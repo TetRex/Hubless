@@ -1,321 +1,357 @@
-# Hubless — лёгкая замена G Hub для Windows
+# Hubless — a lightweight G Hub replacement for Windows
 
-> План для Claude Code: читай целиком перед началом, выполняй по фазам, после каждой фазы останавливайся и показывай результат.
-> Состояние на 2026-10-20: фазы 0–6 закрыты (кроме пунктов, ждущих захвата или проверки на железе), фаза 7 (другие устройства) — идёт.
-> Находки по протоколам и захваты — в `docs/devices/README.md`.
+> A plan for Claude Code: read it in full before starting, work phase by phase, and stop after each phase to show the result.
+> Status as of 2026-10-20: phases 0–6 are closed (except items waiting for a capture or a hardware check); phase 7 (other devices) is in progress.
+> Protocol findings and captures are in `docs/devices/README.md`.
 
-## 1. Цель
+## 1. Goal
 
-Трей-приложение для Windows, которое управляет основными функциями устройств Logitech без G Hub.
-Проверено на трёх устройствах пользователя:
+A Windows tray app that controls the main functions of Logitech devices without G Hub.
+Tested on the user's three devices:
 
-| Устройство | Связь | Что умеет Hubless | Не сделано |
+| Device | Connection | What Hubless can do | Not done |
 |---|---|---|---|
-| PRO X Superlight 2 (мышь, имя в HID++ «PRO X 2») | LIGHTSPEED-ресивер `C54D` / USB-C | батарея, DPI (кнопки и любое значение, раздельный Y — в CLI), частота опроса 125 Гц–8 кГц, lift-off (medium/high), onboard/host, бэкап onboard-памяти | запись в onboard-память |
-| PRO X TKL LIGHTSPEED (клавиатура) | LIGHTSPEED-ресивер `C547` / USB-C | батарея, яркость, подсветка: статичный цвет и встроенные эффекты, гашение при простое | Game Mode, per-key подсветка (отложены) |
-| PRO X 2 LIGHTSPEED (гарнитура) | свой адаптер `0AF7`, протокол Centurion | батарея, sidetone, автоотключение, появление/исчезновение в трее | — |
+| PRO X Superlight 2 (mouse, HID++ name "PRO X 2") | LIGHTSPEED receiver `C54D` / USB-C | battery, DPI (buttons and any value; separate Y in the CLI), polling rate 125 Hz–8 kHz, lift-off (medium/high), onboard/host, onboard memory backup | writing to onboard memory |
+| PRO X TKL LIGHTSPEED (keyboard) | LIGHTSPEED receiver `C547` / USB-C | battery, brightness, lighting: static colour and built-in effects, colours of single keys, turning off when idle | Game Mode (deferred) |
+| PRO X 2 LIGHTSPEED (headset) | its own adapter `0AF7`, Centurion protocol | battery, sidetone, auto power-off, built-in equalizer, appearing/disappearing in the tray | — |
 
-Мышь и клавиатура могут быть на одном ресивере или на разных — поддерживаются оба варианта.
-Другие устройства Logitech с тем же HID++ 2.0, скорее всего, уже находятся и частично работают — см. фазу 7.
+The mouse and keyboard can share one receiver or use separate ones; both setups are supported.
+Other Logitech devices with the same HID++ 2.0 are most likely already found and partly working; see phase 7.
 
-## 2. Нефункциональные требования (главное)
+## 2. Non-functional requirements (the main ones)
 
-- **В простое (панель закрыта): < 15 МБ RAM, ~0% CPU.** С открытой панелью: < 40 МБ. Никаких циклов опроса с короткими интервалами. Всё событийное.
-  Замер 2026-10-20: ~13 МБ в Диспетчере задач (private 4 МБ), CPU 0 и в простое, и с открытой панелью.
-- Батарею опрашивать не чаще раза в 5 минут + реагировать на HID++-уведомления от устройств.
-- Hotplug через `WM_DEVICECHANGE` / `RegisterDeviceNotification` в скрытом окне, а не через периодический перебор.
-  Спящее при старте устройство подхватывается по уведомлению ресивера о связи (`0x41`).
-- Панель управления открывается по клику на иконку в трее **быстрее 150 мс** (замер: первый кадр 35 мс при создании окна, 6–12 мс при повторном открытии). Окно создаётся лениво и уничтожается, если панель скрыта дольше 60 с. Окно настроек — тоже по требованию, уничтожается при закрытии.
-- Один exe (release ~9 МБ), без установщика на первом этапе.
-- Файлы:
-  - `%APPDATA%\Hubless\config.toml` — настройки приложения (уровень логов, трассировка HID, язык); правит пользователь, приложение меняет только строку `language`;
-  - `%APPDATA%\Hubless\devices.toml` — настройки устройств, профили и раскладка панели, пишет приложение;
-  - `%APPDATA%\Hubless\backups\` — бэкапы onboard-памяти;
-  - `%LOCALAPPDATA%\Hubless\logs\` — логи; `%LOCALAPPDATA%\Hubless\reports\` — отчёты об устройствах.
-- Автозапуск через `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (окно настроек, «Общие»).
-- Hubless не ходит в сеть — кроме кнопки «Проверить обновления» в настройках («Дополнительно»): один запрос к GitHub API (`releases/latest`, системный WinHTTP), только по нажатию, фоновых проверок нет.
+- **Idle (panel closed): < 15 MB RAM, ~0% CPU.** With the panel open: < 40 MB. No short-interval polling loops. Everything is event-driven.
+  Measured 2026-10-20: ~13 MB in Task Manager (4 MB private), 0 CPU both idle and with the panel open.
+- Poll the battery at most once every 5 minutes, plus react to HID++ notifications from the devices.
+- Hotplug through `WM_DEVICECHANGE` / `RegisterDeviceNotification` in a hidden window, not through periodic enumeration.
+  A device that is asleep at startup is picked up by the receiver's connection notification (`0x41`).
+- The control panel opens on a click on the tray icon **in under 150 ms** (measured: first frame 35 ms when the window is created, 6–12 ms when reopened). The window is created lazily and destroyed if the panel stays hidden for more than 60 s. The settings window is also created on demand and destroyed when closed.
+- A single exe (release ~9 MB), no installer at first.
+- Files:
+  - `%APPDATA%\Hubless\config.toml`: app settings (log level, HID tracing, language, battery notifications, update check at startup); the user edits it, the app only changes its own keys line by line;
+  - `%APPDATA%\Hubless\devices.toml`: device settings, profiles and the panel layout, written by the app;
+  - `%APPDATA%\Hubless\backups\`: onboard memory backups;
+  - `%LOCALAPPDATA%\Hubless\logs\`: logs; `%LOCALAPPDATA%\Hubless\reports\`: device reports.
+- Start with Windows through `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` (settings window, "General").
+- Hubless doesn't go online, except for the update check: one request to the GitHub API (`releases/latest`, system WinHTTP) when you press "Check for updates" in the settings ("General") and, if you turn on "Check for updates at startup" there (`check_updates`, off by default), once 30 s after startup. There are no periodic checks.
 
-## 3. Стек
+## 3. Stack
 
-- **Rust** (stable, target `x86_64-pc-windows-msvc`), release: `opt-level = "z"`, LTO, `codegen-units = 1`, `strip`, `panic = "abort"`.
-- `hidapi` (`windows-native`) — HID.
-- `tray-icon` 0.26 (+ `muda`) — иконка и меню трея.
-- `windows` 0.62 — скрытое окно, `WM_DEVICECHANGE`, DWM (Mica, скругления), системная тема и акцент, уведомления (`Shell_NotifyIcon`, balloon — WinRT-toast у exe без пакета не показывается), хук активного окна, реестр, буфер обмена.
-- **Slint** 1.18 — UI. Бэкенд winit, **software renderer**, стиль `fluent`. Переводы вшиты в exe (`@tr` + `.po`).
-- `serde` + `toml` + `serde_json` — конфиги и дампы.
-- `tracing` + `tracing-appender` — логи с дневной ротацией.
+- **Rust** (stable, target `x86_64-pc-windows-msvc`); release: `opt-level = "z"`, LTO, `codegen-units = 1`, `strip`, `panic = "abort"`.
+- `hidapi` (`windows-native`): HID.
+- `tray-icon` 0.26: the tray icon (its menu is not used).
+- `windows` 0.62: hidden window, `WM_DEVICECHANGE`, DWM (Mica, rounded corners), system theme and accent, notifications (`Shell_NotifyIcon` balloons: WinRT toasts don't show for an unpackaged exe), foreground window hook, registry, clipboard, WinHTTP.
+- **Slint** 1.18: UI. winit backend, **software renderer**, `fluent` style. Translations are built into the exe (`@tr` + `.po`).
+- `serde` + `toml` + `serde_json`: configs and dumps.
+- `tracing` + `tracing-appender`: logs with daily rotation.
 
-Если какой-то крейт мешает целевому потреблению памяти — предложи замену, но не меняй стек молча.
+If some crate gets in the way of the memory budget, propose a replacement, but don't change the stack silently.
 
-## 4. Архитектура
+## 4. Architecture
 
 ```
 ┌──────────────────────── hubless.exe ────────────────────────┐
-│ main thread: Slint event loop (качает Win32-сообщения)      │
-│   ├─ App (app.rs): AppState, обработка AppEvent             │
-│   ├─ tray: иконка, меню, уведомления                        │
+│ main thread: Slint event loop (pumps Win32 messages)        │
+│   ├─ App (app.rs): AppState, AppEvent handling              │
+│   ├─ tray: icon, notifications                              │
 │   ├─ hidden window: WM_DEVICECHANGE, WM_SETTINGCHANGE,      │
-│   │                 WM_APP+n от второго экземпляра и CLI    │
-│   ├─ foreground hook (SetWinEventHook) — автопрофили        │
-│   ├─ панель (по требованию)   ├─ окно настроек (по треб.)   │
+│   │                 WM_APP+n from a second instance and CLI │
+│   ├─ foreground hook (SetWinEventHook): auto profiles       │
+│   ├─ panel (on demand)       ├─ settings window (on demand) │
 │            ▲ app::post(AppEvent) = invoke_from_event_loop   │
-│ device workers (по потоку на роль):                         │
-│   ├─ Mouse, Keyboard: hidpp::Transport + reader-потоки      │
-│   │    на каждую HID-коллекцию                              │
-│   └─ Headset: адаптер Centurion (свой протокол)             │
-│ report thread (по кнопке): опрос всех устройств             │
+│ device workers (one thread per role):                       │
+│   ├─ Mouse, Keyboard: hidpp::Transport + reader threads     │
+│   │    for every HID collection                             │
+│   └─ Headset: Centurion adapter (its own protocol)          │
+│ report thread (on button press): queries all devices        │
+│ update thread (on button press or at startup)               │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Структура крейта (фактическая):
+Crate layout (actual):
 
 ```
 src/
-  main.rs            # аргументы: (нет) | --dump | --report | --settings | --quit | mouse/keyboard/headset/profile
-  app.rs             # главный поток: состояние, события, действия панели и окна настроек
-  cli.rs             # подкоманды CLI (вывод на английском)
-  dump.rs            # опрос всех устройств (текст + JSON) для --dump и отчёта
-  report.rs          # отчёт об устройствах: шапка, сохранение, буфер обмена, адрес формы issue
-  i18n.rs            # язык интерфейса, переводы строк из Rust
-  settings.rs        # devices.toml: настройки устройств, профили
-  settings_window.rs # окно настроек
-  foreground.rs      # хук активного окна, список запущенных программ
-  hidden_window.rs   # системные сообщения и межпроцессные команды
+  main.rs            # arguments: (none) | --dump | --report | --settings | --quit | mouse/keyboard/headset/profile
+  app.rs             # main thread: state, events, panel and settings window actions
+  cli.rs             # CLI subcommands (output in English)
+  dump.rs            # queries all devices (text + JSON) for --dump and the report
+  report.rs          # device report: header, saving, clipboard, issue form URL
+  update.rs          # update check (GitHub releases API over WinHTTP)
+  i18n.rs            # interface language, translations of strings built in Rust
+  settings.rs        # devices.toml: device settings, profiles, colours, EQ presets
+  settings_window.rs # settings window
+  eq_presets.rs      # headset equalizer presets
+  keyboard_layout.rs # keyboard layouts (TKL ANSI and ISO) for the key colour editor
+  headset_eq.rs      # headset equalizer protocol and filter coefficients
+  foreground.rs      # foreground window hook, list of running programs
+  hidden_window.rs   # system messages and inter-process commands
   config.rs, logging.rs, single_instance.rs, state.rs, theme.rs, timeutil.rs, win.rs
-  tray/              # иконка (рисуется кодом), меню, автозапуск, уведомления
-  panel/             # жизненный цикл панели, позиционирование, Mica, анимации
+  tray/              # icon (drawn in code), start with Windows, notifications
+  panel/             # panel life cycle, placement, Mica, animations, outside-click hook
   hidpp/
-    transport.rs     # коллекции, отправка/приём, сопоставление ответов, разбор ошибок
+    transport.rs     # collections, send/receive, reply matching, error parsing
     message.rs, root.rs, receiver.rs
-    features/        # battery, brightness, device_info, device_name, dpi, onboard, report_rate, rgb_effects
+    features/        # battery, brightness, device_info, device_name, dpi, onboard, per_key, report_rate, rgb_effects
   devices/
-    discovery.rs     # поиск по таблице фич и типу устройства; спящие устройства за ресивером
-    manager.rs       # потоки мыши и клавиатуры, применение настроек, подсветка как в Solaar
-    headset.rs       # поток гарнитуры
+    discovery.rs     # discovery by feature table and device type; sleeping devices behind a receiver
+    manager.rs       # mouse and keyboard threads, applying settings, Solaar-style lighting
+    headset.rs       # headset thread
     mouse.rs, keyboard.rs, registry.rs
-  centurion.rs       # протокол гарнитуры
+  centurion.rs       # headset protocol
 ui/
-  panel.slint, settings.slint, widgets.slint, theme.slint, cards/device_card.slint
+  panel.slint, settings.slint, keyboard_editor.slint, widgets.slint, theme.slint, cards/device_card.slint
 translations/ru/LC_MESSAGES/hubless.po
-docs/devices/        # дампы и находки по протоколам
+docs/devices/        # dumps and protocol findings
 ```
 
-## 5. HID++ 2.0 — заметки и подводные камни
+## 5. HID++ 2.0: notes and pitfalls
 
-- VID Logitech `0x046D`. HID++ живёт на vendor-коллекциях с usage page `0xFF00`.
-- Отчёты: short `0x10` (7 байт), long `0x11` (20 байт), very long `0x12` (64 байта).
-- Формат: `[report_id][device_index][feature_index][function<<4 | sw_id][params...]`.
-- `device_index`: `0xFF` — прямое проводное подключение или сам ресивер; `0x01…0x06` — устройства за ресивером.
-- **Windows:** hidapi открывает каждую top-level collection отдельным путём; short и long — в разных коллекциях. Открываются все коллекции интерфейса, ответы читаются со всех.
-- Ненулевой `sw_id` отличает ответы на свои запросы от уведомлений (`sw_id = 0`).
-- **Ошибки:** раскладка `[report][device][0xFF или 0x8F][feature_index или sub_id][function|sw_id][код]` — для HID++ 2.0 и 1.0. До 2026-10-19 разбиралась неверно, и любая ошибка выглядела как таймаут 2 с.
-- Таймаут ~1 с, один повтор; быстрый режим 150 мс без повтора — для пустых слотов ресивера. Спящее устройство — состояние «offline», не ошибка.
-- Индексы фич различаются по кабелю и через ресивер — всегда через Root `GetFeature`, кеш на сессию.
-- Ресиверы LIGHTSPEED на ping по `0xFF` не отвечают вовсе.
-- Подключение/отключение устройств за ресивером — уведомление HID++ 1.0 `0x41`.
+- Logitech VID `0x046D`. HID++ lives on vendor collections with usage page `0xFF00` (`0xFF43` on G-series keyboards over the cable).
+- Reports: short `0x10` (7 bytes), long `0x11` (20 bytes), very long `0x12` (64 bytes).
+- Format: `[report_id][device_index][feature_index][function<<4 | sw_id][params...]`.
+- `device_index`: `0xFF` is a direct wired connection or the receiver itself; `0x01…0x06` are devices behind a receiver.
+- **Windows:** hidapi opens every top-level collection as a separate path; short and long reports are in different collections. All collections of the interface are opened, and replies are read from all of them.
+- A non-zero `sw_id` tells replies to our requests apart from notifications (`sw_id = 0`).
+- **Errors:** layout `[report][device][0xFF or 0x8F][feature_index or sub_id][function|sw_id][code]`, for both HID++ 2.0 and 1.0. Until 2026-10-19 it was parsed wrong, and every error looked like a 2 s timeout.
+- Timeout ~1 s with one retry; a quick mode of 150 ms without a retry is used for empty receiver slots. A sleeping device is an "offline" state, not an error.
+- Feature indices differ between the cable and the receiver: always resolve them through Root `GetFeature`, cached for the session.
+- LIGHTSPEED receivers don't answer a ping at `0xFF` at all.
+- Devices connecting/disconnecting behind a receiver: HID++ 1.0 notification `0x41`.
 
-### Найдено на железе
+### Found on hardware
 
-- `0x2202` DPI: страницы списка нечётной длины — склеивать байты всех страниц, потом делить на слова. Мышь PRO X 2 отвергает lift-off `00` (LOW по Solaar) ошибкой INVALID_ARGUMENT — в панели только medium/high.
-- `0x8061` частота: чтение (функция 2) принимает тип связи `00` кабель / `01` радио, у каждой своя частота. Запись (функция 3) — для текущей связи, мышь подтверждает событием `[связь, индекс]`. Проверено: 500 Гц, 1 кГц, 8 кГц через ресивер.
-- LIGHTSPEED-ресивер иногда отвергает запись отчёта (`os error 31`, 2026-10-22, пока спящая мышь переподключалась) — поиск терял мышь или её имя. Транспорт повторяет запись до 3 раз через 50 мс; спящее устройство без имени от ресивера сохраняет прежнее.
-- После отключения кабеля мышь возвращается на радио раньше, чем Hubless начинает слушать ресивер: уведомление о связи `0x41` проходит мимо, и карточка оставалась «inactive» (2026-10-22). Теперь в ожидании спящего устройства — три перепроверки ping'ом (через 1, 3, 8 с), и любое сообщение устройства через ресивер (не только `0x41`) будит его.
-- `0x8071` подсветка: на `power_on` при неспящей подсветке клавиатура отвечает ошибкой `0x05` — команда необязательная. Эффекты клавиатуры — версии с насыщенностью (`0x15`–`0x17`).
-- `0x4523` (Game Mode) и `0x8081` (per-key) — см. фазу 3 и `docs/devices/README.md`.
+- `0x2202` DPI: the list pages have odd lengths, so concatenate the bytes of all pages before splitting them into words. The PRO X 2 mouse rejects lift-off `00` (LOW per Solaar) with INVALID_ARGUMENT, so the panel offers only medium/high.
+- `0x8061` polling rate: the read (function 2) takes the link type, `00` cable / `01` wireless, and each has its own rate. The write (function 3) is for the current link; the mouse confirms it with an event `[link, index]`. Verified: 500 Hz, 1 kHz, 8 kHz through the receiver.
+- The LIGHTSPEED receiver sometimes rejects a report write (`os error 31`, 2026-10-22, while the sleeping mouse was reconnecting), and discovery lost the mouse or its name. The transport retries the write up to 3 times, 50 ms apart; a sleeping device without a name from the receiver keeps its previous name.
+- After the cable is unplugged, the mouse returns to wireless before Hubless starts listening to the receiver: the `0x41` connection notification is missed, and the card stayed "inactive" (2026-10-22). Now, while waiting for a sleeping device, there are three ping rechecks (after 1, 3 and 8 s), and any message from the device through the receiver (not only `0x41`) wakes it up.
+- `0x8071` lighting: when the lighting is awake, the keyboard answers `power_on` with error `0x05`, so the command is best-effort. The keyboard's effects are the versions with saturation (`0x15`–`0x17`).
+- `0x4523` (Game Mode) and `0x8081` (per-key): see phase 3 and `docs/devices/README.md`.
 
-### Фичи (по реальным дампам)
+### Features (from real dumps)
 
-| ID | Назначение | Где используется |
+| ID | Purpose | Where it's used |
 |---|---|---|
-| `0x0000` / `0x0001` | Root / FeatureSet | все |
-| `0x0003` / `0x0005` | прошивка / имя и тип | дамп, поиск устройств |
-| `0x1004` | батарея (unified) | мышь, клавиатура |
-| `0x2202` | расширенный DPI (X/Y, lift-off) | мышь |
-| `0x8061` | частота опроса (до 8 кГц) | мышь |
-| `0x8060` | частота опроса (старая) | клавиатура — только чтение |
-| `0x8040` | яркость | клавиатура |
-| `0x8071` | эффекты подсветки | клавиатура |
-| `0x8081` | per-key подсветка | клавиатура — разобрано, не реализовано |
-| `0x8100` | onboard-профили | мышь, клавиатура |
-| `0x4523` | отключение клавиш (Game Mode) | клавиатура — разобрано частично |
-| `0x8110` | события кнопок мыши | не используется |
+| `0x0000` / `0x0001` | Root / FeatureSet | all |
+| `0x0003` / `0x0005` | firmware / name and type | dump, device discovery |
+| `0x1004` | battery (unified) | mouse, keyboard |
+| `0x2202` | extended DPI (X/Y, lift-off) | mouse |
+| `0x8061` | polling rate (up to 8 kHz) | mouse |
+| `0x8060` | polling rate (old) | keyboard (read only) |
+| `0x8040` | brightness | keyboard |
+| `0x8071` | lighting effects | keyboard |
+| `0x8081` | per-key lighting | keyboard: colours of single keys (editor in the settings, CLI) |
+| `0x8100` | onboard profiles | mouse, keyboard |
+| `0x4523` | disabling keys (Game Mode) | keyboard (partly decoded) |
+| `0x4540` | keyboard layout | keyboard (read in `keyboard status`, the code is not decoded) |
+| `0x8110` | mouse button events | not used |
 
-**Чёрный список:** DFU и обновление прошивки (`0x00C0`–`0x00C3`, `0x00D0`) — никогда не вызывать, `Device` их отвергает.
+**Blacklist:** DFU and firmware update (`0x00C0`–`0x00C3`, `0x00D0`): never call them; `Device` rejects them.
 
-## 6. Onboard и host
+## 6. Onboard and host
 
-- G Hub часто оставляет устройства в host mode.
-- Два режима мыши и клавиатуры:
-  1. **Onboard** — устройство работает по своему профилю в памяти, Hubless ничего не применяет.
-  2. **Host** — Hubless применяет настройки из `devices.toml` при каждом подключении. Любое изменение DPI, частоты или lift-off из панели переводит мышь в host; подсветка с эффектом переводит клавиатуру в host и возвращает onboard при выходе.
-- **Перед первой записью в onboard-память — полный бэкап** (`hubless mouse backup` → `%APPDATA%\Hubless\backups`). Запись в onboard-память пока не реализована.
+- G Hub often leaves devices in host mode.
+- Two modes for the mouse and keyboard:
+  1. **Onboard**: the device runs its own profile from memory; Hubless applies nothing.
+  2. **Host**: Hubless applies the settings from `devices.toml` every time the device connects. Any change of DPI, polling rate or lift-off from the panel switches the mouse to host; lighting with an effect switches the keyboard to host, and it goes back to onboard on exit.
+- **Take a full backup before the first write to onboard memory** (`hubless mouse backup` → `%APPDATA%\Hubless\backups`). Writing to onboard memory is not implemented yet.
 
-## 7. Панель управления
+## 7. Control panel
 
-Ориентир — флайауты Windows 11: компактно, быстро, без кнопок «Применить».
+The model is the Windows 11 flyouts: compact, fast, no "Apply" buttons.
 
-### Поведение
-- **Левый клик по иконке** — открыть/закрыть панель. **Правый клик** — меню из одного пункта «Выход», в теме панели задач (тёмная/светлая — через `SetPreferredAppMode` uxtheme, как у системных меню трея). Заряд — в подсказке иконки; настройки, автозапуск и папка логов — в окне настроек.
-- Панель над иконкой у края панели задач (`Shell_NotifyIconGetRect`, `ABM_GETTASKBARPOS`), учёт стороны панели задач, мониторов и DPI (PerMonitorV2). Положение пересчитывается при смене высоты.
-- Без заголовка и кнопки на панели задач (`WS_EX_TOOLWINDOW`, без `WS_SYSMENU`), поверх окон. Закрывается по потере фокуса, `Esc`, повторному клику и щелчку по чужому окну (хук `WH_MOUSE_LL` только пока панель показана: Windows не всегда отдаёт панели фокус, и тогда потери фокуса не бывает; 2026-10-20).
-- Анимации: содержимое проявляется 150 мс, окно въезжает на 10 px от панели задач; закрытие — 100 мс. При выключенных «Эффектах анимации» Windows — без анимации.
-- Изменения применяются сразу; ползунки — с паузой 150 мс; ошибка записи — короткое сообщение в карточке, значение возвращается к прочитанному.
+### Behaviour
+- **A click on the icon** (left or right) opens/closes the panel. There is no context menu (since 2026-10-22): "Exit" is the ⏻ button in the panel header next to ⚙. Battery levels are in the icon's tooltip; settings, start with Windows and the log folder are in the settings window.
+- The panel sits above the icon at the edge of the taskbar (`Shell_NotifyIconGetRect`, `ABM_GETTASKBARPOS`), taking into account the taskbar side, monitors and DPI (PerMonitorV2). The position is recalculated when the height changes.
+- No title bar and no taskbar button (`WS_EX_TOOLWINDOW`, no `WS_SYSMENU`), always on top. It closes on focus loss, `Esc`, a second click on the icon and a click on another app's window (a `WH_MOUSE_LL` hook only while the panel is shown: Windows doesn't always give the panel focus, and then there is no focus loss; 2026-10-20).
+- Animations: the content fades in over 150 ms, the window slides in 10 px from the taskbar; closing takes 100 ms. With Windows "Animation effects" turned off, there is no animation.
+- Changes apply immediately; sliders after a 150 ms pause; a write error shows a short message in the card, and the value goes back to what was read.
 
-### Внешний вид
-- Ширина 360 px, высота по содержимому до высоты рабочей области; если не помещается — карточки прокручиваются, заголовок на месте.
-- Тема и акцент — по системе, переключение на лету. Фон — **Mica** (`DWMSBT_MAINWINDOW`); Acrylic на этом окне не рисуется (проверено). Без поддержки системой — сплошной цвет.
-- Шрифты и иконки системные (`Segoe UI Variable`, `Segoe Fluent Icons` с откатом на старые).
-- Все цвета, размеры, радиусы и длительности — только из `theme.slint`.
+### Appearance
+- Width 360 px, height by content up to the height of the work area; if it doesn't fit, the cards scroll and the header stays in place.
+- Theme and accent follow the system and switch on the fly. Background: **Mica** (`DWMSBT_MAINWINDOW`); Acrylic doesn't render on this window (verified). Without system support, a solid colour.
+- System fonts and icons (`Segoe UI Variable`, `Segoe Fluent Icons` with a fallback to the older ones).
+- All colours, sizes, radii and durations come only from `theme.slint`.
 
-### Раскладка (фактическая)
+### Layout (actual)
 ```
 ┌─────────────────────────────────────┐
-│ Hubless             [профиль ▾]  ⚙  │
+│ Hubless          [profile ▾]  ⚙  ⏻  │
 ├─────────────────────────────────────┤
 │ 🖱 PRO X 2               📶 95% ▭ │
 │ DPI  [400][800][1600][3200]         │
 │ ━━━━━━○━━━━━━━━━  [ 800 ]           │
-│ Опрос  [1K][2K][4K][8K]             │
+│ Polling  [1K][2K][4K][8K]           │
 ├─────────────────────────────────────┤
 │ ⌨ PRO X TKL              📶 97% ▭ │
-│ Яркость ━━━━━━━━━○                  │
-│ Эффект [Статичный ▾]                │
-│                    ● ● ● ● ● ●      │
+│ Brightness ━━━━━━━━━○               │
+│ Effect [Static ▾]                   │
+│                    ● ● ● ● ● ●  +   │
 ├─────────────────────────────────────┤
 │ 🎧 PRO X 2 LIGHTSPEED    📶 32% ▭ │
-│ Свой голос ○━━━━━━━━━               │
+│ Sidetone ○━━━━━━━━━                 │
+│ Equalizer [Bass boost ▾]            │
 └─────────────────────────────────────┘
 ```
-- Список профилей в шапке — когда профилей больше одного; ⚙ — окно настроек.
-- DPI: кнопки плюс ползунок в логарифмическом масштабе и поле ввода; значение подгоняется к ближайшему допустимому для мыши.
-- Палитра клавиатуры: шесть стандартных цветов и свои (до 10, `colors` в `devices.toml`, общие для профилей) вторым рядом. Кружок «+» в конце ряда раскрывает в карточке редактор — предпросмотр и ползунки R/G/B от текущего цвета; «Добавить цвет» кладёт его в палитру и включает. Если выбран свой цвет, в редакторе есть кнопка убрать его из палитры.
-- Заголовок карточки: значок и имя устройства, значок связи (USB-штекер или антенна — радио), в конце — заряд: процент и маленькая батарейка с заливкой (низкий заряд — красным), значок зарядки; отдельной строки заряда нет (2026-10-22).
-- Отключённое устройство — серая карточка «неактивно» (Inactive) без контролов.
-- Показывается только то, что устройство поддерживает по таблице фич.
-- Редкие настройки — не в панели, а в настройках, раздел «Устройства» (2026-10-22): кнопка-шеврон в строке мыши раскрывает host/onboard и lift-off, в строке гарнитуры — автоотключение и эквалайзер. Раскрыта одна строка; строки ниже сдвигаются на высоту настроек, перетаскивание и стрелки сворачивают.
-- **Не проверено:** навигация с клавиатуры (Tab, стрелки, Enter/Space). Светлая тема — проверена (`HUBLESS_THEME=light|dark` переопределяет тему Windows для проверки).
+- The profile list in the header appears when there is more than one profile; ⚙ opens the settings window.
+- DPI: buttons plus a slider on a logarithmic scale and an input field; the value snaps to the nearest one the mouse allows.
+- Keyboard palette: six standard colours and your own ones (up to 10, `colors` in `devices.toml`, shared by all profiles) in a second row. The "+" circle at the end of the row opens an editor in the card: a preview and R/G/B sliders starting from the current colour; "Add colour" puts it in the palette and turns it on. If one of your own colours is selected, the editor has a button to remove it from the palette.
+- The keyboard effect list has no "Keyboard" item (2026-10-22): when the keyboard controls the lighting itself or the lighting is off, nothing is selected.
+- Card header: the device icon and name, a connection icon (USB plug, or an antenna for wireless), and at the end the battery: percentage and a small battery with a fill (red when low), plus a charging icon; there is no separate battery row (2026-10-22).
+- Headset: the built-in equalizer preset, built-in ones ("Flat", "Bass boost", "Voice", "FPS") and your own ones; the selected one is recognized from the curve read from the headset, and if none matches, the item is "Custom" (2026-10-22). Your own presets are created in the settings.
+- A disconnected device is a grey "Inactive" card without controls.
+- Only what the device supports according to its feature table is shown.
+- Rare settings are not in the panel but in the settings, "Devices" section (2026-10-22): the chevron button in the mouse row expands host/onboard and lift-off, in the keyboard row the idle lighting timeout and the key colour editor, and in the headset row auto power-off and the equalizer. One row is expanded at a time; the rows below move down by the height of the settings, and dragging or the arrow keys collapse it.
+- **Not verified:** keyboard navigation (Tab, arrows, Enter/Space). The light theme is verified (`HUBLESS_THEME=light|dark` overrides the Windows theme for testing).
 
-### Иконка в трее
-- Монохромная, под светлую и тёмную панель задач, точка при заряде < 15% и уведомление.
-- Tooltip: заряд всех подключённых устройств, по строке на устройство.
+### Tray icon
+- Monochrome, for light and dark taskbars, with a dot and a notification when a battery is below the threshold. The threshold is in the settings ("General", 5–30%, 15% by default; `low_battery` in `config.toml`).
+- A "Fully charged" notification when a device that was charging while Hubless was running has finished charging (one per charge; can be turned off in "General", `notify_charged`).
+- Tooltip: the battery level of every connected device, one line per device.
 
-## 8. Окно настроек
+## 8. Settings window
 
-- Обычное окно с рамкой (свой класс `Hubless.Settings`), открывается «Настройки…» в меню трея, ⚙ в панели или `hubless --settings [devices|profiles|report]`.
-- Разделы — вертикальным списком слева:
-  - **Общие:** язык (English / Русский; пока не выбран — язык Windows), автозапуск.
-  - **Устройства:** все устройства в порядке панели — ручка, значок, имя, «подключено / неактивно» и переключатель «показывать в панели». Порядок — перетаскиванием карточки (остальные раздвигаются с анимацией) или стрелками ↑/↓ на ручке в фокусе. Хранится в `devices.toml`, `[panel]` (`order`, `hidden` — ключи `mouse`/`keyboard`/`headset`), общее для всех профилей. Скрытое устройство работает как обычно (настройки применяются, заряд — в tooltip и предупреждение о низком заряде); порядок действует и на tooltip. Все скрыты — в панели подсказка. У гарнитуры в строке — кнопка эквалайзера: раскрывает его под строкой (строки ниже сдвигаются на постоянную высоту, перетаскивание сначала сворачивает его).
-  - **Профили:** карточки; выбранная раскрывается — программы (из списка запущенных или по имени exe), «Сделать активным», переименование, удаление. «Новый профиль» — копия текущего с именем «Профиль N».
-  - **Дополнительно** (`hubless --settings advanced`, бывший «Отчёт об устройствах»): версия и «Проверить обновления» (новая версия — кнопка «Скачать» открывает страницу релиза), логи — «Открыть папку логов» и «Удалить все логи» (удаляются все файлы, текущий — обнуляется: в него пишет процесс), отчёт об устройствах (см. фазу 7).
+- A normal framed window (its own class `Hubless.Settings`), opened by ⚙ in the panel or `hubless --settings [devices|profiles|eq|keys|advanced]` (`eq` and `keys` open "Devices" with the headset or the keyboard expanded).
+- Sections in a vertical list on the left:
+  - **General:** language (English / Русский; until one is chosen, the Windows language), start with Windows, the low battery threshold, the "fully charged" notification (stored in `config.toml`); the version and "Check for updates" (a new version shows a "Download" button that opens the release page), "Check for updates at startup" (a new version gives a notification and the same "Download" button). The updates moved here from "Advanced" on 2026-10-22.
+  - **Devices:** all devices in the panel's order (the keyboard row expands the idle lighting timeout and the key colour editor, see phase 3): a grip, icon, name, "Connected / Inactive" and a "Show in the panel" switch. The order is changed by dragging a card (the others move apart with an animation) or with ↑/↓ on the focused grip. It is stored in `devices.toml`, `[panel]` (`order`, `hidden`: the keys `mouse`/`keyboard`/`headset`), shared by all profiles. A hidden device keeps working (its settings are applied, its battery is in the tooltip and the low battery warning); the order also applies to the tooltip. If everything is hidden, the panel shows a hint. The headset row has an equalizer button: it expands the equalizer under the row (the rows below move down by a fixed height; dragging collapses it first). Above the sliders are the presets: choosing one, "Save as preset" (a name; the same name overwrites) and deleting your own. Your own presets are `[[eq_preset]]` in `devices.toml` (up to 20, shared by all profiles).
+  - **Profiles:** cards; the selected one expands: programs (from the list of running ones or by exe name), "Make active", rename, delete. "New profile" is a copy of the current one named "Profile N".
+  - **Advanced** (`hubless --settings advanced`, formerly "Device report"): logs, "Open log folder" and "Delete all logs" (all files are deleted, the current one is truncated because the process writes to it), and the device report (see phase 7).
+- Edits in the panel and in the settings window go to the active profile, the one applied to the devices: switched on by the foreground program, otherwise the one selected by hand. Hubless's own windows don't switch profiles (the foreground hook skips them), so with the settings window open over a game, the game's profile is the one being edited; the key colour editor shows its name.
 
-## 9. Языки
+## 9. Languages
 
-- Интерфейс (панель, окно настроек, меню трея, уведомления) — английский и русский, переключение на лету.
-- Исходные строки в коде — английские: `@tr("...")` в `.slint` + `translations/ru/LC_MESSAGES/hubless.po`; строки из Rust — `i18n::tr("...")` + таблица в `src/i18n.rs`. Новая строка интерфейса — сразу с переводом.
-- CLI — только на английском. Логи и комментарии в коде — на русском.
+- The interface (panel, settings window, icon tooltip, notifications) is in English and Russian, switching on the fly.
+- Source strings in the code are English: `@tr("...")` in `.slint` + `translations/ru/LC_MESSAGES/hubless.po`; strings built in Rust use `i18n::tr("...")` + the table in `src/i18n.rs`. A new interface string comes with its translation right away.
+- The CLI is English only. Code comments are in English (since 2026-10-22, always, including new ones); log messages are in Russian. Documentation (this plan, `README.md`, `docs/`) is in English.
 
-## 10. Гарнитура
+## 10. Headset
 
-- PRO X 2 LIGHTSPEED — протокол Centurion (не HID++): 64-байтные отчёты `0x51` на usage page `0xFFA0`, запросы к гарнитуре через фичу-мост адаптера `0x0003`. Справочник — HeadsetControl.
-- Sidetone `0x0604`: чтение `01 01 <уровень>`, запись `[01 <уровень>]`, 0–100. Автоотключение `0x0108`: `[минуты]`, 0 — никогда.
-- Blue VO!CE, DTS:X и эквалайзер G Hub **вне скоупа** — это обработка звука на компьютере. В README — Equalizer APO как альтернатива.
-- **Встроенный эквалайзер гарнитуры** `0x0636` (ONBOARD_EQ) — сделан 2026-10-20 по захвату G Hub: 5 полос (80/240/750/2200/6600 Гц), в карточке гарнитуры раздела «Устройства» (кнопка раскрывает ползунки −12…+12 дБ и «Ровно»; `hubless --settings eq`), `hubless headset eq`. Коэффициенты фильтров Hubless считает сам — протокол в `docs/devices/README.md`. Запись проверена 2026-10-21; пока ползунки двигают, кривая из гарнитуры в них не подставляется, сохранение (`80`) — через 2 с тишины.
+- PRO X 2 LIGHTSPEED: the Centurion protocol (not HID++): 64-byte reports `0x51` on usage page `0xFFA0`, requests to the headset go through the adapter's bridge feature `0x0003`. Reference: HeadsetControl.
+- Sidetone `0x0604`: read `01 01 <level>`, write `[01 <level>]`, 0–100. Auto power-off `0x0108`: `[minutes]`, 0 = never.
+- Blue VO!CE and DTS:X are **out of scope**: they are audio processing on the computer. The only equalizer is the one built into the headset (below).
+- **The headset's built-in equalizer** `0x0636` (ONBOARD_EQ), done 2026-10-20 from a G Hub capture: 5 bands (80/240/750/2200/6600 Hz), in the headset card of the "Devices" section (a button expands sliders from −12 to +12 dB and the presets; `hubless --settings eq`), `hubless headset eq`. A preset can also be chosen in the headset card in the panel. **The curve is part of the profile** (2026-10-22): `[headset] eq` in `devices.toml`; a change (preset or sliders) is saved in the active profile together with the save in the headset, and on a profile switch, as well as when the headset connects, Hubless writes the new profile's curve (its own, otherwise Default's; a profile without one leaves the headset as is). The first curve saved in another profile also gives "Default" the curve that was on before. Hubless computes the filter coefficients itself; the protocol is in `docs/devices/README.md`. Writing verified 2026-10-21; while the sliders are moving, the curve from the headset is not put into them, and the save (`80`) happens after 2 s of quiet. The read returns the saved curve: a write without `80` isn't visible to it (2026-10-22), so until the save Hubless keeps its own edit in the state.
 
-## 11. Лицензии
+## 11. Licenses
 
-Solaar (GPL-2.0), HeadsetControl (GPL-3.0), OpenRGB (GPL-2.0) и libratbag (MIT) — **справочник по протоколу**.
+Solaar (GPL-2.0), HeadsetControl (GPL-3.0), OpenRGB (GPL-2.0) and libratbag (MIT) are **protocol references**.
 
-**Решение:** `GPL-3.0-or-later`, Copyright (C) 2026 TetRex. Текст — в `LICENSE`; `license = "GPL-3.0-or-later"` в `Cargo.toml`; в исходниках — `// SPDX-License-Identifier: GPL-3.0-or-later`. При переносе кода из Solaar/HeadsetControl сохранять их копирайты в перенесённых фрагментах.
+**Decision:** `GPL-3.0-or-later`, Copyright (C) 2026 TetRex. The text is in `LICENSE`; `license = "GPL-3.0-or-later"` in `Cargo.toml`; source files carry `// SPDX-License-Identifier: GPL-3.0-or-later`. When porting code from Solaar/HeadsetControl, keep their copyright in the ported fragments.
 
-## 12. Правила работы для Claude Code
+## 12. Working rules for Claude Code
 
-- Работай по фазам. В конце фазы: что сделано, как проверить, какие вопросы.
-- **Чтение с устройств можно запускать самостоятельно** (`--dump`, `--report`, `status`).
-- **Любую запись в устройство** сначала покажи как hex-пакеты (`--dry-run`) и дождись подтверждения — пока фича не проверена вручную. Для разовых экспериментов — `hubless mouse raw <фича>:<функция>[s] <байты> , …`.
-- Не угадывай параметры недокументированных функций — предложи сниффинг (раздел 15).
-- Проверяй результат тестов на железе по логу (`HUBLESS_LOG=debug`), а не только по словам.
-- Перед работой с устройствами убедись, что G Hub закрыт (`lghub`, `lghub_agent`, `lghub_system_tray`; служба `lghub_updater` остаётся всегда и не мешает). Не убивай без спроса.
-- Перезапуск трея — `hubless --quit` (штатный выход, подсветка возвращается клавиатуре), не убийство процесса.
-- По UI: после заметных изменений — скриншот (или попроси пользователя) и сверка с разделами 7–8. Не отправляй нажатия клавиш и щелчки, пока пользователь работает за компьютером.
-- Коммит и пуш — только по просьбе пользователя.
+- Work in phases. At the end of a phase: what was done, how to check it, what questions remain.
+- **Reads from devices may be run on your own** (`--dump`, `--report`, `status`).
+- **Any write to a device** must first be shown as hex packets (`--dry-run`), and you wait for confirmation until the feature has been verified by hand. For one-off experiments: `hubless mouse raw <feature>:<function>[s] <bytes> , …`.
+- Don't guess the parameters of undocumented functions; propose sniffing (section 15).
+- Check hardware test results in the log (`HUBLESS_LOG=debug`), not only by the user's words.
+- Before working with devices, make sure G Hub is closed (`lghub`, `lghub_agent`, `lghub_system_tray`; the `lghub_updater` service is always there and doesn't get in the way). Don't kill it without asking.
+- Restart the tray with `hubless --quit` (a normal exit that hands the lighting back to the keyboard), not by killing the process.
+- UI: after noticeable changes, take a screenshot (or ask the user) and compare with sections 7–8. Don't send keystrokes or clicks while the user is working at the computer.
+- Commit and push only when the user asks.
 
-## 13. Фазы
+## 13. Phases
 
-### Фаза 0 — Каркас ✅
-Трей, меню, панель-заглушка, конфиг, логи, автозапуск, single-instance, CI (fmt, clippy без предупреждений, build).
+### Phase 0 — Skeleton ✅
+Tray, menu, placeholder panel, config, logs, start with Windows, single instance, CI (fmt, clippy without warnings, build).
 
-### Фаза 1 — Ядро HID++ и диагностика ✅
-Транспорт, поиск ресиверов и проводных устройств, `--dump` (текст + JSON). Дампы — в `docs/devices/`.
+### Phase 1 — HID++ core and diagnostics ✅
+Transport, discovery of receivers and wired devices, `--dump` (text + JSON). The dumps are in `docs/devices/`.
 
-### Фаза 2 — Мышь ✅ (кроме записи в onboard-память)
-- Батарея, DPI, частота опроса, lift-off, onboard/host, бэкап onboard-памяти, CLI `hubless mouse`, заряд в трее и уведомление < 15%.
-- **Осталось:** запись в onboard-память (профили мыши без Hubless) — после бэкапа и с подтверждением пакетов.
-  У PRO X 2 формат профиля 7 (бэкап 2026-10-19): DPI в секторе профиля — пятёрки `[X(2) Y(2) lift-off]`
-  с байта 4 (800/1200/1600/2400/3200), у Solaar разобраны форматы до 5. Остальные поля и порядок записи
-  (`0x8100` memoryWriteStart/Write/End, CRC) не угадываем — нужен захват: G Hub, режим onboard memory,
-  смена одного DPI-уровня с сохранением в мышь.
+### Phase 2 — Mouse ✅ (except writing to onboard memory)
+- Battery, DPI, polling rate, lift-off, onboard/host, onboard memory backup, CLI `hubless mouse`, battery in the tray and the low battery notification.
+- **Remaining:** writing to onboard memory (mouse profiles that work without Hubless), after a backup and with packet confirmation.
+  The PRO X 2 uses profile format 7 (backup 2026-10-19): DPI in the profile sector as groups of five `[X(2) Y(2) lift-off]`
+  from byte 4 (800/1200/1600/2400/3200); Solaar has decoded formats up to 5. The other fields and the write order
+  (`0x8100` memoryWriteStart/Write/End, CRC) are not guessed: a capture is needed (G Hub, onboard memory mode,
+  changing one DPI level and saving it to the mouse).
 
-### Фаза 3 — Клавиатура ✅ (кроме отложенного)
-- Батарея, яркость, подсветка как в Solaar (Hubless держит управление `0x8071`, гасит при простое: простой → сон → пробуждение проверены), статичный цвет и встроенные эффекты (дыхание, цикл, волна, рябь — проверены), CLI `hubless keyboard`.
-- **Не проверено:** эффект «выключено» (Disabled) — пакет готов (`hubless keyboard lighting off --dry-run`), ждёт подтверждения.
-- **Отложено (решение пользователя):**
-  - **Game Mode** — `0x4523` функция 0, битовая маска клавиш (16 байт); таблица «клавиша → бит» известна для 10 клавиш, формулы нет. Нужен захват: все клавиши по рядам по одной. Win и Menu блокирует прошивка.
-  - **Per-key** — `0x8081` функция 5 `[зона с, зона по, R, G, B]` + функция 7 `[00]`, зона = код HID − 3; работает и по радио.
-    Сделано (2026-10-20): `features/per_key.rs`, CLI `hubless keyboard keys <KEYS> <RRGGBB>` (соседние зоны — диапазоном).
-    Ждёт проверки на железе; после неё — раскладка клавиатуры в интерфейсе.
+### Phase 3 — Keyboard ✅ (except the deferred items)
+- Battery, brightness, Solaar-style lighting (Hubless holds `0x8071` and turns the lighting off when idle: idle → sleep → wake verified), static colour and built-in effects (breathe, cycle, wave, ripple: verified), CLI `hubless keyboard`.
+- The "off" effect (Disabled) verified 2026-10-22: from the CLI and by the tray on a profile switch (the keyboard goes dark,
+  and in a window with another profile the lighting comes back).
+- **Turning the lighting off after idle** (2026-10-22): "Settings → Devices → keyboard": 5, 15 or 30 min, or
+  never (`lighting_off_min` in the profile; unset means the firmware sleep timer). Hubless only reads the firmware timers
+  (`0x8071` fn7): the write format is unknown. So the timeout can't be shorter than the firmware idle timer (5 min on the
+  PRO X TKL): the idle event starts Hubless's own timer, and `idle_mode` and sleep are sent together when it runs out; a key
+  press before that sends nothing. **Not verified:** whether the firmware turns the lighting off by itself on its own sleep
+  timer when Hubless waits longer (15, 30 min, "never").
+- **Deferred (the user's decision):**
+  - **Game Mode**: `0x4523` function 0, a bitmask of keys (16 bytes); the "key → bit" table is known for 10 keys, with no formula. A capture is needed: all keys one by one, row by row. The firmware blocks Win and Menu.
+- **Per-key**: `0x8081` function 5 `[from zone, to zone, R, G, B]` + function 7 `[00]`, zone = HID usage − 3; also works wirelessly.
+  Done (2026-10-20): `features/per_key.rs`, CLI `hubless keyboard keys <KEYS> <RRGGBB>` (adjacent zones as one range).
+  **Verified 2026-10-22** wirelessly (`keys wasd ff0000`): all packets acknowledged (the fn5 reply is the first zone number),
+  WASD red, the other keys keep the current effect.
+  **Done 2026-10-22: key colours in the profile, and an editor:**
+  - The keyboard's zone map: fn0 `[00, page]`, pages 0–2, a bitmap (as in Solaar). The PRO X TKL has 99 zones:
+    1–79 (HID usage − 3), 97–103, 104–111 (modifiers `0xE0`–`0xE7` are not "usage − 3" but 104–111) and
+    150, 152–155 (probably the media keys and the buttons above the F row; which ones exactly is not verified).
+  - The colours are stored in the profile: `[keyboard.keys]` in `devices.toml`, key name → `rrggbb`. The tray applies the
+    frame after the effect: when it takes over the lighting, after waking up and on a profile switch (writing an effect
+    resets the per-key frame). Only with the static effect or the lighting off; over animations it's not verified.
+  - The editor: "Settings → Devices → keyboard" (`hubless --settings keys`): a TKL keyboard layout
+    (`keyboard_layout.rs`, only keys whose zones the keyboard has), the brush is a palette colour or the eraser
+    (back to the effect colour), click and drag, "Fill all" / "Clear all". Rust works out which key was hit from the
+    layout units.
+  - CLI: `hubless keyboard keys <KEYS> <RRGGBB>` saves the colours in the profile; `keys <KEYS> none` and `keys clear`
+    remove them. Verified 2026-10-22: painting from the editor, restoring after a tray restart.
+  - ANSI and ISO layouts: a switch in the editor (`keyboard_layout` in `devices.toml`, shared by all profiles):
+    ISO has a tall Enter, the `0x32` key to its left (zone 47) and `0x64` next to the short left Shift (zone 97).
+    It was needed after the user's photo: on an ISO keyboard the `\|` key next to Enter didn't change colour.
+  - Not done: a full-size layout (numpad, G keys) and the keys 99–103, 150–155.
 
-### Фаза 4 — Гарнитура ✅
-Адаптер Centurion, батарея, sidetone, автоотключение (проверены), CLI `hubless headset`, появление/исчезновение в трее по событию моста.
+### Phase 4 — Headset ✅
+Centurion adapter, battery, sidetone, auto power-off (verified), CLI `hubless headset`, appearing/disappearing in the tray on the bridge event. Built-in equalizer with presets (section 10).
 
-### Фаза 5 — Панель управления ✅
-Карточки всех устройств, паузы ползунков, ошибки в карточке, прокрутка, Mica, анимации. Замеры — в разделе 2.
-Светлая тема проверена 2026-10-20 через `HUBLESS_THEME=light` (снимки панели и настроек; фон Mica `PrintWindow` не снимает).
-**Не проверено:** навигация с клавиатуры.
+### Phase 5 — Control panel ✅
+Cards for all devices, slider pauses, errors in the card, scrolling, Mica, animations. Measurements are in section 2.
+The light theme verified 2026-10-20 with `HUBLESS_THEME=light` (screenshots of the panel and the settings; `PrintWindow` doesn't capture the Mica background).
+**Not verified:** keyboard navigation.
 
-### Фаза 6 — Полировка ✅
-- Профили в `devices.toml` (`[[profile]]`, корень — «Обычный»), выбор в панели, CLI `hubless profile`, автопереключение по активному exe — проверено.
-- Окно настроек, языки RU/EN, CLI на английском, релизная сборка, README.
-- Порядок и видимость карточек панели — раздел «Устройства» окна настроек; скрытие и перестановка (кнопками) проверены 2026-10-20. **Не проверено руками:** перетаскивание и стрелки на ручке.
-- Иконка exe и окна настроек (2026-10-20): белый контур мыши на синем, рисуется кодом трея (`tray/icon.rs`),
-  `res/hubless.ico` генерирует `cargo test --release write_exe_icon -- --ignored`.
+### Phase 6 — Polish ✅
+- Profiles in `devices.toml` (`[[profile]]`, the root is "Default"), choosing one in the panel, CLI `hubless profile`, automatic switching by the foreground exe: verified. A profile holds the mouse and keyboard settings (with key colours) and the headset equalizer curve.
+- Settings window, RU/EN languages, CLI in English, release build, README.
+- Order and visibility of the panel cards: the "Devices" section of the settings window; hiding and reordering (with buttons) verified 2026-10-20. **Not verified by hand:** dragging and the arrows on the grip.
+- The exe and settings window icon (2026-10-20): a white mouse outline on blue, drawn by the tray code (`tray/icon.rs`);
+  `res/hubless.ico` is generated by `cargo test --release write_exe_icon -- --ignored`.
 
-### Фаза 7 — Другие устройства Logitech (начата)
-Цель — чтобы чужие мыши и клавиатуры с HID++ 2.0 работали без правок под каждую модель, а проверенные модели — полностью.
-- **Сделано:** отчёт об устройствах — раздел окна настроек и `hubless --report`: тот же опрос, что `--dump` (только чтение, серийники и unit ID маскируются), плюс версии Hubless и Windows и признак запущенного G Hub. Сохраняется в `%LOCALAPPDATA%\Hubless\reports`, предпросмотр, копирование, кнопка формы issue (`.github/ISSUE_TEMPLATE/device-report.yml`). Инструкция — в README.
-- **Сделано (2026-10-20): автоопределение.** Зашитых карточек нет — карточка есть, пока устройство подключено или спарено с подключённым ресивером/адаптером (спит — серая «неактивно»), пропал ресивер/кабель/адаптер — карточка исчезает. Имена — от устройства (`0x0005`), у спящего — из регистра ресивера `0xB5`/`0x4N` (проверено на обоих LIGHTSPEED), иначе название типа. Ресивер опознаётся без таблицы PID: строка продукта «…Receiver» или ответ HID++ 1.0 на ping `0xFF`; нет pairing info (Bolt) — слоты 1–6 пингуются быстро. Гарнитура — любой адаптер Logitech с коллекцией `0xFFA0` и мостом Centurion, имя — строка продукта. Подпись связи — «Wireless»/USB. Новым пользователям ничего не пишется в устройства, пока они сами не изменят настройку. **Не проверено на железе:** Unifying, Bolt, другие гарнитуры Centurion, устройство спит при старте.
-- **Дальше:**
-  1. Неизвестные модели: пока — полные контролы; нужен признак «экспериментально» (пункт 5).
-  2. Несколько устройств одного типа (сейчас берётся первая мышь, первая клавиатура, одна гарнитура) — карточка на каждое. Ключ в `[panel]` тогда станет уникальным для устройства (например, тип + PID), старые ключи-типы — читать как раньше.
-  3. Старые версии фич: `0x1000` (батарея), `0x2201` (DPI), `0x8060` (частота), `0x8070` (подсветка).
-     По отчёту G903 (2026-10-20, `docs/devices/README.md`) сделано: батарея `0x1001` (оценка по напряжению),
-     чтение и запись DPI `0x2201` (fn3) и частоты `0x8060` (fn2) по спецификации Logitech и Solaar —
-     без переключателя (2026-10-20, просьба пользователя; сначала был переключатель «экспериментально»).
-     Режим host у таких мышей не включается: в нём мышь выключает кнопку DPI (G903 на 0.1.3) — запись
-     идёт в onboard-режиме, переключатель host/onboard в карточке скрыт.
-     Карточка мыши перечитывает DPI/частоту по событиям `0x8100`/`0x2201`/`0x2202`/`0x8060`/`0x8061` —
-     по словам пользователя G903, смена DPI кнопкой на мыши видна в Hubless.
-     HID++ на usage page `0xFF43` (G815 и др. G-серия по кабелю) находится; эффект подсветки — во все зоны
-     (у G815 зона 0 — логотип).
-  4. Ресиверы Unifying и Bolt (у Bolt список спаренных устройств читается иначе); сейчас в таблице только два LIGHTSPEED.
-  5. Записи на непроверенных моделях — только безопасные и обратимые (DPI, частота, onboard/host), с пометкой «экспериментально» и выключателем в настройках. Onboard-память чужих моделей не трогать.
-     Пока выключателя нет: пользователь попросил писать `0x2201`/`0x8060` у G903 сразу.
-  6. Гарнитуры других линеек — по одной, по HeadsetControl (Centurion, HID++ у G533/G733/G535, Astro).
-  7. Каждая проверенная модель — дамп в `docs/devices/` и в список проверенных.
+### Phase 7 — Other Logitech devices (started)
+The goal: other people's HID++ 2.0 mice and keyboards should work without per-model changes, and verified models fully.
+- **Done:** the device report: a section of the settings window and `hubless --report`: the same query as `--dump` (read-only; serial numbers and unit IDs are masked), plus the Hubless and Windows versions and whether G Hub is running. It is saved to `%LOCALAPPDATA%\Hubless\reports`, with a preview, copying, and a button for the issue form (`.github/ISSUE_TEMPLATE/device-report.yml`). Instructions are in the README.
+- **Done (2026-10-20): automatic detection.** There are no hard-coded cards: a card exists while the device is connected or paired with a connected receiver/adapter (asleep: a grey "Inactive" card); when the receiver/cable/adapter disappears, the card disappears. Names come from the device (`0x0005`); for a sleeping device, from the receiver register `0xB5`/`0x4N` (verified on both LIGHTSPEED receivers); otherwise the type name. A receiver is recognized without a PID table: a product string "…Receiver" or an HID++ 1.0 reply to a ping at `0xFF`; without pairing info (Bolt), slots 1–6 get a quick ping. The headset is any Logitech adapter with a `0xFFA0` collection and a Centurion bridge; its name is the product string. The connection label is "Wireless"/USB. Nothing is written to new users' devices until they change a setting themselves. **Not verified on hardware:** Unifying, Bolt, other Centurion headsets, a device asleep at startup.
+- **Next:**
+  1. Unknown models: full controls for now; an "experimental" mark is needed (item 5).
+  2. Several devices of the same type (now the first mouse, the first keyboard and one headset are taken): a card for each. The key in `[panel]` then becomes unique per device (for example, type + PID); old type keys are read as before.
+  3. Old feature versions: `0x1000` (battery), `0x2201` (DPI), `0x8060` (polling rate), `0x8070` (lighting).
+     Done after the G903 report (2026-10-20, `docs/devices/README.md`): battery `0x1001` (estimate from voltage),
+     reading and writing DPI `0x2201` (fn3) and polling rate `0x8060` (fn2) per the Logitech spec and Solaar,
+     without a switch (2026-10-20, the user's request; at first there was an "experimental" switch).
+     Host mode is never turned on for such mice: in it the mouse disables its DPI button (G903 on 0.1.3), so the writes
+     go in onboard mode and the host/onboard switch is hidden in the card.
+     The mouse card rereads DPI/polling rate on events from `0x8100`/`0x2201`/`0x2202`/`0x8060`/`0x8061`;
+     according to the G903 user, changing DPI with the mouse button shows in Hubless.
+     HID++ on usage page `0xFF43` (G815 and other G-series keyboards over the cable) is found; the lighting effect goes to
+     all zones (on the G815 zone 0 is the logo).
+  4. Unifying and Bolt receivers (Bolt reads its list of paired devices differently); the table now has only the two LIGHTSPEED ones.
+  5. Writes on unverified models: only safe and reversible ones (DPI, polling rate, onboard/host), with an "experimental" mark and a switch in the settings. Don't touch the onboard memory of other models.
+     There is no switch yet: the user asked for `0x2201`/`0x8060` to be written on the G903 right away.
+  6. Headsets from other lines, one at a time, per HeadsetControl (Centurion, HID++ on G533/G733/G535, Astro).
+  7. Every verified model: a dump in `docs/devices/` and an entry in the list of verified models.
 
-## 14. Отчёт об устройствах — что в нём
+## 14. Device report: what's in it
 
-- Шапка: версия Hubless, версия Windows, запущен ли G Hub, время.
-- Для каждого интерфейса Logitech: PID, коллекции, протокол, таблицы фич, прошивки, регистры ресивера (сопряжение без серийников), для гарнитуры — фичи адаптера и гарнитуры, сырые кадры.
-- Не содержит: серийные номера USB, unit ID, пути и имя пользователя.
+- Header: Hubless version, Windows version, whether G Hub is running, time.
+- For every Logitech interface: PID, collections, protocol, feature tables, firmware, receiver registers (pairing without serial numbers); for the headset, the adapter and headset features and raw frames.
+- It doesn't contain USB serial numbers, unit IDs, paths or the user name.
 
-## 15. Процедура сниффинга (для неизвестных функций)
+## 15. Sniffing procedure (for unknown functions)
 
-1. Установить Wireshark с компонентом USBPcap, перезагрузить Windows; запустить G Hub, закрыть Hubless (`hubless --quit`), отключить автообновление прошивки в G Hub.
-2. Найти шину: шестерёнка у `USBPcapN` → список устройств; ресивер — «LIGHTSPEED Receiver» (у пользователя: клавиатура — `USBPcap1` [2], мышь — `USBPcap4` [7]). Отметить только нужное устройство.
-3. Изменить **ровно одну** настройку, подождать 2 с, изменить её же на другое значение; мышь при захвате не двигать.
-4. Сохранить `.pcapng` в `captures/` (папка в `.gitignore`) с понятным именем.
-5. Разбор: `tshark -r <файл> -T fields -e frame.time_relative -e usb.endpoint_address -e usbhid.data -e usb.capdata -e usb.data_fragment` — запросы хоста в `usb.data_fragment` (endpoint `0x00`), ответы в `usbhid.data`; индексы фич — по дампам в `docs/devices/`. Скрипт `tools/pcap2hidpp.py` пока не написан — понадобится, если захватов станет много.
+1. Install Wireshark with the USBPcap component and restart Windows; start G Hub, quit Hubless (`hubless --quit`), turn off automatic firmware updates in G Hub.
+2. Find the bus: the gear next to `USBPcapN` → list of devices; the receiver is "LIGHTSPEED Receiver" (for the user: keyboard `USBPcap1` [2], mouse `USBPcap4` [7]). Select only the device you need.
+3. Change **exactly one** setting, wait 2 s, then change the same setting to another value; don't move the mouse during the capture.
+4. Save the `.pcapng` to `captures/` (the folder is in `.gitignore`) with a clear name.
+5. Decoding: `tshark -r <file> -T fields -e frame.time_relative -e usb.endpoint_address -e usbhid.data -e usb.capdata -e usb.data_fragment`: host requests are in `usb.data_fragment` (endpoint `0x00`), replies in `usbhid.data`; feature indices come from the dumps in `docs/devices/`. A `tools/pcap2hidpp.py` script isn't written yet; it will be needed if there are many captures.
 
-## 16. Вне скоупа
+## 16. Out of scope
 
-Макросы, ремап клавиш на уровне ОС, Bluetooth-транспорт, обновление прошивки, Blue VO!CE / DTS / EQ, синхронизация подсветки между устройствами, macOS/Linux.
+Macros, OS-level key remapping, Bluetooth transport, firmware updates, Blue VO!CE / DTS / software EQ, lighting sync across devices, macOS/Linux.

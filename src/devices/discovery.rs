@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Поиск устройств HID++ 2.0: проводные (индекс 0xFF) и за ресиверами (слоты 1–6).
+//! Finding HID++ 2.0 devices: wired ones (index 0xFF) and ones behind receivers (slots 1–6).
 
 use hidapi::HidApi;
 
@@ -10,7 +10,7 @@ use crate::hidpp::root::{self, FeatureEntry, Protocol};
 use crate::hidpp::transport::{self, Transport};
 use crate::hidpp::{Device, receiver};
 
-/// Типы устройств из `0x0005`.
+/// Device types from `0x0005`.
 pub const TYPE_KEYBOARD: u8 = 0;
 pub const TYPE_MOUSE: u8 = 3;
 
@@ -32,29 +32,29 @@ impl Found {
     }
 }
 
-/// Ресивер, у которого спарено устройство нужного типа, но оно не ответило (спит или выключено).
-/// Держим его открытым и ждём уведомления о связи (`0x41`) для этих слотов.
+/// A receiver with a paired device of the right type that didn't answer (asleep or off).
+/// We keep it open and wait for the connection notification (`0x41`) for those slots.
 pub struct Sleeping {
     pub transport: Transport,
     pub slots: Vec<u8>,
-    /// Имя спящего устройства из регистров ресивера (если ресивер его знает).
+    /// The name of the sleeping device from the receiver's registers (if the receiver knows it).
     pub name: Option<String>,
 }
 
-/// Ресивер по известному PID или строке продукта «… Receiver» (так называются и Unifying,
-/// и Bolt, и LIGHTSPEED). LIGHTSPEED-ресиверы на ping по `0xFF` не отвечают вовсе —
-/// поэтому сначала эти признаки, а ping — только для остальных.
+/// A receiver by a known PID or a product string "… Receiver" (that's what Unifying,
+/// Bolt and LIGHTSPEED receivers are all called). LIGHTSPEED receivers don't answer a ping at `0xFF`
+/// at all, so these signs come first, and the ping is only for the rest.
 fn named_receiver(info: &transport::Interface) -> bool {
     registry::lookup(info.pid).is_some_and(|k| k.kind == KnownKind::Receiver)
         || info.product.to_ascii_lowercase().contains("receiver")
 }
 
-/// Найти устройства заданного типа (по `0x0005`). Только чтение.
+/// Finds devices of the given type (by `0x0005`). Read-only.
 pub fn find(api: &HidApi, want_kind: u8) -> Vec<Found> {
     find_or_sleeping(api, want_kind).0
 }
 
-/// Как [`find`], плюс ресивер со спящим устройством нужного типа, если ничего не нашлось.
+/// Like [`find`], plus a receiver with a sleeping device of the right type if nothing was found.
 pub fn find_or_sleeping(api: &HidApi, want_kind: u8) -> (Vec<Found>, Option<Sleeping>) {
     let mut found = Vec::new();
     let mut sleeping = None;
@@ -66,10 +66,10 @@ pub fn find_or_sleeping(api: &HidApi, want_kind: u8) -> (Vec<Found>, Option<Slee
             continue;
         };
         let mut names = Vec::new();
-        // Не ресивер по имени: ping по 0xFF — HID++ 2.0 у проводного устройства, 1.0 у ресивера.
+        // Not a receiver by name: a ping at 0xFF gives HID++ 2.0 for a wired device, 1.0 for a receiver.
         let self_ping = (!named_receiver(&info)).then(|| root::ping(&t, DEVICE_SELF));
         let receiver = matches!(self_ping, None | Some(Ok(Protocol::V1)));
-        // Слот, точно ли там устройство нужного типа (по pairing info) и быстрый ли пинг.
+        // A slot, whether it surely holds a device of the right type (by pairing info), and whether the ping is quick.
         let slots: Vec<(u8, bool, bool)> = if receiver {
             let regs = receiver::read_info(&t);
             let reg = |label: String| {
@@ -77,7 +77,7 @@ pub fn find_or_sleeping(api: &HidApi, want_kind: u8) -> (Vec<Found>, Option<Slee
                     .find(|r| r.label == label)
                     .and_then(|r| r.result.as_ref().ok())
             };
-            // Только спаренные слоты; тип из pairing info отсекает чужие устройства без пинга.
+            // Only paired slots; the type from pairing info filters out other devices without a ping.
             let paired: Vec<(u8, bool, bool)> = (1..=6u8)
                 .filter_map(|slot| {
                     let raw = reg(format!("pairing_info_slot{slot}"))?;
@@ -98,7 +98,7 @@ pub fn find_or_sleeping(api: &HidApi, want_kind: u8) -> (Vec<Found>, Option<Slee
             if any_pairing {
                 paired
             } else {
-                // Pairing info не читается (Bolt и неизвестные ресиверы): пингуем все слоты быстро.
+                // Pairing info can't be read (Bolt and unknown receivers): ping all slots quickly.
                 (1..=6u8).map(|slot| (slot, false, true)).collect()
             }
         } else if matches!(self_ping, Some(Ok(Protocol::V2(..)))) {
@@ -146,8 +146,8 @@ pub fn find_or_sleeping(api: &HidApi, want_kind: u8) -> (Vec<Found>, Option<Slee
     (found, sleeping)
 }
 
-/// Опросить устройство: HID++ 2.0 нужного типа — имя и таблица фич. `quick` — пинг без
-/// повтора и с коротким таймаутом (слот, про который неизвестно, спарен ли он).
+/// Queries a device: an HID++ 2.0 device of the right type gives its name and feature table. `quick` is a
+/// ping without a retry and with a short timeout (a slot that may or may not be paired).
 fn probe(
     t: &Transport,
     index: u8,

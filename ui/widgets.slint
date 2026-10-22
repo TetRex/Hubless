@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Общие маленькие виджеты панели и окна настроек.
+// Small widgets shared by the panel and the settings window.
 import { Theme } from "theme.slint";
 
-// Кнопка-глиф (шрифт иконок Segoe): клик, Enter или пробел.
+// A glyph button (the Segoe icon font): click, Enter or Space.
 export component IconButton inherits Rectangle {
     in property <string> glyph;
     in property <string> label;
@@ -37,8 +37,8 @@ export component IconButton inherits Rectangle {
         }
     }
 
-    // Область клика поверх FocusScope: иначе первый клик только забирает фокус
-    // (FocusScope принимает нажатие, пока не в фокусе), и срабатывает лишь второй.
+    // The click area is above the FocusScope: otherwise the first click only takes focus
+    // (the FocusScope accepts the press while it isn't focused), and only the second one works.
     touch := TouchArea {
         clicked => {
             root.clicked();

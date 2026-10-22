@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Мышь (PRO X Superlight 2): чтение состояния и бэкап onboard-памяти.
+//! Mouse (PRO X Superlight 2): reading its state and backing up its onboard memory.
 
 use std::path::PathBuf;
 
@@ -39,7 +39,7 @@ pub fn status(dev: &Device) -> Status {
     }
 }
 
-/// Краткая запись списка DPI отрезками с постоянным шагом: `100–200 шаг 1, 200–500 шаг 2`.
+/// A short notation of the DPI list as runs with a constant step: `100–200 step 1, 200–500 step 2`.
 pub fn describe_dpi_list(list: &[u16]) -> String {
     let mut parts = Vec::new();
     let mut i = 0;
@@ -89,7 +89,7 @@ pub fn lift_off_from_device(l: dpi::LiftOff) -> Option<settings::LiftOff> {
     }
 }
 
-/// Мышь со старыми фичами DPI/частоты (`0x2201`, `0x8060`), а не новыми.
+/// A mouse with the old DPI/polling rate features (`0x2201`, `0x8060`) rather than the new ones.
 pub fn old_dpi(dev: &Device) -> bool {
     dev.feature(dpi::ID).is_none() && dev.feature(dpi::OLD_ID).is_some()
 }
@@ -98,18 +98,18 @@ pub fn old_rate(dev: &Device) -> bool {
     dev.feature(report_rate::ID).is_none() && dev.feature(report_rate::OLD_ID).is_some()
 }
 
-/// У мыши со старыми фичами Hubless не включает режим host: в нём мышь отключает onboard-профиль,
-/// а с ним и свою кнопку DPI — она оживала только после перезапуска мыши (G903, отчёт
-/// пользователя 2026-10-20). DPI и частота пишутся в onboard-режиме.
+/// For a mouse with the old features, Hubless never turns on host mode: in it the mouse disables its onboard
+/// profile, and with it its DPI button, which came back only after the mouse was restarted (G903, user
+/// report 2026-10-20). DPI and polling rate are written in onboard mode.
 pub fn host_mode_supported(dev: &Device) -> bool {
     !(old_dpi(dev) || old_rate(dev))
 }
 
-/// Записи настроек из `devices.toml`: в режиме host — сначала режим, затем DPI/lift-off и частота.
-/// Значения, которые устройство в текущем подключении не поддерживает, пропускаются
-/// (например, 8000 Гц по кабелю) — с записью в лог. Старые фичи (`0x2201`, `0x8060`, G903)
-/// пишутся по спецификации Logitech и Solaar без режима host (см. [`host_mode_supported`]),
-/// а оставшийся от 0.1.3 режим host снимается.
+/// Writes of the settings from `devices.toml`: in host mode, the mode first, then DPI/lift-off and polling rate.
+/// Values the device doesn't support on the current connection are skipped
+/// (for example, 8000 Hz over the cable), with a log entry. The old features (`0x2201`, `0x8060`, G903)
+/// are written per the Logitech spec and Solaar without host mode (see [`host_mode_supported`]),
+/// and a host mode left over from 0.1.3 is cleared.
 pub fn host_writes(dev: &Device, s: &MouseSettings) -> Vec<Write> {
     let mut writes = Vec::new();
     if host_mode_supported(dev) {
@@ -178,8 +178,8 @@ pub fn host_writes(dev: &Device, s: &MouseSettings) -> Vec<Write> {
     writes
 }
 
-/// Перечитать значение после записи: `Some(true)` — применилось, `Some(false)` — нет,
-/// `None` — проверить не удалось.
+/// Rereads the value after a write: `Some(true)` means it applied, `Some(false)` that it didn't,
+/// `None` that it couldn't be checked.
 pub fn verify(dev: &Device, w: &Write) -> Option<bool> {
     let p = &w.params;
     match w.feature {
@@ -204,8 +204,8 @@ pub fn verify(dev: &Device, w: &Write) -> Option<bool> {
     }
 }
 
-/// Полный бэкап onboard-памяти: все пользовательские сектора и сектора ROM-профилей.
-/// Пишет `<backups>/<pid>-<unit_id>-<время>.bin` и `.json` с описанием раскладки.
+/// A full backup of the onboard memory: all user sectors and the ROM profile sectors.
+/// Writes `<backups>/<pid>-<unit_id>-<time>.bin` and a `.json` describing the layout.
 pub fn backup(found: &Found) -> Result<PathBuf, String> {
     let dev = found.device();
     let info = onboard::info(&dev).map_err(|e| format!("0x8100 info: {e}"))?;
@@ -213,7 +213,7 @@ pub fn backup(found: &Found) -> Result<PathBuf, String> {
         .map(|d| hex(&d.raw[device_info::UNIT_ID_BYTES]).replace(' ', ""))
         .unwrap_or_else(|_| "unknown".into());
 
-    // Пользовательские сектора 0..N (0 — каталог профилей) и ROM: каталог 0x0100 + профили 0x0101...
+    // User sectors 0..N (0 is the profile directory) and ROM: directory 0x0100 + profiles 0x0101...
     let mut sectors: Vec<u16> = (0..u16::from(info.sector_count)).collect();
     sectors.extend((0..=u16::from(info.rom_profile_count)).map(|i| onboard::ROM_BASE + i));
 

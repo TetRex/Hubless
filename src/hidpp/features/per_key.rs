@@ -1,23 +1,53 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `0x8081` Per-key lighting v2 — цвет отдельных клавиш.
+//! `0x8081` Per-key lighting v2: the colour of single keys.
 //!
-//! По захвату G Hub (2026-10-20, PRO X TKL, `docs/devices/README.md`): fn5
-//! `[первая зона, последняя зона, R, G, B]` красит диапазон зон, fn7 `[00]` применяет кадр;
-//! номер зоны = код HID клавиши − 3 (A = 1 … Z = 26). Работает и через ресивер.
-//! Запись из Hubless на железе ещё не проверена.
+//! From a G Hub capture (2026-10-20, PRO X TKL, `docs/devices/README.md`): fn5
+//! `[first zone, last zone, R, G, B]` paints a range of zones, fn7 `[00]` applies the frame;
+//! zone number = the key's HID usage − 3 (A = 1 … Z = 26), and 104–111 for the modifiers.
+//! Also works through the receiver; writing from Hubless verified on hardware 2026-10-22.
 
-use crate::hidpp::Write;
+use std::collections::BTreeMap;
+
+use crate::hidpp::{Device, Error, Write};
 
 pub const ID: u16 = 0x8081;
+const GET_INFO: u8 = 0;
 const SET_RANGE: u8 = 5;
 const COMMIT: u8 = 7;
 
-/// Зона клавиши по коду HID (usage page 0x07).
-pub fn zone_of_usage(usage: u8) -> Option<u8> {
-    usage.checked_sub(3).filter(|z| *z > 0)
+/// The zones the keyboard has. As in Solaar: fn0 `[00, page]` for pages 0–2; after two bytes the reply
+/// is a bitmap of zones (bit `i` is zone `i`).
+pub fn supported_zones(dev: &Device) -> Result<Vec<u8>, Error> {
+    let mut bitmap = Vec::new();
+    for page in 0..3u8 {
+        let r = dev.call(ID, GET_INFO, &[0x00, page])?;
+        bitmap.extend_from_slice(r.params().get(2..).unwrap_or_default());
+    }
+    Ok(zones_in_bitmap(&bitmap))
 }
 
-/// Покрасить зоны `first..=last` одним цветом.
+fn zones_in_bitmap(bitmap: &[u8]) -> Vec<u8> {
+    (1..=u8::MAX)
+        .filter(|&z| {
+            bitmap
+                .get(usize::from(z / 8))
+                .is_some_and(|b| b >> (z % 8) & 1 == 1)
+        })
+        .collect()
+}
+
+/// The key's zone from its HID usage (usage page 0x07): normal keys are usage − 3 (from the G Hub capture),
+/// modifiers `0xE0`–`0xE7` are 104–111, as in Solaar. The PRO X TKL zone map (fn0, 2026-10-22)
+/// confirms it: zones 104–111 exist, and "usage − 3" for the modifiers (221–228) doesn't.
+pub fn zone_of_usage(usage: u8) -> Option<u8> {
+    match usage {
+        0x04..=0x65 => Some(usage - 3),
+        0xE0..=0xE7 => Some(usage - 0x78),
+        _ => None,
+    }
+}
+
+/// Paints zones `first..=last` with one colour.
 pub fn set_range(first: u8, last: u8, rgb: [u8; 3]) -> Write {
     Write {
         feature: ID,
@@ -31,7 +61,7 @@ pub fn set_range(first: u8, last: u8, rgb: [u8; 3]) -> Write {
     }
 }
 
-/// Применить кадр (после всех `set_range`).
+/// Applies the frame (after all `set_range` writes).
 pub fn commit() -> Write {
     Write {
         feature: ID,
@@ -42,22 +72,34 @@ pub fn commit() -> Write {
     }
 }
 
-/// Записи для набора зон одного цвета: соседние зоны склеиваются в диапазоны, в конце — commit.
+/// Writes for a set of zones in one colour: adjacent zones merge into ranges, with a commit at the end.
 pub fn paint(zones: &[u8], rgb: [u8; 3]) -> Vec<Write> {
-    let mut zones = zones.to_vec();
-    zones.sort_unstable();
-    zones.dedup();
+    let keys: Vec<(u8, [u8; 3])> = zones.iter().map(|&z| (z, rgb)).collect();
+    frame(&keys)
+}
+
+/// Writes for one frame: zones are grouped by colour (a repeated zone gets its last colour),
+/// adjacent zones of one colour merge into ranges, with one commit at the end.
+pub fn frame(keys: &[(u8, [u8; 3])]) -> Vec<Write> {
+    let zones: BTreeMap<u8, [u8; 3]> = keys.iter().copied().collect();
+    let mut by_color: BTreeMap<[u8; 3], Vec<u8>> = BTreeMap::new();
+    for (zone, rgb) in zones {
+        by_color.entry(rgb).or_default().push(zone);
+    }
     let mut writes = Vec::new();
-    let mut i = 0;
-    while i < zones.len() {
-        let first = zones[i];
-        let mut last = first;
-        while i + 1 < zones.len() && zones[i + 1] == last + 1 {
+    for (rgb, zones) in by_color {
+        // The zones are already ascending (from the BTreeMap).
+        let mut i = 0;
+        while i < zones.len() {
+            let first = zones[i];
+            let mut last = first;
+            while i + 1 < zones.len() && zones[i + 1] == last + 1 {
+                i += 1;
+                last = zones[i];
+            }
+            writes.push(set_range(first, last, rgb));
             i += 1;
-            last = zones[i];
         }
-        writes.push(set_range(first, last, rgb));
-        i += 1;
     }
     if !writes.is_empty() {
         writes.push(commit());
@@ -65,7 +107,7 @@ pub fn paint(zones: &[u8], rgb: [u8; 3]) -> Vec<Write> {
     writes
 }
 
-/// Код HID клавиши по имени (`a`, `f1`, `space`, `esc`, …; без учёта регистра).
+/// A key's HID usage by name (`a`, `f1`, `space`, `esc`, …; case-insensitive).
 pub fn usage_of(name: &str) -> Option<u8> {
     let n = name.to_ascii_lowercase();
     if let [c] = n.as_bytes() {
@@ -92,6 +134,9 @@ pub fn usage_of(name: &str) -> Option<u8> {
         "lbracket" | "[" => 0x2F,
         "rbracket" | "]" => 0x30,
         "backslash" | "\\" => 0x31,
+        // ISO: the key to the left of the tall Enter, and the one between the short left Shift and Z.
+        "nonushash" | "hash" | "#" => 0x32,
+        "nonusbackslash" => 0x64,
         "semicolon" | ";" => 0x33,
         "quote" | "'" => 0x34,
         "grave" | "`" => 0x35,
@@ -102,6 +147,7 @@ pub fn usage_of(name: &str) -> Option<u8> {
         "printscreen" => 0x46,
         "scrolllock" => 0x47,
         "pause" => 0x48,
+        "menu" | "application" => 0x65,
         "insert" => 0x49,
         "home" => 0x4A,
         "pageup" => 0x4B,
@@ -124,7 +170,7 @@ pub fn usage_of(name: &str) -> Option<u8> {
     })
 }
 
-/// Список клавиш из аргумента: `wasd` (каждая буква — клавиша), `w,a,s,d`, `f1,f2,space`.
+/// The list of keys from an argument: `wasd` (each letter is a key), `w,a,s,d`, `f1,f2,space`.
 pub fn parse_keys(arg: &str) -> Result<Vec<u8>, String> {
     let parts: Vec<String> = if arg.contains(',') {
         arg.split(',').map(|s| s.trim().to_owned()).collect()
@@ -150,7 +196,7 @@ mod tests {
 
     #[test]
     fn zones_follow_the_capture() {
-        // Захват G Hub: T → зона 0x14; A = 1 … Z = 26.
+        // G Hub capture: T → zone 0x14; A = 1 … Z = 26.
         assert_eq!(usage_of("t").and_then(zone_of_usage), Some(0x14));
         assert_eq!(usage_of("A").and_then(zone_of_usage), Some(1));
         assert_eq!(usage_of("z").and_then(zone_of_usage), Some(26));
@@ -158,6 +204,35 @@ mod tests {
         assert_eq!(parse_keys("wasd").unwrap(), vec![23, 1, 19, 4]);
         assert_eq!(parse_keys("f1,space").unwrap(), vec![0x37, 0x29]);
         assert!(parse_keys("w,nope").is_err());
+        // Modifiers are 104–111, the Menu key is 98 (PRO X TKL zone map).
+        assert_eq!(parse_keys("lctrl,rwin,menu").unwrap(), vec![104, 111, 98]);
+    }
+
+    #[test]
+    fn zone_bitmap_is_read_like_solaar() {
+        // Zones 1, 8 and 104: bit 1 of byte 0, bit 0 of byte 1, bit 0 of byte 13.
+        let mut bitmap = vec![0u8; 42];
+        bitmap[0] = 0b10;
+        bitmap[1] = 0b1;
+        bitmap[13] = 0b1;
+        assert_eq!(zones_in_bitmap(&bitmap), vec![1, 8, 104]);
+    }
+
+    #[test]
+    fn frame_groups_colours_and_commits_once() {
+        let red = [0xff, 0, 0];
+        let blue = [0, 0, 0xff];
+        let w = frame(&[(3, red), (1, blue), (2, red), (1, red), (9, blue)]);
+        let params: Vec<_> = w.iter().map(|w| (w.function, w.params.clone())).collect();
+        assert_eq!(
+            params,
+            vec![
+                (5, vec![9, 9, 0, 0, 0xff]),
+                (5, vec![1, 3, 0xff, 0, 0]),
+                (7, vec![0]),
+            ]
+        );
+        assert!(frame(&[]).is_empty());
     }
 
     #[test]

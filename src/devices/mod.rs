@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Устройства: поиск, таблица известных PID, модули мыши, клавиатуры и гарнитуры.
+//! Devices: discovery, the table of known PIDs, the mouse, keyboard and headset modules.
 
 pub mod discovery;
 mod headset;

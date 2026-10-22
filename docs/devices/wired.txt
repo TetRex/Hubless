@@ -1,29 +1,29 @@
 
-== C352 HID VHF Driver (интерфейс -1, «HID VHF Driver») ==
-  коллекции: 0059:0001
-  нет HID++ коллекций (page FF00) — пропуск
+== C352 HID VHF Driver (interface -1, "HID VHF Driver") ==
+  collections: 0059:0001
+  no HID++ collections (page FF00), skipped
 
-== 0AF7 PRO X 2 LIGHTSPEED (интерфейс 3, «PRO X 2 LIGHTSPEED») ==
-  коллекции: 000C:0001 FF13:0001 FFA0:0001
-  нет HID++ коллекций (page FF00) — пропуск
+== 0AF7 PRO X 2 LIGHTSPEED (interface 3, "PRO X 2 LIGHTSPEED") ==
+  collections: 000C:0001 FF13:0001 FFA0:0001
+  no HID++ collections (page FF00), skipped
 
-== C09B PRO X 2 (интерфейс 0, «PRO X 2») ==
-  коллекции: 0001:0002
-  нет HID++ коллекций (page FF00) — пропуск
+== C09B PRO X 2 (interface 0, "PRO X 2") ==
+  collections: 0001:0002
+  no HID++ collections (page FF00), skipped
 
-== C09B PRO X 2 (интерфейс 1, «PRO X 2») ==
-  коллекции: 0001:0006 0001:0080 000C:0001
-  нет HID++ коллекций (page FF00) — пропуск
+== C09B PRO X 2 (interface 1, "PRO X 2") ==
+  collections: 0001:0006 0001:0080 000C:0001
+  no HID++ collections (page FF00), skipped
 
-== C09B PRO X 2 (интерфейс 2, «PRO X 2») ==
-  коллекции: FF00:0001 FF00:0002
+== C09B PRO X 2 (interface 2, "PRO X 2") ==
+  collections: FF00:0001 FF00:0002
   0xFF: HID++ 4.2
     PRO X 2 (mouse)
-    модель 40A9/C09B/0000 транспорт 000C, прошивок: 2
+    model 40A9/C09B/0000 transport 000C, firmware entities: 2
     bootloader   BL1 71.00.B0012
     firmware     MPM 32.05.B0029
-    фичи (33):
-      idx  id    ver  флаги             имя
+    features (33):
+      idx  id    ver  flags             name
         0  0000    2                    ROOT
         1  0001    2                    FEATURE_SET
         2  0003    7                    DEVICE_FW_VERSION
@@ -39,7 +39,7 @@
        12  8061    0                    EXTENDED_ADJUSTABLE_REPORT_RATE
        13  8100    0                    ONBOARD_PROFILES
        14  8110    0                    MOUSE_BUTTON_SPY
-       15  00C3    1                    DFUCONTROL  [чёрный список]
+       15  00C3    1                    DFUCONTROL  [blacklisted]
        16  1801    0  hidden,engineering,manuf_deactivatable  ?
        17  1802    0  hidden,engineering,manuf_deactivatable  DEVICE_RESET
        18  1803    1  hidden,engineering,manuf_deactivatable  ?
@@ -58,26 +58,26 @@
        31  1EB0    0  hidden,engineering,manuf_deactivatable  ?
        32  18B1    0  hidden,engineering,manuf_deactivatable  ?
 
-== C352 PRO X TKL (интерфейс 0, «PRO X TKL») ==
-  коллекции: 0001:0006
-  нет HID++ коллекций (page FF00) — пропуск
+== C352 PRO X TKL (interface 0, "PRO X TKL") ==
+  collections: 0001:0006
+  no HID++ collections (page FF00), skipped
 
-== C352 PRO X TKL (интерфейс 1, «PRO X TKL») ==
-  коллекции: 0001:0002 0001:0080 000C:0001
-  нет HID++ коллекций (page FF00) — пропуск
+== C352 PRO X TKL (interface 1, "PRO X TKL") ==
+  collections: 0001:0002 0001:0080 000C:0001
+  no HID++ collections (page FF00), skipped
 
-== C352 PRO X TKL (интерфейс 2, «PRO X TKL») ==
-  коллекции: FF00:0001 FF00:0002
+== C352 PRO X TKL (interface 2, "PRO X TKL") ==
+  collections: FF00:0001 FF00:0002
   0xFF: HID++ 4.2
     PRO X TKL (keyboard)
-    модель B382/40B0/C352 транспорт 000E, прошивок: 5
+    model B382/40B0/C352 transport 000E, firmware entities: 5
     bootloader   BOT 40.00.B0008
     softdevice    00.00.B0125
     firmware     MPK 23.00.B0008
     other         00.00.B0000
     other         00.00.B0000
-    фичи (34):
-      idx  id    ver  флаги             имя
+    features (34):
+      idx  id    ver  flags             name
         0  0000    2                    ROOT
         1  0001    2                    FEATURE_SET
         2  0003    4                    DEVICE_FW_VERSION
@@ -96,8 +96,8 @@
        15  8040    0                    BRIGHTNESS_CONTROL
        16  8100    0                    ONBOARD_PROFILES
        17  8060    0                    REPORT_RATE
-       18  00C2    0                    DFUCONTROL_SIGNED  [чёрный список]
-       19  00D0    3                    DFU  [чёрный список]
+       18  00C2    0                    DFUCONTROL_SIGNED  [blacklisted]
+       19  00D0    3                    DFU  [blacklisted]
        20  1802    0  hidden,engineering,manuf_deactivatable  DEVICE_RESET
        21  1803    0  hidden,engineering,manuf_deactivatable  ?
        22  1806    8  hidden,engineering,manuf_deactivatable  CONFIG_DEVICE_PROPS
@@ -113,32 +113,32 @@
        32  1861    1  hidden,engineering,manuf_deactivatable  ?
        33  18B0    1  hidden,engineering,manuf_deactivatable  ?
 
-== C547 LIGHTSPEED Receiver (интерфейс 0, «USB Receiver») ==
-  коллекции: 0001:0002
-  нет HID++ коллекций (page FF00) — пропуск
+== C547 LIGHTSPEED Receiver (interface 0, "USB Receiver") ==
+  collections: 0001:0002
+  no HID++ collections (page FF00), skipped
 
-== C547 LIGHTSPEED Receiver (интерфейс 1, «USB Receiver») ==
-  коллекции: 0001:0006 0001:0080 000C:0001
-  нет HID++ коллекций (page FF00) — пропуск
+== C547 LIGHTSPEED Receiver (interface 1, "USB Receiver") ==
+  collections: 0001:0006 0001:0080 000C:0001
+  no HID++ collections (page FF00), skipped
 
-== C547 LIGHTSPEED Receiver (интерфейс 2, «USB Receiver») ==
-  коллекции: FF00:0001 FF00:0002
-  0xFF: нет ответа
-  рег. connection_state     00 01 00
-  рег. firmware_version     01 04 02
-  рег. firmware_build       02 00 09
-  рег. bootloader           04 02 09
-  рег. pairing_info_slot1   20 0d 08 40 b0 11 00 01 b1 00 00 00 00 2c 00 00
-  рег. pairing_info_slot2   нет ответа
-  рег. pairing_info_slot3   нет ответа
-  рег. pairing_info_slot4   нет ответа
-  рег. pairing_info_slot5   нет ответа
-  рег. pairing_info_slot6   нет ответа
-  слот 1: нет ответа (спит/выключено)
-  слот 2: не спарен
-  слот 3: не спарен
-  слот 4: не спарен
-  слот 5: не спарен
-  слот 6: не спарен
+== C547 LIGHTSPEED Receiver (interface 2, "USB Receiver") ==
+  collections: FF00:0001 FF00:0002
+  0xFF: no reply
+  reg  connection_state     00 01 00
+  reg  firmware_version     01 04 02
+  reg  firmware_build       02 00 09
+  reg  bootloader           04 02 09
+  reg  pairing_info_slot1   20 0d 08 40 b0 11 00 01 b1 00 00 00 00 2c 00 00
+  reg  pairing_info_slot2   no reply
+  reg  pairing_info_slot3   no reply
+  reg  pairing_info_slot4   no reply
+  reg  pairing_info_slot5   no reply
+  reg  pairing_info_slot6   no reply
+  slot 1: no reply (asleep or off)
+  slot 2: not paired
+  slot 3: not paired
+  slot 4: not paired
+  slot 5: not paired
+  slot 6: not paired
 
 JSON: docs/devices/wired.json

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `hubless --dump`: все устройства Logitech, их HID++ фичи — текстом и в JSON.
-//! Только чтение. Серийные номера и unit id маскируются.
+//! `hubless --dump`: all Logitech devices and their HID++ features, as text and as JSON.
+//! Read-only. Serial numbers and unit IDs are masked.
 //!
-//! Текст копится в буфере потока ([`out!`]): его печатает CLI и показывает окно настроек
-//! (отчёт об устройствах для новых моделей).
+//! The text is collected in a per-thread buffer ([`out!`]): the CLI prints it and the settings window
+//! shows it (the device report for new models).
 
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
@@ -27,7 +27,7 @@ thread_local! {
     static TEXT: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
-/// Строка в текстовую часть отчёта (как `println!`).
+/// A line for the text part of the report (like `println!`).
 macro_rules! out {
     ($($arg:tt)*) => {
         TEXT.with_borrow_mut(|t| {
@@ -37,13 +37,13 @@ macro_rules! out {
     };
 }
 
-/// Отчёт об устройствах: текст для человека и JSON.
+/// The device report: text for a human, and JSON.
 pub struct Dump {
     pub text: String,
     pub json: Value,
 }
 
-/// Опросить все устройства Logitech (только чтение).
+/// Queries all Logitech devices (read-only).
 pub fn collect() -> Result<Dump, String> {
     let api = HidApi::new().map_err(|e| format!("hidapi: {e}"))?;
     TEXT.with_borrow_mut(String::clear);
@@ -120,7 +120,7 @@ fn dump_interface(api: &HidApi, info: Interface) -> Value {
         "usb_serial": info.serial.as_ref().map(|_| MASK),
         "collections": collections,
     });
-    // Centurion (гарнитуры) — по коллекции 0xFFA0, а не по PID: так попадут и незнакомые модели.
+    // Centurion (headsets) is found by the 0xFFA0 collection, not by PID: that way unknown models get in too.
     if let Some(c) = info
         .collections
         .iter()
@@ -146,7 +146,7 @@ fn dump_interface(api: &HidApi, info: Interface) -> Value {
     let mut devices = Vec::new();
     let mut is_receiver = known.is_some_and(|k| k.kind == KnownKind::Receiver)
         || info.product.to_ascii_lowercase().contains("receiver");
-    // LIGHTSPEED-ресиверы на ping по 0xFF не отвечают вовсе — для них быстрый режим.
+    // LIGHTSPEED receivers don't answer a ping at 0xFF at all, so they get the quick mode.
     let ping_self = || root::ping(&transport, DEVICE_SELF);
     let self_protocol = if is_receiver {
         transport.quick(ping_self)
@@ -172,7 +172,7 @@ fn dump_interface(api: &HidApi, info: Interface) -> Value {
         j["role"] = json!("receiver");
         let registers = dump_registers(&transport);
         for slot in 1..=6u8 {
-            // Слот без pairing info, скорее всего, пуст — опрашиваем быстро.
+            // A slot without pairing info is most likely empty, so it is queried quickly.
             let paired = registers.iter().any(|r| {
                 r["label"] == format!("pairing_info_slot{slot}") && r.get("raw").is_some()
             });
@@ -352,7 +352,7 @@ fn feature_json(f: &FeatureEntry) -> Value {
     })
 }
 
-/// Гарнитура на протоколе Centurion: только чтение (мост, таблицы фич, батарея).
+/// A headset on the Centurion protocol: read-only (bridge, feature tables, battery).
 fn dump_centurion(api: &HidApi, path: &std::ffi::CStr) -> Value {
     let mut a = match centurion::Adapter::open(api, path) {
         Ok(a) => a,

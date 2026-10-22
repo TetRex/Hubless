@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Скрытое окно для системных уведомлений: смена темы (`WM_SETTINGCHANGE`),
-//! hotplug HID (`WM_DEVICECHANGE`) и сигнал от второго экземпляра.
+//! A hidden window for system notifications: theme changes (`WM_SETTINGCHANGE`),
+//! HID hotplug (`WM_DEVICECHANGE`) and signals from a second instance.
 //!
-//! Окно top-level (а не message-only), иначе broadcast `WM_SETTINGCHANGE` до него не дойдёт.
+//! The window is top-level (not message-only), otherwise the `WM_SETTINGCHANGE` broadcast wouldn't reach it.
 
 use std::ffi::c_void;
 
@@ -34,8 +34,8 @@ pub struct HiddenWindow {
 
 impl HiddenWindow {
     pub fn create() -> windows::core::Result<Self> {
-        // SAFETY: регистрация класса и создание окна на текущем (главном) потоке;
-        // wndproc — extern "system" функция со статическим временем жизни.
+        // SAFETY: registering the class and creating the window on the current (main) thread;
+        // wndproc is an extern "system" function with a static lifetime.
         unsafe {
             let instance = GetModuleHandleW(None)?;
             let class = WNDCLASSW {
@@ -81,7 +81,7 @@ impl HiddenWindow {
 
 impl Drop for HiddenWindow {
     fn drop(&mut self) {
-        // SAFETY: handle'ы созданы в `create` и освобождаются один раз.
+        // SAFETY: the handles were created in `create` and are released once.
         unsafe {
             if let Some(n) = self.notify.take() {
                 let _ = UnregisterDeviceNotification(n);
@@ -91,9 +91,9 @@ impl Drop for HiddenWindow {
     }
 }
 
-/// Попросить уже запущенный экземпляр открыть панель.
+/// Asks the running instance to open the panel.
 pub fn notify_running_instance() {
-    // SAFETY: поиск окна по имени класса и асинхронная отправка сообщения.
+    // SAFETY: finds the window by class name and posts a message asynchronously.
     unsafe {
         if let Ok(hwnd) = FindWindowW(CLASS, None) {
             let _ = AllowSetForegroundWindow(ASFW_ANY);
@@ -103,13 +103,13 @@ pub fn notify_running_instance() {
 }
 
 pub fn is_running() -> bool {
-    // SAFETY: поиск окна по имени класса.
+    // SAFETY: finds the window by class name.
     unsafe { FindWindowW(CLASS, None).is_ok() }
 }
 
-/// Сообщить запущенному экземпляру, что `devices.toml` изменился; `false` — он не запущен.
+/// Tells the running instance that `devices.toml` changed; `false` if it isn't running.
 pub fn notify_settings_changed() -> bool {
-    // SAFETY: поиск окна по имени класса и асинхронная отправка сообщения.
+    // SAFETY: finds the window by class name and posts a message asynchronously.
     unsafe {
         FindWindowW(CLASS, None).is_ok_and(|hwnd| {
             PostMessageW(Some(hwnd), WM_APP_SETTINGS_CHANGED, WPARAM(0), LPARAM(0)).is_ok()
@@ -117,10 +117,10 @@ pub fn notify_settings_changed() -> bool {
     }
 }
 
-/// Попросить запущенный экземпляр открыть окно настроек на разделе `page`
-/// (0 — «Общие», 1 — «Устройства», 2 — «Профили», 3 — «Отчёт»); `false` — он не запущен.
+/// Asks the running instance to open the settings window on section `page`
+/// (0 "General", 1 "Devices", 2 "Profiles", 3 "Advanced"); `false` if it isn't running.
 pub fn request_settings(page: usize) -> bool {
-    // SAFETY: поиск окна по имени класса и асинхронная отправка сообщения.
+    // SAFETY: finds the window by class name and posts a message asynchronously.
     unsafe {
         FindWindowW(CLASS, None).is_ok_and(|hwnd| {
             let _ = AllowSetForegroundWindow(ASFW_ANY);
@@ -129,18 +129,18 @@ pub fn request_settings(page: usize) -> bool {
     }
 }
 
-/// Попросить запущенный экземпляр завершиться штатно (как «Выход» в меню); `false` — он не запущен.
+/// Asks the running instance to exit normally (like the panel's Exit button); `false` if it isn't running.
 pub fn request_quit() -> bool {
-    // SAFETY: поиск окна по имени класса и асинхронная отправка сообщения.
+    // SAFETY: finds the window by class name and posts a message asynchronously.
     unsafe {
         FindWindowW(CLASS, None)
             .is_ok_and(|hwnd| PostMessageW(Some(hwnd), WM_APP_QUIT, WPARAM(0), LPARAM(0)).is_ok())
     }
 }
 
-/// Попросить запущенный экземпляр показать тестовое уведомление; `false` — он не запущен.
+/// Asks the running instance to show a test notification; `false` if it isn't running.
 pub fn request_test_notification() -> bool {
-    // SAFETY: поиск окна по имени класса и асинхронная отправка сообщения.
+    // SAFETY: finds the window by class name and posts a message asynchronously.
     unsafe {
         FindWindowW(CLASS, None).is_ok_and(|hwnd| {
             PostMessageW(Some(hwnd), WM_APP_TEST_NOTIFICATION, WPARAM(0), LPARAM(0)).is_ok()
@@ -161,22 +161,22 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_APP_SHOW_PANEL => app::post(AppEvent::ShowPanel),
         WM_APP_TEST_NOTIFICATION => app::post(AppEvent::TestNotification),
-        // CLI изменил devices.toml — пересканировать и применить настройки.
+        // The CLI changed devices.toml: rescan and apply the settings.
         WM_APP_SETTINGS_CHANGED => app::post(AppEvent::DevicesChanged),
-        WM_APP_QUIT => app::post(AppEvent::Menu(app::MenuCommand::Exit)),
+        WM_APP_QUIT => app::post(AppEvent::Exit),
         WM_APP_SETTINGS => app::post(AppEvent::OpenSettings(Some(wparam.0))),
         _ => {}
     }
-    // SAFETY: стандартная обработка остальных сообщений.
+    // SAFETY: default handling of the other messages.
     unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
 }
 
-/// Смена темы/акцента приходит как `WM_SETTINGCHANGE` с lParam = "ImmersiveColorSet".
+/// A theme/accent change arrives as `WM_SETTINGCHANGE` with lParam = "ImmersiveColorSet".
 fn is_color_set_change(lparam: LPARAM) -> bool {
     if lparam.0 == 0 {
         return false;
     }
-    // SAFETY: для WM_SETTINGCHANGE ненулевой lParam — нуль-терминированная UTF-16 строка.
+    // SAFETY: for WM_SETTINGCHANGE a non-zero lParam is a null-terminated UTF-16 string.
     let s = unsafe { PCWSTR(lparam.0 as *const u16).to_string() };
     s.is_ok_and(|s| s == "ImmersiveColorSet")
 }

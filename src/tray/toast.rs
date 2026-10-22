@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Уведомления через «balloon» иконки в трее (`Shell_NotifyIcon` + `NIF_INFO`).
+//! Notifications through the tray icon's "balloon" (`Shell_NotifyIcon` + `NIF_INFO`).
 //!
-//! Windows 10/11 показывает их как обычные toast-уведомления от имени приложения и кладёт
-//! в центр уведомлений. В отличие от WinRT-toast, не требуется ярлык в меню «Пуск» с AUMID.
+//! Windows 10/11 shows them as normal toast notifications from the app and puts them in the
+//! notification center. Unlike WinRT toasts, no Start menu shortcut with an AUMID is needed.
 
 use std::cell::Cell;
 
@@ -11,8 +11,8 @@ use windows::Win32::UI::Shell::{
     NIF_INFO, NIIF_WARNING, NIM_MODIFY, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 
-/// tray-icon не отдаёт `uID` своей иконки; он берётся из счётчика, начинающегося с 1.
-/// Перебираем первые несколько значений и запоминаем подошедшее.
+/// tray-icon doesn't expose the `uID` of its icon; it comes from a counter starting at 1.
+/// We try the first few values and remember the one that works.
 const MAX_ID: u32 = 8;
 
 thread_local! {
@@ -25,7 +25,7 @@ fn copy_wide(dst: &mut [u16], s: &str) {
         *d = c;
         n += 1;
     }
-    // Последний элемент — завершающий ноль.
+    // The last element is the terminating zero.
     let end = n.min(dst.len() - 1);
     dst[end] = 0;
 }
@@ -47,7 +47,7 @@ pub fn show(hwnd: HWND, title: &str, text: &str) {
         .chain((1..=MAX_ID).filter(|id| Some(*id) != known));
     for id in candidates {
         nid.uID = id;
-        // SAFETY: структура заполнена и живёт до конца вызова; hwnd — окно tray-icon этого процесса.
+        // SAFETY: the structure is filled in and lives until the end of the call; hwnd is this process's tray-icon window.
         if unsafe { Shell_NotifyIconW(NIM_MODIFY, &nid) }.as_bool() {
             ICON_ID.set(Some(id));
             return;

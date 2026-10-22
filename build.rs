@@ -1,6 +1,6 @@
 fn main() {
-    // Переводы интерфейса вшиваются в exe: translations/<язык>/LC_MESSAGES/hubless.po,
-    // исходные строки `@tr(...)` — английские, без контекста.
+    // Interface translations are embedded in the exe: translations/<language>/LC_MESSAGES/hubless.po;
+    // the `@tr(...)` source strings are English, without context.
     let config = slint_build::CompilerConfiguration::new()
         .with_style("fluent".into())
         .with_bundled_translations("translations")

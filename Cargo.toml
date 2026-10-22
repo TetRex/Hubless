@@ -47,7 +47,7 @@ windows = { version = "0.62.2", features = [
 ] }
 
 [profile.release]
-# Plan.md, фаза 6: маленький exe. Время открытия панели (< 150 мс) проверять после смены.
+# Plan.md, phase 6: a small exe. Check the panel opening time (< 150 ms) after changing these.
 opt-level = "z"
 lto = true
 codegen-units = 1

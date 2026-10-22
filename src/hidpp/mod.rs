@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Протокол HID++ (1.0 — ресиверы, 2.0 — устройства).
+//! The HID++ protocol (1.0 for receivers, 2.0 for devices).
 
 pub mod features;
 pub mod message;
@@ -17,15 +17,15 @@ use transport::Transport;
 #[derive(Debug)]
 pub enum Error {
     Hid(hidapi::HidError),
-    /// Нет ответа (устройство за ресивером может спать — это состояние «offline», не сбой).
+    /// No reply (a device behind a receiver may be asleep: that is the "offline" state, not a failure).
     Timeout,
     Disconnected,
     NoHidppCollection,
     Hidpp20(u8),
     Hidpp10(u8),
-    /// Фича отсутствует в таблице устройства.
+    /// The feature is missing from the device's table.
     FeatureMissing(u16),
-    /// Фича из чёрного списка (DFU/обновление прошивки) — никогда не вызывается.
+    /// A blacklisted feature (DFU/firmware update): never called.
     Forbidden(u16),
 }
 
@@ -60,7 +60,7 @@ impl From<hidapi::HidError> for Error {
     }
 }
 
-/// Устройство HID++ 2.0 на транспорте: индекс и кеш таблицы фич на время сессии.
+/// An HID++ 2.0 device on a transport: its index and the feature table cached for the session.
 pub struct Device<'t> {
     pub transport: &'t Transport,
     pub index: u8,
@@ -89,20 +89,20 @@ impl<'t> Device<'t> {
             .ok_or(Error::FeatureMissing(feature_id))
     }
 
-    /// Вызов функции фичи по её ID (индекс берётся из кеша).
+    /// Calls a feature function by the feature's ID (the index comes from the cache).
     pub fn call(&self, feature_id: u16, function: u8, params: &[u8]) -> Result<Report, Error> {
         let index = self.index_of(feature_id)?;
         self.transport.call(self.index, index, function, params)
     }
 
-    /// Выполнить запись в устройство.
+    /// Performs a write to the device.
     pub fn apply(&self, w: &Write) -> Result<Report, Error> {
         let index = self.index_of(w.feature)?;
         self.transport
             .call_as(w.short, self.index, index, w.function, &w.params)
     }
 
-    /// Пакет, который отправит [`Device::apply`] (sw_id показан как 0).
+    /// The packet that [`Device::apply`] will send (sw_id shown as 0).
     pub fn preview(&self, w: &Write) -> Result<Report, Error> {
         let index = self.index_of(w.feature)?;
         self.transport
@@ -110,13 +110,13 @@ impl<'t> Device<'t> {
     }
 }
 
-/// Запись в устройство: строится заранее, чтобы её можно было показать до отправки.
+/// A write to a device: built in advance so that it can be shown before it is sent.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Write {
     pub feature: u16,
     pub function: u8,
     pub params: Vec<u8>,
     pub what: String,
-    /// Отправлять short-отчётом (как G Hub), если параметры помещаются.
+    /// Send as a short report (like G Hub) if the parameters fit.
     pub short: bool,
 }

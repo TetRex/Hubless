@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Device manager: по потоку на устройство (мышь, клавиатура, гарнитура), каждый владеет своим
-//! HID-handle. Гарнитура — свой протокол, её поток в `headset.rs`.
+//! Device manager: one thread per device (mouse, keyboard, headset), each owning its own
+//! HID handle. The headset has its own protocol; its thread is in `headset.rs`.
 //!
-//! Всё событийно: поток спит на канале команд (нет устройства) или на канале транспорта
-//! (есть устройство) до уведомления, команды или таймера — батарея раз в 5 минут,
-//! сон подсветки клавиатуры. Состояние отдаётся в UI через колбэк только при изменении.
+//! Everything is event-driven: a thread sleeps on the command channel (no device) or on the transport
+//! channel (a device is present) until a notification, a command or a timer: the battery every 5 minutes,
+//! keyboard lighting sleep. The state goes to the UI through a callback only when it changes.
 //!
-//! Клавиатура: если в `devices.toml` задана подсветка, Hubless забирает управление ею
-//! (как Solaar) и сам ведёт простой/сон по событиям `onUserActivity`; при выходе возвращает
-//! управление клавиатуре.
+//! Keyboard: if `devices.toml` sets the lighting, Hubless takes over its control
+//! (as Solaar does) and handles idle/sleep itself on `onUserActivity` events; on exit it hands
+//! the control back to the keyboard. Colours of single keys (`0x8081`) are applied as a frame over
+//! the static effect, after taking over and after every wake-up.
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
@@ -18,29 +19,29 @@ use std::time::{Duration, Instant};
 use hidapi::HidApi;
 
 use crate::devices::discovery::{self, Found, TYPE_KEYBOARD, TYPE_MOUSE};
-use crate::devices::mouse;
+use crate::devices::{keyboard, mouse};
 use crate::hidpp::Write;
 use crate::hidpp::features::battery::{self, Battery};
-use crate::hidpp::features::{brightness, dpi, onboard, report_rate, rgb_effects};
+use crate::hidpp::features::{brightness, dpi, onboard, per_key, report_rate, rgb_effects};
 use crate::hidpp::message::{ERROR_10, ERROR_20, Report};
 use crate::hidpp::root::{self, Protocol};
 use crate::hidpp::transport::{Event, Inbound};
 use crate::settings::DeviceSettings;
 
 const BATTERY_POLL: Duration = Duration::from_secs(5 * 60);
-/// WM_DEVICECHANGE приходит пачкой — ждём тишины перед пересканированием.
+/// WM_DEVICECHANGE arrives in bursts, so we wait for quiet before rescanning.
 const RESCAN_DEBOUNCE: Duration = Duration::from_millis(800);
 
-/// Перепроверки спящего устройства после ухода в ожидание (от момента поиска); дальше — только
-/// уведомления ресивера, без опроса.
+/// Rechecks of a sleeping device after it started waiting (counted from discovery); after that only
+/// receiver notifications, no polling.
 const SLEEP_RECHECKS: [Duration; 3] = [
     Duration::from_secs(1),
     Duration::from_secs(3),
     Duration::from_secs(8),
 ];
 
-/// HID++ 1.0 уведомление ресивера о связи с устройством (`sub_id 0x41`);
-/// бит 6 первого параметра — «связь не установлена».
+/// The receiver's HID++ 1.0 notification about the link to a device (`sub_id 0x41`);
+/// bit 6 of the first parameter means "link not established".
 const DEVICE_CONNECTION: u8 = 0x41;
 const LINK_NOT_ESTABLISHED: u8 = 0x40;
 
@@ -67,9 +68,9 @@ pub struct Snapshot {
     pub connected: bool,
     pub wired: bool,
     pub battery: Option<Battery>,
-    /// Текущие значения настроек для панели.
+    /// Current setting values for the panel.
     pub controls: Controls,
-    /// Последняя ошибка записи (показывается в карточке).
+    /// The last write error (shown in the card).
     pub error: Option<String>,
 }
 
@@ -78,39 +79,44 @@ pub enum Controls {
     #[default]
     None,
     Mouse {
-        /// Настройки применяет приложение (host), а не память мыши.
+        /// The app applies the settings (host), not the mouse's memory.
         host: bool,
         dpi: Option<u16>,
-        /// DPI для быстрых кнопок панели — из поддерживаемых мышью.
+        /// DPI values for the panel's quick buttons, from those the mouse supports.
         dpi_presets: Vec<u16>,
-        /// Все значения DPI, которые принимает мышь (по возрастанию) — для ползунка и поля.
+        /// All DPI values the mouse accepts (ascending), for the slider and the field.
         dpi_supported: Vec<u16>,
-        /// Lift-off (`None` — мышь не умеет или значение не распознано).
+        /// Lift-off (`None`: the mouse can't do it, or the value isn't recognized).
         lift_off: Option<crate::settings::LiftOff>,
-        /// Частота опроса, Гц, и быстрые кнопки из поддерживаемых в текущем подключении.
+        /// Polling rate, Hz, and quick buttons from those supported on the current connection.
         rate_hz: Option<u32>,
         rate_presets: Vec<u32>,
-        /// Есть переключатель host/onboard (у мышей со старыми фичами — нет, см.
+        /// There is a host/onboard switch (not for mice with the old features, see
         /// [`mouse::host_mode_supported`]).
         host_mode: bool,
     },
     Keyboard {
         brightness: Option<u16>,
         brightness_range: Option<(u16, u16)>,
-        /// Подсветка, которую держит Hubless (`None` — управляет клавиатура).
+        /// The lighting Hubless holds (`None`: the keyboard controls it).
         lighting: Option<crate::settings::Lighting>,
+        /// Zones of single keys (`0x8081`, the keyboard's zone map); empty if the feature is missing.
+        key_zones: Vec<u8>,
+        /// After how many idle minutes the lighting turns off (`0` = never); `None` means the keyboard
+        /// controls the lighting.
+        lighting_off_min: Option<u16>,
     },
     Headset {
         sidetone: Option<u8>,
-        /// Автоотключение, минуты (0 — никогда).
+        /// Auto power-off, minutes (0 = never).
         auto_off: Option<u8>,
-        /// Встроенный эквалайзер: частота полосы, Гц, и усиление, дБ (`None` — не прочитан).
+        /// The built-in equalizer: band frequency, Hz, and gain, dB (`None`: not read).
         eq: Option<Vec<(u16, i8)>>,
     },
 }
 
-/// Событие фичи, от которой зависят значения в карточке мыши: onboard-профили (смена профиля
-/// или DPI кнопкой), DPI, частота опроса. По Solaar такие события шлёт сама мышь.
+/// An event from a feature the mouse card values depend on: onboard profiles (profile change
+/// or DPI by the button), DPI, polling rate. Per Solaar, the mouse sends such events itself.
 fn settings_event(dev: &crate::hidpp::Device, r: &Report) -> bool {
     [
         onboard::ID,
@@ -123,21 +129,23 @@ fn settings_event(dev: &crate::hidpp::Device, r: &Report) -> bool {
     .any(|id| dev.feature(id).is_some_and(|f| f.index == r.sub_id()))
 }
 
-/// Быстрые кнопки DPI и частоты опроса в карточке мыши (раздел 7 плана).
+/// Quick DPI and polling rate buttons in the mouse card (section 7 of the plan).
 const DPI_PRESETS: [u16; 4] = [400, 800, 1600, 3200];
 const RATE_PRESETS: [u32; 4] = [1000, 2000, 4000, 8000];
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Command {
     Rescan,
-    /// Применить `devices.toml` сейчас (изменение из панели), без пересканирования.
+    /// Applies `devices.toml` now (a change from the panel), without rescanning.
     Apply,
-    /// Гарнитура: sidetone 0–100 (хранится в самой гарнитуре).
+    /// Headset: sidetone 0–100 (stored in the headset itself).
     Sidetone(u8),
-    /// Гарнитура: автоотключение, минуты (0 — никогда).
+    /// Headset: auto power-off, minutes (0 = never).
     AutoOff(u8),
-    /// Гарнитура: эквалайзер — усиление полос, дБ; `true` — сохранить в гарнитуре.
+    /// Headset: equalizer band gains, dB; `true` saves them in the headset.
     Eq([i8; crate::headset_eq::BANDS], bool),
+    /// Keyboard: repaint keys (the `0x8081` zone and a colour); the settings are already saved.
+    Keys(Vec<(u8, [u8; 3])>),
     Quit,
 }
 
@@ -158,11 +166,11 @@ pub struct Handle {
 impl Handle {
     pub fn send(&self, c: Command) {
         for w in &self.workers {
-            w.send(c);
+            w.send(c.clone());
         }
     }
 
-    /// Команда одному устройству.
+    /// A command to one device.
     pub fn send_to(&self, role: Role, c: Command) {
         if let Some(w) = self.workers.iter().find(|w| w.role == role) {
             w.send(c);
@@ -180,7 +188,7 @@ impl WorkerHandle {
 }
 
 impl Drop for Handle {
-    /// Остановить потоки и дождаться их: клавиатура должна успеть вернуть себе подсветку.
+    /// Stops the threads and waits for them: the keyboard must get its lighting back in time.
     fn drop(&mut self) {
         self.send(Command::Quit);
         for w in &mut self.workers {
@@ -219,7 +227,7 @@ pub fn spawn(on_update: impl Fn(Role, Option<Snapshot>) + Send + Sync + 'static)
     handle
 }
 
-/// Поток гарнитуры: без HID++ транспорта, команды читает между чтениями адаптера.
+/// The headset thread: no HID++ transport; it reads commands between adapter reads.
 fn spawn_headset(callback: Callback) -> WorkerHandle {
     let (cmd, rx) = mpsc::channel();
     let on_update = Box::new(move |s| callback(Role::Headset, s));
@@ -242,12 +250,18 @@ enum LightState {
     Sleeping,
 }
 
-/// Подсветка, которой управляет Hubless.
+/// Lighting controlled by Hubless.
 struct Lighting {
-    /// Эффект для каждой зоны, которая его умеет (у G815 — логотип и клавиши).
+    /// The effect for each zone that supports it (on the G815, the logo and the keys).
     effects: Vec<Write>,
+    /// The frame of single key colours over the effect (empty if there are no colours of your own).
+    keys: Vec<Write>,
+    /// After how many seconds the keyboard reports idle (the firmware timer).
     idle_s: u16,
-    sleep_s: u16,
+    /// After how many idle seconds to turn the lighting off (`None`: never): from the settings, by
+    /// default the firmware sleep timer. It can't be earlier than `idle_s`, since we learn about idle from the
+    /// keyboard.
+    off_after_s: Option<u32>,
     state: LightState,
     sleep_at: Option<Instant>,
 }
@@ -262,11 +276,13 @@ struct Worker {
     snapshot: Option<Snapshot>,
     next_poll: Instant,
     lighting: Option<Lighting>,
-    /// Ошибка последней записи — для карточки в панели.
+    /// The last write error, for the panel card.
     error: Option<String>,
-    /// Ресивер со спящим устройством (когда `dev` нет).
+    /// A receiver with a sleeping device (when there is no `dev`).
     sleeping: Option<discovery::Sleeping>,
-    /// Когда устройство ушло в ожидание и сколько перепроверок ([`SLEEP_RECHECKS`]) уже было.
+    /// The single key zone map of the found keyboard (read once).
+    key_zones: Option<Vec<u8>>,
+    /// When the device started waiting and how many rechecks ([`SLEEP_RECHECKS`]) have been done.
     sleep_since: Instant,
     sleep_rechecks: usize,
 }
@@ -285,6 +301,7 @@ impl Worker {
             lighting: None,
             error: None,
             sleeping: None,
+            key_zones: None,
             sleep_since: Instant::now(),
             sleep_rechecks: 0,
         }
@@ -311,7 +328,7 @@ impl Worker {
         tracing::info!(role = ?self.role, "поток устройства остановлен");
     }
 
-    /// Обработать команду; `true` — выход.
+    /// Handles a command; `true` means exit.
     fn command(&mut self, c: Command) -> bool {
         match c {
             Command::Quit => true,
@@ -319,6 +336,10 @@ impl Worker {
                 self.error = None;
                 self.apply_settings();
                 self.publish_controls(true);
+                false
+            }
+            Command::Keys(keys) => {
+                self.paint_keys(&keys);
                 false
             }
             Command::Sidetone(_) | Command::AutoOff(_) | Command::Eq(..) => false,
@@ -337,7 +358,7 @@ impl Worker {
     }
 
     fn rescan(&mut self) {
-        // Устройство на месте — только перечитать и применить настройки (их могли поменять из CLI).
+        // The device is still there: just reread and apply the settings (they may have been changed from the CLI).
         if let Some(d) = &self.dev
             && matches!(root::ping(&d.transport, d.index), Ok(Protocol::V2(..)))
         {
@@ -372,12 +393,12 @@ impl Worker {
             "поиск устройства"
         );
         if let Some(s) = &sleeping {
-            // Устройство спит: слушаем ресивер, проснётся — придёт уведомление о связи.
+            // The device is asleep: listen to the receiver; when it wakes up, a connection notification arrives.
             *self.waker.lock().unwrap_or_else(|e| e.into_inner()) = Some(s.transport.waker());
         }
-        // Спящее устройство — карточка «не подключено» с именем от ресивера (пустое — панель
-        // подставит название типа).
-        // Ресивер не отдал имя — оставить прежнее, если устройство уже было найдено.
+        // A sleeping device: a "not connected" card with the name from the receiver (if empty, the panel
+        // shows the type name).
+        // If the receiver didn't give a name, keep the previous one if the device was already found.
         let known_name = self
             .snapshot
             .as_ref()
@@ -400,6 +421,7 @@ impl Worker {
             Some(f) => {
                 *self.waker.lock().unwrap_or_else(|e| e.into_inner()) = Some(f.transport.waker());
                 self.dev = Some(f);
+                self.key_zones = None;
                 self.apply_settings();
                 self.poll_battery();
                 self.publish_controls(false);
@@ -412,11 +434,12 @@ impl Worker {
         self.dev = None;
         self.sleeping = None;
         self.lighting = None;
+        self.key_zones = None;
         *self.waker.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
-    /// Устройство спит за ресивером: ждать уведомления о связи для его слота или команды.
-    /// `true` — выход.
+    /// The device is asleep behind a receiver: wait for a connection notification for its slot, or a command.
+    /// `true` means exit.
     fn wait_sleeping(&mut self) -> bool {
         let Some(s) = &self.sleeping else {
             return false;
@@ -430,8 +453,8 @@ impl Worker {
         match s.transport.next_event(timeout) {
             Event::Report(r) => {
                 let from_slot = s.slots.contains(&r.device());
-                // «Связь установлена» или любое сообщение самого устройства (не ответ-ошибка
-                // ресивера): уведомление о связи могло прийти до того, как мы начали слушать.
+                // "Link established", or any message from the device itself (not an error reply from the
+                // receiver): the connection notification may have come before we started listening.
                 let online = from_slot
                     && if r.sub_id() == DEVICE_CONNECTION {
                         r.params()[0] & LINK_NOT_ESTABLISHED == 0
@@ -444,8 +467,8 @@ impl Worker {
                 }
             }
             Event::Timeout if recheck_at.is_some_and(|t| t <= Instant::now()) => {
-                // Короткая серия перепроверок после ухода в ожидание: устройство могло
-                // переподключиться (например, после отключения кабеля) раньше, чем мы стали слушать.
+                // A short series of rechecks after starting to wait: the device may have
+                // reconnected (for example, after the cable was unplugged) before we started listening.
                 self.sleep_rechecks += 1;
                 let awake = s
                     .slots
@@ -473,7 +496,7 @@ impl Worker {
         false
     }
 
-    /// Ждать события устройства; `true` — выход.
+    /// Waits for a device event; `true` means exit.
     fn wait_device(&mut self) -> bool {
         let Some(d) = &self.dev else { return false };
         let deadline = match self.lighting.as_ref().and_then(|l| l.sleep_at) {
@@ -527,7 +550,7 @@ impl Worker {
         } else if let Some(active) = rgb_effects::activity_event(&dev, r) {
             self.on_activity(active);
         } else if r.device() == d.index && r.address() & 0x0F == 0 && settings_event(&dev, r) {
-            // Мышь сама сменила DPI, профиль или частоту (кнопкой) — перечитать для панели.
+            // The mouse changed DPI, profile or polling rate by itself (with a button): reread for the panel.
             tracing::debug!(role = ?self.role, ?r, "событие настроек");
             self.publish_controls(false);
         } else if r.sub_id() == DEVICE_CONNECTION && r.device() == d.index {
@@ -544,9 +567,9 @@ impl Worker {
         }
     }
 
-    /// Заряд и связь с устройством. Без фичи батареи (проводная G815, отчёт пользователя
-    /// 2026-10-20) связь проверяется ping'ом: раньше ошибка чтения заряда делала такое
-    /// устройство навсегда неактивным.
+    /// The battery and the link to the device. Without a battery feature (the wired G815, user report
+    /// 2026-10-20) the link is checked with a ping: before, the battery read error made such a
+    /// device inactive forever.
     fn poll_battery(&mut self) {
         self.next_poll = Instant::now() + BATTERY_POLL;
         let Some(d) = &self.dev else { return };
@@ -560,7 +583,7 @@ impl Worker {
         };
         let was_offline = self.snapshot.as_ref().is_some_and(|s| !s.connected);
         if result.is_ok() && was_offline {
-            // Устройство проснулось/переподключилось без уведомления ресивера.
+            // The device woke up/reconnected without a receiver notification.
             self.apply_settings();
         }
         match result {
@@ -568,7 +591,7 @@ impl Worker {
                 s.battery = b;
                 s.connected = true;
             }),
-            // Устройство за ресивером может спать — это «offline», а не ошибка.
+            // A device behind a receiver may be asleep: that is "offline", not an error.
             Err(e) => {
                 tracing::debug!(role = ?self.role, "батарея: {e}");
                 self.update(|s| s.connected = false);
@@ -576,7 +599,7 @@ impl Worker {
         }
     }
 
-    // --- Настройки из devices.toml ---
+    // --- Settings from devices.toml ---
 
     fn apply(&mut self, w: &Write) -> bool {
         let Some(d) = &self.dev else { return false };
@@ -593,9 +616,14 @@ impl Worker {
         }
     }
 
-    /// Перечитать текущие значения настроек и отдать их в панель.
-    /// `force` — отдать снимок, даже если он не изменился (панель откатит свой ползунок).
+    /// Rereads the current setting values and hands them to the panel.
+    /// `force` hands over the snapshot even if it didn't change (the panel rolls back its slider).
     fn publish_controls(&mut self, force: bool) {
+        let key_zones = if self.role == Role::Keyboard {
+            self.key_zones()
+        } else {
+            Vec::new()
+        };
         let Some(d) = &self.dev else { return };
         let dev = d.device();
         let settings = DeviceSettings::load();
@@ -603,7 +631,7 @@ impl Worker {
             Role::Mouse => {
                 let params = dpi::parameters(&dev).ok();
                 let lod_supported = dpi::capabilities(&dev).is_ok_and(|c| c.lift_off);
-                // Старые фичи (0x2201, 0x8060) — у G903 и других мышей постарше.
+                // The old features (0x2201, 0x8060) are on the G903 and other older mice.
                 let old_dpi = mouse::old_dpi(&dev);
                 let old_rate = mouse::old_rate(&dev);
                 let supported = if old_dpi {
@@ -655,6 +683,11 @@ impl Worker {
                 brightness: brightness::current(&dev).ok(),
                 brightness_range: brightness::info(&dev).ok().map(|i| (i.min, i.max)),
                 lighting: self.lighting.as_ref().and(settings.keyboard.lighting),
+                key_zones,
+                lighting_off_min: self
+                    .lighting
+                    .as_ref()
+                    .map(|l| l.off_after_s.map_or(0, |s| (s / 60).max(1) as u16)),
             },
             Role::Headset => Controls::None,
         };
@@ -665,12 +698,12 @@ impl Worker {
             s.error = error;
         });
         if force && self.snapshot == before {
-            // Снимок не изменился, но панель могла показать неприменённое значение — откатить.
+            // The snapshot didn't change, but the panel may have shown an unapplied value: roll it back.
             (self.on_update)(self.role, self.snapshot.clone());
         }
     }
 
-    /// Применить настройки из `devices.toml` (читается заново — его меняет CLI).
+    /// Applies the settings from `devices.toml` (read again, since the CLI changes it).
     fn apply_settings(&mut self) {
         let settings = DeviceSettings::load();
         match self.role {
@@ -678,7 +711,7 @@ impl Worker {
                 let Some(d) = &self.dev else { return };
                 let dev = d.device();
                 let mut writes = mouse::host_writes(&dev, &settings.mouse);
-                // Возврат к onboard: настройки снова берутся из памяти мыши.
+                // Back to onboard: the settings come from the mouse's memory again.
                 if settings.mouse.mode == Some(crate::settings::Mode::Onboard)
                     && mouse::host_mode_supported(&dev)
                     && matches!(onboard::mode(&dev), Ok(onboard::Mode::Host))
@@ -694,7 +727,7 @@ impl Worker {
                     self.apply(&brightness::set(b));
                 }
                 match settings.keyboard.lighting {
-                    Some(l) => self.take_lighting(l),
+                    Some(_) => self.take_lighting(&settings.keyboard),
                     None => self.release_lighting(),
                 }
             }
@@ -702,10 +735,12 @@ impl Worker {
         }
     }
 
-    /// Забрать управление подсветкой и задать эффект всем зонам, которые его умеют.
-    /// Раньше — только зоне 0: у PRO X TKL она одна, а у G815 зона 0 — логотип, и клавиши
-    /// не менялись (отчёт пользователя 2026-10-20).
-    fn take_lighting(&mut self, setting: crate::settings::Lighting) {
+    /// Takes over the lighting control and sets the effect on every zone that supports it.
+    /// Previously only zone 0: the PRO X TKL has just one, but on the G815 zone 0 is the logo, and the keys
+    /// didn't change (user report 2026-10-20).
+    fn take_lighting(&mut self, kb: &crate::settings::KeyboardSettings) {
+        let Some(setting) = kb.lighting else { return };
+        let zones = self.key_zones();
         let Some(d) = &self.dev else { return };
         let dev = d.device();
         let effects: Vec<Write> = rgb_effects::info(&dev)
@@ -724,34 +759,50 @@ impl Worker {
         if !self.apply(&onboard::set_mode(onboard::Mode::Host)) {
             return;
         }
-        // Подсветка могла остаться «спящей» (например, после аварийного выхода). Через ресивер
-        // команда бывает без ответа (проверено 2026-10-19), поэтому её неудача не прерывает захват.
+        // The lighting may have stayed "asleep" (for example, after a crash). Through the receiver the
+        // command sometimes gets no reply (verified 2026-10-19), so its failure doesn't stop the takeover.
         let error = self.error.clone();
         self.apply(&rgb_effects::power_on());
         self.error = error;
-        // Хотя бы одна зона должна принять эффект; отказ отдельной зоны — в лог и карточку.
+        // At least one zone must accept the effect; a refusal by a single zone goes to the log and the card.
         let ok = self.apply(&rgb_effects::claim())
             && effects.iter().filter(|w| self.apply(w)).count() > 0;
         if !ok {
-            // Не оставлять клавиатуру в режиме host без управления подсветкой.
+            // Don't leave the keyboard in host mode without lighting control.
             self.apply(&rgb_effects::release());
             self.apply(&onboard::set_mode(onboard::Mode::Onboard));
             tracing::warn!("захват подсветки не удался — управление возвращено клавиатуре");
             return;
         }
+        // Key colours go after the effect: writing an effect resets the per-key frame.
+        let keys = keyboard::key_writes(kb, &zones);
+        for w in &keys {
+            self.apply(w);
+        }
+        let off_after_s = match kb.lighting_off_min {
+            None => Some(u32::from(sleep_s)),
+            Some(0) => None,
+            Some(m) => Some(u32::from(m) * 60),
+        };
         {
-            tracing::info!(idle_s, sleep_s, "подсветкой управляет Hubless");
+            tracing::info!(
+                idle_s,
+                ?off_after_s,
+                keys = kb.keys.len(),
+                "подсветкой управляет Hubless"
+            );
             self.lighting = Some(Lighting {
                 effects,
+                keys,
                 idle_s,
-                sleep_s,
+                off_after_s,
                 state: LightState::Active,
                 sleep_at: None,
             });
         }
     }
 
-    /// Вернуть управление подсветкой клавиатуре (если оно у нас).
+    /// Hands the lighting control back to the keyboard (if we have it).
     fn release_lighting(&mut self) {
         if self.lighting.take().is_some() {
             self.apply(&rgb_effects::release());
@@ -760,15 +811,25 @@ impl Worker {
         }
     }
 
-    /// Событие `onUserActivity` от клавиатуры. Прошивка шлёт пачку одинаковых событий —
-    /// реагируем только на смену состояния.
+    /// The `onUserActivity` event from the keyboard. The firmware sends a burst of identical events,
+    /// so we react only to state changes.
+    ///
+    /// Idle (the keyboard reports it after `idle_s`) only starts a timer: the lighting turns off
+    /// `off_after_s` after the last key press (`idle_mode` and sleep together, as with the firmware
+    /// timers 300/300, verified 2026-10-19). A key press before that sends nothing; after sleep it's
+    /// wake, takeover, effect and key colours.
     fn on_activity(&mut self, active: bool) {
         let Some(l) = &self.lighting else { return };
-        let (state, idle_s, sleep_s, effects) = (l.state, l.idle_s, l.sleep_s, l.effects.clone());
+        let (state, idle_s, off_after_s) = (l.state, l.idle_s, l.off_after_s);
+        let writes: Vec<Write> = l.effects.iter().chain(&l.keys).cloned().collect();
         if !active && state == LightState::Active {
-            tracing::debug!("подсветка: простой");
-            self.apply(&rgb_effects::idle_mode());
-            let delay = Duration::from_secs(u64::from(sleep_s.saturating_sub(idle_s)));
+            let Some(off_after_s) = off_after_s else {
+                tracing::debug!("подсветка: простой, гашение выключено");
+                return;
+            };
+            let delay =
+                Duration::from_secs(u64::from(off_after_s.saturating_sub(u32::from(idle_s))));
+            tracing::debug!(?delay, "подсветка: простой");
             if let Some(l) = &mut self.lighting {
                 l.state = LightState::Idle;
                 l.sleep_at = Some(Instant::now() + delay);
@@ -780,15 +841,64 @@ impl Worker {
             tracing::debug!("подсветка: активность");
             if state == LightState::Sleeping {
                 self.apply(&rgb_effects::power_on());
-            }
-            self.apply(&rgb_effects::claim());
-            for w in &effects {
-                self.apply(w);
+                self.apply(&rgb_effects::claim());
+                for w in &writes {
+                    self.apply(w);
+                }
             }
             if let Some(l) = &mut self.lighting {
                 l.state = LightState::Active;
                 l.sleep_at = None;
             }
+        }
+    }
+
+    /// The single key zone map (read once per found keyboard; a read error
+    /// isn't remembered, so we read again next time).
+    fn key_zones(&mut self) -> Vec<u8> {
+        if let Some(zones) = &self.key_zones {
+            return zones.clone();
+        }
+        let Some(d) = &self.dev else {
+            return Vec::new();
+        };
+        let dev = d.device();
+        if dev.feature(per_key::ID).is_none() {
+            self.key_zones = Some(Vec::new());
+            return Vec::new();
+        }
+        match per_key::supported_zones(&dev) {
+            Ok(zones) => {
+                tracing::info!(count = zones.len(), "зоны отдельных клавиш");
+                self.key_zones = Some(zones.clone());
+                zones
+            }
+            Err(e) => {
+                tracing::warn!("карта зон клавиш: {e}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Repaints keys while Hubless holds the lighting with the static effect (or with it off).
+    /// The frame for waking up is rebuilt from the saved settings.
+    fn paint_keys(&mut self, keys: &[(u8, [u8; 3])]) {
+        let settings = DeviceSettings::load();
+        if self.lighting.is_none() || keyboard::key_base(settings.keyboard.lighting).is_none() {
+            return;
+        }
+        let zones = self.key_zones();
+        let frame = keyboard::key_writes(&settings.keyboard, &zones);
+        if let Some(l) = &mut self.lighting {
+            l.keys = frame;
+        }
+        let keys: Vec<(u8, [u8; 3])> = keys
+            .iter()
+            .copied()
+            .filter(|(zone, _)| zones.contains(zone))
+            .collect();
+        for w in per_key::frame(&keys) {
+            self.apply(&w);
         }
     }
 
@@ -799,6 +909,7 @@ impl Worker {
             .is_some_and(|l| l.state == LightState::Idle)
         {
             tracing::debug!("подсветка: сон");
+            self.apply(&rgb_effects::idle_mode());
             self.apply(&rgb_effects::power_off());
         }
         if let Some(l) = &mut self.lighting {
@@ -807,7 +918,7 @@ impl Worker {
         }
     }
 
-    // --- Снимок для UI ---
+    // --- Snapshot for the UI ---
 
     fn update(&mut self, f: impl FnOnce(&mut Snapshot)) {
         let Some(d) = &self.dev else { return };

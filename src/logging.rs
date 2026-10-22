@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Логи в `%LOCALAPPDATA%\Hubless\logs` с ежедневной ротацией.
+//! Logs in `%LOCALAPPDATA%\Hubless\logs` with daily rotation.
 
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::EnvFilter;
@@ -8,7 +8,7 @@ use crate::config::{Config, log_dir};
 
 const KEEP_FILES: usize = 7;
 
-/// Переменная окружения переопределяет фильтр из конфига (синтаксис `EnvFilter`).
+/// The environment variable overrides the filter from the config (`EnvFilter` syntax).
 const ENV_FILTER: &str = "HUBLESS_LOG";
 
 pub fn init(cfg: &Config) {
@@ -33,7 +33,7 @@ pub fn init(cfg: &Config) {
         .with_target(true);
     match appender {
         Ok(appender) => builder.with_writer(appender).init(),
-        // Нет доступа к папке логов — пишем в stderr (виден только при запуске из консоли).
+        // No access to the log folder: write to stderr (visible only when started from a console).
         Err(_) => builder.with_writer(std::io::stderr).init(),
     }
 
@@ -42,9 +42,9 @@ pub fn init(cfg: &Config) {
     }));
 }
 
-/// Удалить логи (кнопка в настройках): все файлы папки логов, кроме самого свежего — в него
-/// сейчас пишет этот процесс, и удалённый файл до ротации глотал бы новые записи, — его обнулить.
-/// Возвращает число удалённых и обнулённых файлов.
+/// Deletes the logs (a button in the settings): all files in the log folder except the newest one, which
+/// this process is writing to right now (a deleted file would swallow new entries until rotation), so it is truncated.
+/// Returns the number of deleted and truncated files.
 pub fn clear() -> Result<usize, String> {
     let dir = log_dir();
     let entries = match std::fs::read_dir(&dir) {

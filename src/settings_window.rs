@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Окно настроек: язык интерфейса, автозапуск, порядок и видимость устройств в панели,
-//! профили и их привязка к программам.
+//! The settings window: interface language, start with Windows, battery notifications, order and visibility
+//! of devices in the panel, device settings (with equalizer presets), profiles and binding them
+//! to programs, updates, logs and the device report.
 //!
-//! Создаётся при открытии (меню трея или шестерёнка в панели) и уничтожается при закрытии —
-//! пока окна нет, оно не держит ресурсов. Все действия уходят в [`App`](crate::app) как
-//! [`AppEvent::Settings`]: там же меняются файлы и применяются профили.
+//! It is created when opened (the gear in the panel) and destroyed when closed, so
+//! while there is no window it holds no resources. All actions go to [`App`](crate::app) as
+//! [`AppEvent::Settings`]: that is where files are changed and profiles are applied.
 
 use slint::winit_030::WinitWindowAccessor;
 use slint::winit_030::winit::window::Theme as WinitTheme;
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::app::{self, AppEvent};
-use crate::config::Config;
+use crate::config::{Config, LOW_BATTERY_CHOICES};
 use crate::i18n::{self, Choice, Lang};
 use crate::settings::SettingsFile;
 use crate::state::{AppState, DeviceKind};
@@ -19,26 +20,43 @@ use crate::theme::{Fonts, SystemTheme};
 use crate::tray::autostart;
 use crate::ui;
 
-/// Действие в окне настроек.
+/// An action in the settings window.
 #[derive(Debug)]
 pub enum SettingsAction {
-    /// Индекс в списке языков: 0 — английский, 1 — русский.
+    /// An index in the language list: 0 English, 1 Russian.
     Language(i32),
     Autostart(bool),
-    /// Переставить устройство в разделе «Устройства»: с места и на место (индексы в списке).
+    /// The low battery threshold: an index in [`LOW_BATTERY_CHOICES`].
+    LowBattery(i32),
+    NotifyCharged(bool),
+    /// Check for updates at startup.
+    UpdateOnStart(bool),
+    /// Moves a device in the "Devices" section: from a place to a place (indices in the list).
     MoveDevice(i32, i32),
-    /// Показать (`true`) или скрыть устройство в панели.
+    /// Shows (`true`) or hides a device in the panel.
     ShowDevice(i32, bool),
-    /// Настройки устройства из раздела «Устройства»: host мыши, lift-off (1 medium, 2 high),
-    /// автоотключение гарнитуры, минуты.
+    /// Device settings from the "Devices" section: mouse host mode, lift-off (1 medium, 2 high),
+    /// headset auto power-off in minutes.
     MouseHost(bool),
     LiftOff(i32),
     AutoOff(i32),
-    /// Эквалайзер гарнитуры: полоса и усиление, дБ; сброс в ровную кривую.
+    /// Headset equalizer: band and gain, dB.
     EqBand(i32, i32),
-    EqReset,
+    /// An equalizer preset by its index in the list; save the current curve as your own preset;
+    /// delete your own preset (index in the list).
+    EqPreset(i32),
+    SaveEqPreset(String),
+    DeleteEqPreset(i32),
+    /// Turn the keyboard lighting off after this many idle minutes (`0` = never).
+    LightingOff(i32),
+    /// The keyboard layout in the colour editor: 0 ANSI, 1 ISO.
+    KeyLayout(i32),
+    /// The colour of the key under a point (layout units); `None` removes its own colour (eraser).
+    PaintKey(f32, f32, Option<[u8; 3]>),
+    /// All keys in one colour; `None` removes all their own colours.
+    FillKeys(Option<[u8; 3]>),
     Select(i32),
-    /// Новый профиль — копия действующего, имя «Профиль N» подбирается само.
+    /// A new profile is a copy of the active one; the name "Profile N" is picked automatically.
     Create,
     Rename(i32, String),
     Delete(i32),
@@ -47,7 +65,7 @@ pub enum SettingsAction {
     RemoveProgram(i32, String),
     RefreshRunning,
     CreateReport,
-    /// Дополнительно: проверить обновления, открыть страницу новой версии, логи.
+    /// Check for updates, open the new version's page ("General"); logs ("Advanced").
     CheckUpdates,
     OpenUpdate,
     OpenLogs,
@@ -58,8 +76,8 @@ pub enum SettingsAction {
     Closed,
 }
 
-/// Язык по индексу списка в окне (English, Русский) и обратно. Пока язык не выбран
-/// (`auto`), в списке показывается тот, что взят у Windows; выбор закрепляет язык.
+/// The language by its index in the window's list (English, Russian) and back. Until a language is chosen
+/// (`auto`), the list shows the one taken from Windows; choosing one fixes the language.
 pub fn choice_of(index: i32) -> Choice {
     match index {
         1 => Choice::Fixed(Lang::Ru),
@@ -74,7 +92,7 @@ fn index_of(choice: Choice) -> i32 {
     }
 }
 
-/// Имя нового профиля: «Профиль N» с первым свободным N.
+/// The name of a new profile: "Profile N" with the first free N.
 pub fn new_profile_name(existing: &[String]) -> String {
     let base = i18n::tr("Profile {}");
     (2..)
@@ -83,7 +101,7 @@ pub fn new_profile_name(existing: &[String]) -> String {
         .expect("бесконечный ряд имён")
 }
 
-/// Отображаемое имя профиля: первый — «Обычный» на языке интерфейса.
+/// The display name of a profile: the first one is "Default" in the interface language.
 pub fn display_name(index: usize, name: &str) -> String {
     if index == 0 {
         i18n::tr("Default").to_owned()
@@ -95,20 +113,22 @@ pub fn display_name(index: usize, name: &str) -> String {
 #[derive(Default)]
 pub struct SettingsController {
     ui: Option<ui::SettingsWindow>,
-    /// Запущенные программы для привязки (обновляются при открытии и по кнопке).
+    /// Running programs for binding (refreshed when opened and with the button).
     running: Vec<String>,
-    /// Последний отчёт об устройствах (живёт, пока открыто окно).
+    /// The last device report (lives while the window is open).
     report: Option<crate::report::Report>,
-    /// Найденная новая версия (страница релиза для кнопки «Скачать»).
+    /// The new version that was found (the release page for the "Download" button). It lives without the window
+    /// too: the check at startup may find it.
     update: Option<crate::update::Release>,
-    /// Ползунки эквалайзера двигают: кривую из гарнитуры в них не подставлять, иначе ползунок
-    /// откатывается к последнему записанному значению, а подстановка порождает новую запись.
+    /// The equalizer sliders are being moved: don't put the curve from the headset into them, otherwise a slider
+    /// jumps back to the last written value, and putting a value in triggers a new write.
     eq_editing: bool,
 }
 
 impl SettingsController {
-    /// Открыть (или поднять) окно; `page` — раздел: 0 «Общие», 1 «Устройства», 2 «Профили»,
-    /// 3 «Отчёт об устройствах»; 4 — «Устройства» с раскрытым эквалайзером гарнитуры.
+    /// Opens (or raises) the window; `page` is the section: 0 "General", 1 "Devices", 2 "Profiles",
+    /// 3 "Advanced"; 4 and 5 are "Devices" with the headset (equalizer) or the keyboard
+    /// (key colours) expanded.
     pub fn open(&mut self, theme: SystemTheme, state: &AppState, page: Option<usize>) {
         if self.ui.is_none() {
             match ui::SettingsWindow::new() {
@@ -126,21 +146,24 @@ impl SettingsController {
         }
         let Some(w) = &self.ui else { return };
         if let Some(page) = page {
-            // 4 — «Устройства» с раскрытыми настройками гарнитуры (там эквалайзер).
-            w.set_page(if page == 4 { 1 } else { page.min(3) as i32 });
+            w.set_page(if page >= 4 { 1 } else { page as i32 });
         }
         w.set_ghub_running(crate::report::ghub_running());
         self.set_theme(theme);
+        self.show_update();
         self.refresh(None);
         self.update_devices(state);
-        // После списка устройств: его первое заполнение сбрасывает раскрытую строку.
-        if page == Some(4)
-            && let Some(w) = &self.ui
-        {
+        // After the device list: filling it the first time resets the expanded row.
+        let open = match page {
+            Some(4) => Some(DeviceKind::Headset),
+            Some(5) => Some(DeviceKind::Keyboard),
+            _ => None,
+        };
+        if let (Some(kind), Some(w)) = (open, &self.ui) {
             let row = state
                 .ordered()
                 .iter()
-                .position(|d| d.kind == DeviceKind::Headset)
+                .position(|d| d.kind == kind)
                 .map_or(-1, |i| i as i32);
             w.set_open_row(row);
         }
@@ -152,16 +175,15 @@ impl SettingsController {
         w.window().with_winit_window(|win| win.focus_window());
     }
 
-    /// Закрыть и уничтожить окно.
+    /// Closes and destroys the window.
     pub fn close(&mut self) {
         if let Some(w) = self.ui.take() {
             let _ = w.hide();
         }
         self.report = None;
-        self.update = None;
     }
 
-    /// Начата проверка обновлений: кнопка показывает «Проверка…».
+    /// The update check has started: the button shows "Checking…".
     pub fn update_started(&self) {
         if let Some(w) = &self.ui {
             w.set_update_busy(true);
@@ -170,31 +192,52 @@ impl SettingsController {
     }
 
     pub fn update_finished(&mut self, result: Result<crate::update::Release, String>) {
-        let Some(w) = &self.ui else { return };
-        w.set_update_busy(false);
         let current = env!("CARGO_PKG_VERSION");
-        self.update = None;
         let status = match result {
             Ok(r) if crate::update::is_newer(&r.version, current) => {
-                let text = i18n::tr("Version {} is available").replace("{}", &r.version);
                 self.update = Some(r);
-                text
+                None
             }
-            Ok(_) => i18n::tr("You have the latest version").to_owned(),
+            Ok(_) => {
+                self.update = None;
+                Some(i18n::tr("You have the latest version"))
+            }
             Err(e) => {
                 tracing::warn!("проверка обновлений: {e}");
-                i18n::tr("Couldn't check for updates").to_owned()
+                Some(i18n::tr("Couldn't check for updates"))
             }
         };
-        w.set_update_url(
-            self.update
-                .as_ref()
-                .map_or(SharedString::new(), |r| r.url.as_str().into()),
-        );
-        w.set_update_status(status.into());
+        let Some(w) = &self.ui else { return };
+        w.set_update_busy(false);
+        match status {
+            Some(text) => {
+                w.set_update_url(SharedString::new());
+                w.set_update_status(text.into());
+            }
+            None => self.show_update(),
+        }
     }
 
-    /// Страница найденной новой версии.
+    /// The check at startup found a new version: the "Download" button appears when the window opens.
+    pub fn found_update(&mut self, release: crate::update::Release) {
+        self.update = Some(release);
+        self.show_update();
+    }
+
+    /// The new version that was found, in the "General" section (a line and the "Download" button).
+    fn show_update(&self) {
+        let (Some(w), Some(r)) = (&self.ui, &self.update) else {
+            return;
+        };
+        w.set_update_url(r.url.as_str().into());
+        w.set_update_status(
+            i18n::tr("Version {} is available")
+                .replace("{}", &r.version)
+                .into(),
+        );
+    }
+
+    /// The page of the new version that was found.
     pub fn update_url(&self) -> Option<&str> {
         self.update.as_ref().map(|r| r.url.as_str())
     }
@@ -205,7 +248,7 @@ impl SettingsController {
         }
     }
 
-    /// Начат сбор отчёта: кнопка показывает «Сбор…».
+    /// Collecting the report has started: the button shows "Collecting…".
     pub fn report_started(&self) {
         if let Some(w) = &self.ui {
             w.set_report_busy(true);
@@ -262,7 +305,7 @@ impl SettingsController {
         self.refresh(None);
     }
 
-    /// Перечитать файлы и обновить окно; `select` — выбрать профиль по индексу.
+    /// Rereads the files and updates the window; `select` selects a profile by index.
     pub fn refresh(&self, select: Option<usize>) {
         let Some(w) = &self.ui else { return };
         let file = SettingsFile::load();
@@ -296,7 +339,7 @@ impl SettingsController {
                 }
             })
             .collect();
-        // Первый пункт списка — подсказка, выбор остальных добавляет программу.
+        // The first list item is a hint; choosing any of the others adds that program.
         let running: Vec<SharedString> =
             std::iter::once(SharedString::from(i18n::tr("Add a running program…")))
                 .chain(self.running.iter().map(Into::into))
@@ -307,6 +350,15 @@ impl SettingsController {
         let config = Config::load().0;
         w.set_language(index_of(Choice::parse(&config.language)));
         w.set_autostart(autostart::is_enabled());
+        let percent = config.low_battery_percent();
+        let choice = LOW_BATTERY_CHOICES
+            .iter()
+            .position(|&p| p == percent)
+            .or_else(|| LOW_BATTERY_CHOICES.iter().position(|&p| p > percent))
+            .unwrap_or(LOW_BATTERY_CHOICES.len() - 1);
+        w.set_low_battery(choice as i32);
+        w.set_notify_charged(config.notify_charged);
+        w.set_update_on_start(config.check_updates);
         w.set_error(SharedString::new());
     }
 
@@ -316,8 +368,8 @@ impl SettingsController {
         }
     }
 
-    /// Раздел «Устройства»: все устройства в порядке панели. Строки меняются на месте —
-    /// модель живёт, и перетаскивание не обрывается, если в это время пришёл заряд.
+    /// The "Devices" section: all devices in the panel's order. Rows are changed in place, so
+    /// the model lives and a drag isn't interrupted if a battery update arrives meanwhile.
     pub fn update_devices(&self, state: &AppState) {
         let Some(w) = &self.ui else { return };
         let rows: Vec<ui::DeviceRow> = state
@@ -336,6 +388,8 @@ impl SettingsController {
             })
             .collect();
         update_eq(w, state, self.eq_editing);
+        update_eq_presets(w, state);
+        update_keys(w, state);
         let model = w.get_devices();
         match model.as_any().downcast_ref::<VecModel<ui::DeviceRow>>() {
             Some(current) if current.row_count() == rows.len() => {
@@ -346,19 +400,19 @@ impl SettingsController {
                 }
             }
             _ => {
-                // Список устройств поменялся — раскрытая строка могла оказаться чужой.
+                // The device list changed: the expanded row may now belong to another device.
                 w.set_open_row(-1);
                 w.set_devices(ModelRc::new(VecModel::from(rows)));
             }
         }
     }
 
-    /// Ползунки эквалайзера двигают (до сохранения кривой в гарнитуре).
+    /// The equalizer sliders are being moved (until the curve is saved in the headset).
     pub fn set_eq_editing(&mut self, editing: bool) {
         self.eq_editing = editing;
     }
 
-    /// Поставить ползунки эквалайзера на заданную кривую (кнопка «Ровно»).
+    /// Puts the equalizer sliders on the given curve (a preset was chosen).
     pub fn show_eq_gains(&self, gains: &[i8]) {
         let Some(w) = &self.ui else { return };
         let model = w.get_eq_bands();
@@ -370,7 +424,7 @@ impl SettingsController {
         }
     }
 
-    /// Перестановка устройства обработана: строки списка встают на места.
+    /// The device move has been handled: the list rows settle into place.
     pub fn finish_drop(&self) {
         if let Some(w) = &self.ui {
             w.invoke_finish_drop();
@@ -378,9 +432,9 @@ impl SettingsController {
     }
 }
 
-/// Раздел «Эквалайзер»: полосы гарнитуры. Строки меняются на месте, и только изменившиеся;
-/// пока ползунки двигают (`editing`), значения из гарнитуры не подставляются — только появление
-/// и пропажа гарнитуры.
+/// The "Equalizer" section: the headset's bands. Rows are changed in place, and only those that changed;
+/// while the sliders are being moved (`editing`), values from the headset aren't put in, only the headset
+/// appearing and disappearing.
 fn update_eq(w: &ui::SettingsWindow, state: &AppState, editing: bool) {
     let bands: Vec<ui::EqBand> = state
         .devices
@@ -411,13 +465,99 @@ fn update_eq(w: &ui::SettingsWindow, state: &AppState, editing: bool) {
     }
 }
 
-/// Настройки устройства для строки «Устройств» (у отключённого — нет).
+/// The list of equalizer presets and the selected one, by the headset's curve (in the state it is updated
+/// right away on an edit, before the headset replies).
+fn update_eq_presets(w: &ui::SettingsWindow, state: &AppState) {
+    let Some(gains) = state.headset_eq() else {
+        w.set_eq_presets(ModelRc::default());
+        return;
+    };
+    let presets = crate::eq_presets::all(&state.eq_presets);
+    let (names, index) = crate::eq_presets::choices(&presets, &gains);
+    let names: Vec<SharedString> = names.iter().map(Into::into).collect();
+    let current = w.get_eq_presets();
+    if current.row_count() != names.len()
+        || names
+            .iter()
+            .enumerate()
+            .any(|(i, n)| current.row_data(i).as_ref() != Some(n))
+    {
+        w.set_eq_presets(ModelRc::new(VecModel::from(names)));
+    }
+    w.set_eq_preset(index as i32);
+    w.set_eq_preset_custom(presets.get(index).is_some_and(|p| p.custom));
+}
+
+/// The key colour editor: the layout keys the keyboard has, with colours (their own or the
+/// effect's), and your own palette colours. Rows are changed in place, so a brush stroke isn't interrupted.
+fn update_keys(w: &ui::SettingsWindow, state: &AppState) {
+    let custom: Vec<slint::Color> = state
+        .colors
+        .iter()
+        .map(|&[r, g, b]| slint::Color::from_rgb_u8(r, g, b))
+        .collect();
+    let current = w.get_custom_colors();
+    if current.row_count() != custom.len()
+        || custom
+            .iter()
+            .enumerate()
+            .any(|(i, c)| current.row_data(i).as_ref() != Some(c))
+    {
+        w.set_custom_colors(ModelRc::new(VecModel::from(custom)));
+    }
+    let (keys, base) = state.keyboard_keys().unwrap_or_default();
+    w.set_keys_active(base.is_some());
+    w.set_key_layout(i32::from(
+        state.key_layout == crate::keyboard_layout::Layout::Iso,
+    ));
+    w.set_active_profile(
+        state
+            .profiles
+            .get(state.profile)
+            .map_or(SharedString::new(), Into::into),
+    );
+    let caps: Vec<ui::KeyCap> = keys
+        .iter()
+        .map(|k| {
+            let own = state.key_colors.get(k.name).copied();
+            let color = own.or(base);
+            let [r, g, b] = color.unwrap_or_default();
+            // A bright key gets a dark label (brightness per ITU-R BT.601).
+            let luma = 299 * u32::from(r) + 587 * u32::from(g) + 114 * u32::from(b);
+            ui::KeyCap {
+                label: k.label.into(),
+                x: k.x,
+                y: k.y,
+                w: k.w,
+                h: k.h,
+                color: slint::Color::from_rgb_u8(r, g, b),
+                lit: color.is_some(),
+                custom: own.is_some(),
+                dark_text: luma > 140_000,
+            }
+        })
+        .collect();
+    let model = w.get_keys();
+    match model.as_any().downcast_ref::<VecModel<ui::KeyCap>>() {
+        Some(current) if current.row_count() == caps.len() => {
+            for (i, cap) in caps.into_iter().enumerate() {
+                if current.row_data(i).as_ref() != Some(&cap) {
+                    current.set_row_data(i, cap);
+                }
+            }
+        }
+        _ => w.set_keys(ModelRc::new(VecModel::from(caps))),
+    }
+}
+
+/// The device settings for a "Devices" row (none for a disconnected device).
 fn device_options(d: &crate::state::DeviceState) -> ui::DeviceRow {
     use crate::devices::manager::Controls;
     use crate::settings::LiftOff;
     let mut row = ui::DeviceRow {
         lift_off: -1,
         auto_off: -1,
+        light_off: -1,
         ..Default::default()
     };
     if !d.connected {
@@ -442,12 +582,20 @@ fn device_options(d: &crate::state::DeviceState) -> ui::DeviceRow {
         Controls::Headset { auto_off, .. } => {
             row.auto_off = auto_off.map_or(-1, i32::from);
         }
+        Controls::Keyboard {
+            key_zones,
+            lighting_off_min,
+            ..
+        } => {
+            row.per_key = !key_zones.is_empty();
+            row.light_off = lighting_off_min.map_or(-1, i32::from);
+        }
         _ => {}
     }
     row
 }
 
-/// «80 Hz», «2.2 kHz» на языке интерфейса.
+/// "80 Hz", "2.2 kHz" in the interface language.
 fn band_label(freq: u16) -> String {
     if freq >= 1000 {
         let khz = f32::from(freq) / 1000.0;
@@ -466,13 +614,30 @@ fn wire(w: &ui::SettingsWindow) {
     let post = |a: SettingsAction| app::post(AppEvent::Settings(a));
     w.on_set_language(move |i| post(SettingsAction::Language(i)));
     w.on_set_autostart(move |on| post(SettingsAction::Autostart(on)));
+    let choices: Vec<SharedString> = LOW_BATTERY_CHOICES
+        .iter()
+        .map(|p| format!("{p}%").into())
+        .collect();
+    w.set_low_battery_choices(ModelRc::new(VecModel::from(choices)));
+    w.on_set_low_battery(move |i| post(SettingsAction::LowBattery(i)));
+    w.on_set_notify_charged(move |on| post(SettingsAction::NotifyCharged(on)));
+    w.on_set_update_on_start(move |on| post(SettingsAction::UpdateOnStart(on)));
     w.on_move_device(move |from, to| post(SettingsAction::MoveDevice(from, to)));
     w.on_show_device(move |i, on| post(SettingsAction::ShowDevice(i, on)));
     w.on_set_mouse_host(move |on| post(SettingsAction::MouseHost(on)));
     w.on_set_lift_off(move |v| post(SettingsAction::LiftOff(v)));
     w.on_set_auto_off(move |m| post(SettingsAction::AutoOff(m)));
+    w.on_set_light_off(move |m| post(SettingsAction::LightingOff(m)));
     w.on_set_eq_band(move |i, gain| post(SettingsAction::EqBand(i, gain)));
-    w.on_reset_eq(move || post(SettingsAction::EqReset));
+    w.on_select_eq_preset(move |i| post(SettingsAction::EqPreset(i)));
+    w.on_save_eq_preset(move |name| post(SettingsAction::SaveEqPreset(name.into())));
+    w.on_delete_eq_preset(move |i| post(SettingsAction::DeleteEqPreset(i)));
+    w.set_key_layout_width(crate::keyboard_layout::WIDTH);
+    w.set_key_layout_height(crate::keyboard_layout::HEIGHT);
+    let rgb = |c: slint::Color, erase: bool| (!erase).then(|| [c.red(), c.green(), c.blue()]);
+    w.on_paint_key(move |x, y, c, erase| post(SettingsAction::PaintKey(x, y, rgb(c, erase))));
+    w.on_fill_keys(move |c, erase| post(SettingsAction::FillKeys(rgb(c, erase))));
+    w.on_set_key_layout(move |i| post(SettingsAction::KeyLayout(i)));
     w.set_eq_min(i32::from(*crate::headset_eq::GAIN_RANGE.start()));
     w.set_eq_max(i32::from(*crate::headset_eq::GAIN_RANGE.end()));
     w.on_select_profile(move |i| post(SettingsAction::Select(i)));

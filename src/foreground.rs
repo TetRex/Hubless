@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Слежение за активным окном для автопереключения профилей (Plan.md, фаза 6).
+//! Tracking the foreground window for automatic profile switching (Plan.md, phase 6).
 //!
-//! `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` вне контекста: Windows вызывает колбэк на главном
-//! потоке из его цикла сообщений и только при смене активного окна — без опроса. Окна самого
-//! Hubless пропускаются, чтобы открытие панели не сбрасывало игровой профиль.
+//! `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` out of context: Windows calls the callback on the main
+//! thread from its message loop, and only when the foreground window changes, with no polling. Windows of
+//! Hubless itself are skipped so that opening the panel doesn't reset a game profile.
 
 use windows::Win32::Foundation::{CloseHandle, HWND, LPARAM};
 use windows::Win32::System::Threading::{
@@ -18,13 +18,13 @@ use windows::core::{BOOL, PWSTR};
 
 use crate::app::{self, AppEvent};
 
-/// Хук активного окна; снимается при drop.
+/// The foreground window hook; removed on drop.
 pub struct ForegroundHook(HWINEVENTHOOK);
 
 impl ForegroundHook {
     pub fn install() -> Option<Self> {
-        // SAFETY: колбэк — extern "system" функция со статическим временем жизни; хук ставится
-        // на главном потоке, у которого есть цикл сообщений (event loop Slint).
+        // SAFETY: the callback is an extern "system" function with a static lifetime; the hook is installed
+        // on the main thread, which has a message loop (the Slint event loop).
         let hook = unsafe {
             SetWinEventHook(
                 EVENT_SYSTEM_FOREGROUND,
@@ -46,7 +46,7 @@ impl ForegroundHook {
 
 impl Drop for ForegroundHook {
     fn drop(&mut self) {
-        // SAFETY: хук получен в `install` и снимается один раз.
+        // SAFETY: the hook came from `install` and is removed once.
         let _ = unsafe { UnhookWinEvent(self.0) };
     }
 }
@@ -65,8 +65,8 @@ unsafe extern "system" fn on_foreground(
     }
 }
 
-/// Системные процессы-обёртки с окнами (приложения Store, поиск, меню «Пуск»): привязать к ним
-/// профиль бессмысленно — активное окно у них всегда чужое.
+/// System wrapper processes with windows (Store apps, search, the Start menu): binding a profile
+/// to them makes no sense, since their foreground window always belongs to another app.
 const SYSTEM_HOSTS: &[&str] = &[
     "applicationframehost.exe",
     "shellexperiencehost.exe",
@@ -75,12 +75,12 @@ const SYSTEM_HOSTS: &[&str] = &[
     "textinputhost.exe",
 ];
 
-/// Программы с видимыми окнами верхнего уровня (имена exe без повторов, по алфавиту), кроме
-/// самого Hubless, — для привязки профилей в окне настроек.
+/// Programs with visible top-level windows (exe names without repeats, sorted), except
+/// Hubless itself, for binding profiles in the settings window.
 pub fn running_apps() -> Vec<String> {
     let mut windows: Vec<HWND> = Vec::new();
-    // SAFETY: колбэк получает указатель на локальный Vec через lParam и работает синхронно,
-    // внутри вызова EnumWindows.
+    // SAFETY: the callback gets a pointer to a local Vec through lParam and runs synchronously,
+    // inside the EnumWindows call.
     unsafe {
         let _ = EnumWindows(Some(collect_window), LPARAM((&raw mut windows) as isize));
     }
@@ -89,7 +89,7 @@ pub fn running_apps() -> Vec<String> {
         .into_iter()
         .filter(|&h| {
             let mut pid = 0u32;
-            // SAFETY: запись pid в локальную переменную.
+            // SAFETY: writes the pid into a local variable.
             unsafe { GetWindowThreadProcessId(h, Some(&mut pid)) };
             pid != own
         })
@@ -102,33 +102,33 @@ pub fn running_apps() -> Vec<String> {
 }
 
 unsafe extern "system" fn collect_window(hwnd: HWND, list: LPARAM) -> BOOL {
-    // SAFETY: только чтение свойств окна; окна без заголовка, скрытые и принадлежащие другим
-    // окнам (диалоги, подсказки) пропускаются.
+    // SAFETY: only reads window properties; windows without a title, hidden ones and ones owned by other
+    // windows (dialogs, tooltips) are skipped.
     let wanted = unsafe {
         IsWindowVisible(hwnd).as_bool()
             && GetWindowTextLengthW(hwnd) > 0
             && GetWindow(hwnd, GW_OWNER).is_err()
     };
     if wanted {
-        // SAFETY: lParam — указатель на Vec из `running_apps`, живой на время EnumWindows.
+        // SAFETY: lParam is a pointer to the Vec from `running_apps`, alive for the duration of EnumWindows.
         unsafe { (*(list.0 as *mut Vec<HWND>)).push(hwnd) };
     }
     BOOL(1)
 }
 
-/// Имя exe процесса окна (без пути, в нижнем регистре).
+/// The exe name of the window's process (without the path, lowercase).
 fn exe_of(hwnd: HWND) -> Option<String> {
     let mut pid = 0u32;
-    // SAFETY: запись pid в локальную переменную; окно может уже не существовать — тогда pid = 0.
+    // SAFETY: writes the pid into a local variable; the window may no longer exist, and then pid = 0.
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
     if pid == 0 {
         return None;
     }
-    // SAFETY: открываем процесс только на чтение имени; handle закрывается ниже.
+    // SAFETY: the process is opened only to read its name; the handle is closed below.
     let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
     let mut buf = [0u16; 1024];
     let mut len = buf.len() as u32;
-    // SAFETY: буфер и его длина — локальные.
+    // SAFETY: the buffer and its length are local.
     let ok = unsafe {
         QueryFullProcessImageNameW(
             process,
@@ -137,7 +137,7 @@ fn exe_of(hwnd: HWND) -> Option<String> {
             &mut len,
         )
     };
-    // SAFETY: handle получен выше.
+    // SAFETY: the handle was obtained above.
     let _ = unsafe { CloseHandle(process) };
     ok.ok()?;
     let path = String::from_utf16_lossy(&buf[..len as usize]);

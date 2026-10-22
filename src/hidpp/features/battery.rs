@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Батарея: `0x1004` Unified Battery или старая `0x1001` Battery Voltage (раскладки — по Solaar).
+//! Battery: `0x1004` Unified Battery or the old `0x1001` Battery Voltage (layouts per Solaar).
 //!
 //! - `0x1004` fn1: `[state_of_charge %, level flags, charging status, external power]`;
-//! - `0x1001` fn0: `[напряжение мВ (2), флаги]`, процент — оценка по кривой разряда (G903 и
-//!   другие мыши постарше, отчёт пользователя 2026-10-20).
+//! - `0x1001` fn0: `[voltage mV (2), flags]`; the percentage is an estimate from the discharge curve (G903 and
+//!   other older mice, user report 2026-10-20).
 //!
-//! Статус приходит и событием (функция 0, sw_id 0) при изменении заряда.
+//! The status also arrives as an event (function 0, sw_id 0) when the charge changes.
 
 use crate::hidpp::message::Report;
 use crate::hidpp::{Device, Error};
@@ -49,7 +49,7 @@ impl ChargeState {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Battery {
     pub percent: u8,
-    /// Флаги уровня: 1 critical, 2 low, 4 good, 8 full.
+    /// Level flags: 1 critical, 2 low, 4 good, 8 full.
     pub level: u8,
     pub charging: ChargeState,
     pub external_power: bool,
@@ -64,12 +64,12 @@ fn parse(p: &[u8]) -> Battery {
     }
 }
 
-// Перенесено из Solaar (`hidpp20.py`: decipher_battery_voltage, estimate_battery_level_percentage).
+// Ported from Solaar (`hidpp20.py`: decipher_battery_voltage, estimate_battery_level_percentage).
 // Copyright (C) 2012-2013 Daniel Pavel
 // Copyright (C) 2014-2024 Solaar Contributors <https://pwr-solaar.github.io/Solaar/>
-// Solaar распространяется под GPL-2.0-or-later.
+// Solaar is distributed under GPL-2.0-or-later.
 
-/// Напряжение (мВ) → процент: точки кривой разряда литиевого аккумулятора.
+/// Voltage (mV) → percentage: points of a lithium battery's discharge curve.
 const VOLTAGE_CURVE: [(u16, u8); 13] = [
     (4186, 100),
     (4067, 90),
@@ -86,7 +86,7 @@ const VOLTAGE_CURVE: [(u16, u8); 13] = [
     (3500, 0),
 ];
 
-/// Оценка заряда по напряжению: линейно между точками кривой.
+/// Charge estimate from voltage: linear between the curve points.
 pub fn percent_from_voltage(mv: u16) -> u8 {
     if mv >= VOLTAGE_CURVE[0].0 {
         return 100;
@@ -101,8 +101,8 @@ pub fn percent_from_voltage(mv: u16) -> u8 {
     0
 }
 
-/// `0x1001`: `[мВ (2), флаги]`; бит 7 — внешнее питание, биты 0–1 при нём: 0 — заряжается,
-/// 1 — заряжен, 2 — не заряжается.
+/// `0x1001`: `[mV (2), flags]`; bit 7 is external power, and with it bits 0–1: 0 charging,
+/// 1 charged, 2 not charging.
 fn parse_voltage(p: &[u8]) -> Battery {
     let mv = u16::from_be_bytes([p[0], p[1]]);
     let flags = p[2];
@@ -121,7 +121,7 @@ fn parse_voltage(p: &[u8]) -> Battery {
     }
 }
 
-// Конец перенесённого фрагмента.
+// End of the ported fragment.
 
 pub fn status(dev: &Device) -> Result<Battery, Error> {
     if dev.feature(ID).is_none() && dev.feature(VOLTAGE_ID).is_some() {
@@ -132,7 +132,7 @@ pub fn status(dev: &Device) -> Result<Battery, Error> {
     Ok(parse(dev.call(ID, GET_STATUS, &[])?.params()))
 }
 
-/// Событие изменения заряда от устройства (функция 0, sw_id 0).
+/// A battery change event from the device (function 0, sw_id 0).
 pub fn from_event(dev: &Device, r: &Report) -> Option<Battery> {
     let is_event = |id| {
         dev.feature(id).is_some_and(|f| {
@@ -160,7 +160,7 @@ mod tests {
         assert_eq!(percent_from_voltage(3835), 55);
         assert_eq!(percent_from_voltage(3500), 0);
         assert_eq!(percent_from_voltage(3000), 0);
-        let b = parse_voltage(&[0x0E, 0xE3, 0x80]); // 3811 мВ, на зарядке
+        let b = parse_voltage(&[0x0E, 0xE3, 0x80]); // 3811 mV, charging
         assert_eq!(
             (b.percent, b.charging, b.external_power),
             (50, ChargeState::Charging, true)

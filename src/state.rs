@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Общая модель состояния устройств — источник данных для панели и трея.
+//! The shared device state model: the data source for the panel and the tray.
 
+use std::collections::BTreeMap;
+
+use crate::config::DEFAULT_LOW_BATTERY;
 use crate::i18n::tr;
-use crate::settings::PanelLayout;
+use crate::settings::{EqPreset, PanelLayout};
 
-/// Порог низкого заряда (индикатор на иконке, уведомление).
-pub const LOW_BATTERY: u8 = 15;
-
-/// Порядок вариантов — порядок карточек по умолчанию.
+/// The order of the variants is the default card order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DeviceKind {
     Mouse,
@@ -16,7 +16,7 @@ pub enum DeviceKind {
 }
 
 impl DeviceKind {
-    /// Ключ устройства в `devices.toml` (раскладка панели).
+    /// The device key in `devices.toml` (panel layout).
     pub fn key(self) -> &'static str {
         match self {
             Self::Mouse => "mouse",
@@ -25,7 +25,7 @@ impl DeviceKind {
         }
     }
 
-    /// Название типа — имя карточки, если устройство своего имени не сообщило.
+    /// The type name: the card's name if the device didn't report its own.
     pub fn title(self) -> &'static str {
         match self {
             Self::Mouse => tr("Mouse"),
@@ -44,12 +44,16 @@ pub enum Link {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BatteryState {
     pub percent: u8,
+    /// Charging (or on external power).
     pub charging: bool,
+    /// Charging and fully charged.
+    pub full: bool,
 }
 
 impl BatteryState {
-    pub fn is_low(self) -> bool {
-        self.percent < LOW_BATTERY && !self.charging
+    /// The charge is below `threshold`, %, and the device isn't charging.
+    pub fn is_low(self, threshold: u8) -> bool {
+        self.percent < threshold && !self.charging
     }
 }
 
@@ -60,9 +64,9 @@ pub struct DeviceState {
     pub connected: bool,
     pub link: Option<Link>,
     pub battery: Option<BatteryState>,
-    /// Текущие значения настроек (для контролов панели).
+    /// Current setting values (for the panel's controls).
     pub controls: crate::devices::manager::Controls,
-    /// Последняя ошибка записи — короткое сообщение в карточке.
+    /// The last write error: a short message in the card.
     pub error: Option<String>,
 }
 
@@ -79,7 +83,7 @@ impl DeviceState {
         }
     }
 
-    /// Имя для панели и трея: от устройства, иначе название типа.
+    /// The name for the panel and the tray: from the device, otherwise the type name.
     pub fn display_name(&self) -> &str {
         if self.name.is_empty() {
             self.kind.title()
@@ -88,29 +92,53 @@ impl DeviceState {
         }
     }
 
-    /// «94% ⚡» или «—».
+    /// "94% ⚡" or "—".
     pub fn battery_text(&self) -> Option<String> {
         self.battery
             .map(|b| format!("{}%{}", b.percent, if b.charging { " ⚡" } else { "" }))
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AppState {
-    /// Найденные устройства (по одному на тип), в порядке типов. Карточка есть, пока
-    /// устройство подключено или спарено с подключённым ресивером/адаптером.
+    /// Found devices (one per type), in type order. A card exists while the
+    /// device is connected or paired with a connected receiver/adapter.
     pub devices: Vec<DeviceState>,
-    /// Отображаемые имена профилей и индекс действующего.
+    /// Display names of the profiles and the index of the active one.
     pub profiles: Vec<String>,
     pub profile: usize,
-    /// Порядок и скрытые карточки панели (из `devices.toml`).
+    /// Order and hidden cards of the panel (from `devices.toml`).
     pub layout: PanelLayout,
-    /// Свои цвета палитры клавиатуры (из `devices.toml`).
+    /// Your own keyboard palette colours (from `devices.toml`).
     pub colors: Vec<[u8; 3]>,
+    /// Your own headset equalizer presets (from `devices.toml`).
+    pub eq_presets: Vec<EqPreset>,
+    /// Low battery threshold, % (from `config.toml`).
+    pub low_battery: u8,
+    /// Colours of single keys in the active profile: key name → colour (from `devices.toml`).
+    pub key_colors: BTreeMap<String, [u8; 3]>,
+    /// The keyboard layout in the key colour editor (from `devices.toml`).
+    pub key_layout: crate::keyboard_layout::Layout,
+}
+
+impl Default for AppState {
+    fn default() -> Self {
+        Self {
+            devices: Vec::new(),
+            profiles: Vec::new(),
+            profile: 0,
+            layout: PanelLayout::default(),
+            colors: Vec::new(),
+            eq_presets: Vec::new(),
+            low_battery: DEFAULT_LOW_BATTERY,
+            key_colors: BTreeMap::new(),
+            key_layout: crate::keyboard_layout::Layout::default(),
+        }
+    }
 }
 
 impl AppState {
-    /// Карточка устройства; нет — добавить (на место по типу).
+    /// The device's card; if there is none, add it (in its place by type).
     pub fn device_entry(&mut self, kind: DeviceKind) -> &mut DeviceState {
         let at = match self.devices.binary_search_by_key(&kind, |d| d.kind) {
             Ok(i) => i,
@@ -122,21 +150,21 @@ impl AppState {
         &mut self.devices[at]
     }
 
-    /// Устройство пропало (нет ни его, ни ресивера или адаптера) — убрать карточку.
+    /// The device is gone (neither it nor its receiver or adapter is there): remove the card.
     pub fn remove_device(&mut self, kind: DeviceKind) {
         self.devices.retain(|d| d.kind != kind);
     }
 
-    /// Все устройства в порядке, заданном в настройках.
+    /// All devices in the order set in the settings.
     pub fn ordered(&self) -> Vec<&DeviceState> {
         let mut list: Vec<&DeviceState> = self.devices.iter().collect();
-        // Сортировка устойчивая: не перечисленные в порядке остаются в обычном порядке.
+        // The sort is stable: devices not listed in the order keep the normal order.
         list.sort_by_key(|d| self.layout.rank(d.kind.key()));
         list
     }
 
-    /// Новый порядок (ключи всех устройств), если устройство с места `from` переставить на
-    /// место `to`; `None` — индекс вне списка или место то же.
+    /// The new order (keys of all devices) if the device at `from` is moved to
+    /// `to`; `None` if an index is out of range or the place is the same.
     pub fn moved(&self, from: usize, to: usize) -> Option<Vec<String>> {
         let mut keys: Vec<String> = self
             .ordered()
@@ -148,7 +176,7 @@ impl AppState {
         }
         let key = keys.remove(from);
         keys.insert(to, key);
-        // Устройства, которых сейчас нет, сохраняют место в списке — в конце.
+        // Devices that aren't present now keep their place in the list, at the end.
         for k in &self.layout.order {
             if !keys.contains(k) {
                 keys.push(k.clone());
@@ -157,14 +185,14 @@ impl AppState {
         Some(keys)
     }
 
-    /// Карточки панели: по порядку, без скрытых.
+    /// Panel cards: in order, without hidden ones.
     pub fn panel_devices(&self) -> Vec<&DeviceState> {
         let mut list = self.ordered();
         list.retain(|d| !self.layout.is_hidden(d.kind.key()));
         list
     }
 
-    /// Строки для tooltip трея: по одной на подключённое устройство, в порядке панели.
+    /// Lines for the tray tooltip: one per connected device, in panel order.
     pub fn tray_lines(&self) -> Vec<String> {
         self.ordered()
             .into_iter()
@@ -176,10 +204,44 @@ impl AppState {
             .collect()
     }
 
-    pub fn any_low_battery(&self) -> bool {
+    /// The connected keyboard with colours of single keys: its keys in the editor layout and the colour of
+    /// keys without their own colour (`None`: the effect isn't static, so key colours aren't visible).
+    pub fn keyboard_keys(
+        &self,
+    ) -> Option<(Vec<&'static crate::keyboard_layout::Key>, Option<[u8; 3]>)> {
+        self.devices.iter().find_map(|d| match &d.controls {
+            crate::devices::manager::Controls::Keyboard {
+                key_zones,
+                lighting,
+                ..
+            } if d.connected && !key_zones.is_empty() => Some((
+                crate::keyboard_layout::keys_for(self.key_layout, key_zones),
+                crate::devices::keyboard::key_base(*lighting),
+            )),
+            _ => None,
+        })
+    }
+
+    /// The curve of the connected headset's built-in equalizer, dB per band.
+    pub fn headset_eq(&self) -> Option<[i8; crate::headset_eq::BANDS]> {
+        self.devices.iter().find_map(|d| match &d.controls {
+            crate::devices::manager::Controls::Headset { eq: Some(eq), .. } if d.connected => {
+                let gains: Vec<i8> = eq.iter().map(|&(_, g)| g).collect();
+                gains.try_into().ok()
+            }
+            _ => None,
+        })
+    }
+
+    /// Connected devices with a charge below the threshold.
+    pub fn low_battery_devices(&self) -> impl Iterator<Item = &DeviceState> {
         self.devices
             .iter()
-            .any(|d| d.connected && d.battery.is_some_and(BatteryState::is_low))
+            .filter(|d| d.connected && d.battery.is_some_and(|b| b.is_low(self.low_battery)))
+    }
+
+    pub fn any_low_battery(&self) -> bool {
+        self.low_battery_devices().next().is_some()
     }
 }
 
@@ -187,7 +249,7 @@ impl AppState {
 mod tests {
     use super::*;
 
-    /// Все три устройства, как у автора.
+    /// All three devices, as the author has them.
     fn three() -> AppState {
         let mut s = AppState::default();
         for kind in [DeviceKind::Headset, DeviceKind::Mouse, DeviceKind::Keyboard] {
@@ -229,13 +291,18 @@ mod tests {
         m.battery = Some(BatteryState {
             percent: 10,
             charging: true,
+            full: false,
         });
         assert!(!s.any_low_battery());
         s.device_entry(DeviceKind::Mouse).battery = Some(BatteryState {
             percent: 10,
             charging: false,
+            full: false,
         });
         assert!(s.any_low_battery());
+        s.low_battery = 5;
+        assert!(!s.any_low_battery(), "порог из настроек");
+        s.low_battery = DEFAULT_LOW_BATTERY;
         assert_eq!(s.tray_lines(), vec!["PRO X 2: 10%".to_owned()]);
         s.device_entry(DeviceKind::Mouse).connected = false;
         assert!(!s.any_low_battery());
@@ -271,7 +338,7 @@ mod tests {
             s.moved(2, 0),
             Some(vec!["keyboard".into(), "headset".into(), "mouse".into()])
         );
-        // Отсутствующее устройство не теряет место в сохранённом порядке.
+        // A missing device doesn't lose its place in the saved order.
         s.layout.order = vec!["headset".into(), "mouse".into(), "keyboard".into()];
         s.remove_device(DeviceKind::Keyboard);
         assert_eq!(

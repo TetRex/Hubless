@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Фичи HID++ 2.0: по файлу на фичу, плюс справочник имён.
+//! HID++ 2.0 features: one file per feature, plus a table of names.
 
 pub mod battery;
 pub mod brightness;
@@ -11,12 +11,12 @@ pub mod per_key;
 pub mod report_rate;
 pub mod rgb_effects;
 
-/// DFU и обновление прошивки — никогда не вызывать.
+/// DFU and firmware update: never call them.
 pub fn is_forbidden(id: u16) -> bool {
     matches!(id, 0x00C0..=0x00C3 | 0x00D0)
 }
 
-/// Имена известных фич (справочник — Solaar). Только для отображения в дампе.
+/// Names of known features (reference: Solaar). Only for display in the dump.
 pub fn name(id: u16) -> Option<&'static str> {
     Some(match id {
         0x0000 => "ROOT",

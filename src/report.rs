@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Отчёт об устройствах для поддержки новых моделей (раздел окна настроек).
+//! The device report for supporting new models (a section of the settings window).
 //!
-//! Тот же опрос, что `hubless --dump` (только чтение, серийные номера маскируются), плюс шапка:
-//! версии Hubless и Windows, запущен ли G Hub. Файл сохраняется в `%LOCALAPPDATA%\Hubless\reports`;
-//! отправляет его сам пользователь — через форму issue на GitHub. Hubless в сеть не ходит.
+//! The same query as `hubless --dump` (read-only, serial numbers are masked), plus a header:
+//! the Hubless and Windows versions and whether G Hub is running. The file is saved to `%LOCALAPPDATA%\Hubless\reports`;
+//! the user sends it themselves, through the issue form on GitHub. Hubless doesn't go online for it.
 
 use std::path::PathBuf;
 
@@ -18,14 +18,14 @@ use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, Glo
 
 use crate::config::APP_DIR;
 
-/// Форма нового issue с шаблоном отчёта об устройстве.
+/// The new issue form with the device report template.
 pub const ISSUE_URL: &str =
     "https://github.com/TetRex/Hubless/issues/new?template=device-report.yml";
 
-/// Процессы G Hub: пока он запущен, устройства могут отвечать ему, а не нам.
+/// G Hub processes: while it runs, the devices may answer it instead of us.
 const GHUB_PROCESSES: &[&str] = &["lghub.exe", "lghub_agent.exe", "lghub_system_tray.exe"];
 
-/// Готовый отчёт: где сохранён и полный текст (для предпросмотра и буфера обмена).
+/// A finished report: where it was saved and the full text (for the preview and the clipboard).
 #[derive(Debug, Clone)]
 pub struct Report {
     pub path: PathBuf,
@@ -39,7 +39,7 @@ pub fn reports_dir() -> PathBuf {
         .join("reports")
 }
 
-/// Опросить устройства и сохранить отчёт (долго: до нескольких секунд — вызывать не на главном потоке).
+/// Queries the devices and saves the report (slow: up to a few seconds, so don't call it on the main thread).
 pub fn create() -> Result<Report, String> {
     let dump = crate::dump::collect()?;
     let json = serde_json::to_string_pretty(&dump.json).map_err(|e| e.to_string())?;
@@ -69,22 +69,22 @@ pub fn create() -> Result<Report, String> {
     Ok(Report { path, text })
 }
 
-/// «Windows 11 Pro 24H2 (build 26100)» из реестра.
+/// "Windows 11 Pro 24H2 (build 26100)" from the registry.
 fn windows_version() -> String {
     const KEY: &str = r"SOFTWARE\Microsoft\Windows NT\CurrentVersion";
     let read = |v: &str| crate::win::hklm_read_string(KEY, v).unwrap_or_default();
     let build = read("CurrentBuild");
     let mut product = read("ProductName");
-    // ProductName у Windows 11 до сих пор «Windows 10 …» — правим по номеру сборки.
+    // ProductName on Windows 11 still says "Windows 10 …", so we fix it by the build number.
     if build.parse::<u32>().is_ok_and(|b| b >= 22000) {
         product = product.replacen("Windows 10", "Windows 11", 1);
     }
     format!("{product} {} (build {build})", read("DisplayVersion"))
 }
 
-/// Запущен ли G Hub.
+/// Whether G Hub is running.
 pub fn ghub_running() -> bool {
-    // SAFETY: снимок процессов закрывается ниже; структура записи — локальная, с размером.
+    // SAFETY: the process snapshot is closed below; the entry structure is local, with its size set.
     unsafe {
         let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
             return false;
@@ -110,12 +110,12 @@ pub fn ghub_running() -> bool {
     }
 }
 
-/// Текст в буфер обмена (CF_UNICODETEXT).
+/// Text to the clipboard (CF_UNICODETEXT).
 pub fn copy_to_clipboard(text: &str) -> bool {
     const CF_UNICODETEXT: u32 = 13;
     let wide: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
-    // SAFETY: память выделяется под всю строку с нулём и после SetClipboardData принадлежит
-    // системе; буфер обмена закрывается в любом случае.
+    // SAFETY: the memory is allocated for the whole string with its zero and belongs to the system
+    // after SetClipboardData; the clipboard is closed in any case.
     unsafe {
         if OpenClipboard(None).is_err() {
             return false;

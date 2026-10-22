@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `0x2202` Extended Adjustable DPI (функции и раскладка — по Solaar `ExtendedAdjustableDpi`).
+//! `0x2202` Extended Adjustable DPI (functions and layout per Solaar `ExtendedAdjustableDpi`).
 //!
-//! - fn1 `getSensorCapabilities(sensor)` → байт 2: бит 0 — раздельный Y, бит 1 — lift-off;
-//! - fn2 `getSensorDpiRanges(sensor, direction, page)` → `[sensor, direction, page, u16...]`,
-//!   значение `0xE000 | step` означает диапазон «от предыдущего с шагом step до следующего»,
-//!   `0x0000` — конец списка;
+//! - fn1 `getSensorCapabilities(sensor)` → byte 2: bit 0 separate Y, bit 1 lift-off;
+//! - fn2 `getSensorDpiRanges(sensor, direction, page)` → `[sensor, direction, page, u16...]`;
+//!   a value `0xE000 | step` means a range "from the previous value with a step of step up to the next one",
+//!   `0x0000` ends the list;
 //! - fn5 `getSensorDpiParameters(sensor)` → `[sensor, x(2), x_default(2), y(2), y_default(2), lod]`;
-//! - fn6 `setSensorDpiParameters(sensor, x(2), y(2), lod)` — запись.
+//! - fn6 `setSensorDpiParameters(sensor, x(2), y(2), lod)` writes.
 
 use crate::hidpp::{Device, Error, Write};
 
 pub const ID: u16 = 0x2202;
-/// Старая `0x2201` Adjustable DPI (G903 и др.; спецификация Logitech и Solaar `AdjustableDpi`):
-/// - fn1 `getSensorDpiList(sensor)` → `[sensor, u16 × 7]`, диапазоны `0xE000 | step` как у `0x2202`;
+/// The old `0x2201` Adjustable DPI (G903 and others; Logitech spec and Solaar `AdjustableDpi`):
+/// - fn1 `getSensorDpiList(sensor)` → `[sensor, u16 × 7]`, ranges `0xE000 | step` as in `0x2202`;
 /// - fn2 `getSensorDpi(sensor)` → `[sensor, dpi(2), default(2)]`;
-/// - fn3 `setSensorDpi(sensor, dpi(2))`. Не проверено на железе — только в экспериментальном режиме.
+/// - fn3 `setSensorDpi(sensor, dpi(2))`. Not verified on hardware: experimental mode only.
 pub const OLD_ID: u16 = 0x2201;
 const OLD_GET_LIST: u8 = 1;
 const OLD_GET_DPI: u8 = 2;
@@ -33,7 +33,7 @@ pub struct Capabilities {
     pub lift_off: bool,
 }
 
-/// Lift-off distance (значения по Solaar: LOW/MEDIUM/HIGH).
+/// Lift-off distance (values per Solaar: LOW/MEDIUM/HIGH).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LiftOff {
     Low,
@@ -89,9 +89,9 @@ pub fn capabilities(dev: &Device) -> Result<Capabilities, Error> {
     })
 }
 
-/// Все допустимые значения DPI по оси X (`y = false`) или Y.
+/// All allowed DPI values on the X axis (`y = false`) or Y.
 pub fn supported(dev: &Device, y: bool) -> Result<Vec<u16>, Error> {
-    // Страница несёт 13 байт данных (нечётно), поэтому слова разбираются по склеенному потоку.
+    // A page carries 13 bytes of data (odd), so the words are parsed from the concatenated stream.
     let mut bytes = Vec::new();
     for page in 0..MAX_PAGES {
         let r = dev.call(ID, GET_DPI_RANGES, &[SENSOR, u8::from(y), page])?;
@@ -103,7 +103,7 @@ pub fn supported(dev: &Device, y: bool) -> Result<Vec<u16>, Error> {
     expand_ranges(&words_until_end(&bytes).0).ok_or(Error::Hidpp20(0xFF))
 }
 
-/// Слова big-endian до первого нулевого; второй элемент — найден ли конец списка.
+/// Big-endian words up to the first zero; the second element says whether the end of the list was found.
 fn words_until_end(bytes: &[u8]) -> (Vec<u16>, bool) {
     let mut words = Vec::new();
     for pair in bytes.as_chunks::<2>().0 {
@@ -116,7 +116,7 @@ fn words_until_end(bytes: &[u8]) -> (Vec<u16>, bool) {
     (words, false)
 }
 
-/// Разворачивает список с диапазонами `0xE000 | step` в явные значения.
+/// Expands a list with `0xE000 | step` ranges into explicit values.
 pub fn expand_ranges(words: &[u16]) -> Option<Vec<u16>> {
     let mut list: Vec<u16> = Vec::new();
     let mut i = 0;
@@ -156,14 +156,14 @@ pub fn parameters(dev: &Device) -> Result<Parameters, Error> {
     })
 }
 
-/// Текущий DPI по старой фиче `0x2201`.
+/// The current DPI through the old feature `0x2201`.
 pub fn old_current(dev: &Device) -> Result<u16, Error> {
     let r = dev.call(OLD_ID, OLD_GET_DPI, &[SENSOR])?;
     let p = r.params();
     Ok(u16::from_be_bytes([p[1], p[2]]))
 }
 
-/// Допустимые значения DPI по `0x2201`.
+/// The allowed DPI values through `0x2201`.
 pub fn old_supported(dev: &Device) -> Result<Vec<u16>, Error> {
     let r = dev.call(OLD_ID, OLD_GET_LIST, &[SENSOR])?;
     let p = r.params();
@@ -173,7 +173,7 @@ pub fn old_supported(dev: &Device) -> Result<Vec<u16>, Error> {
         .ok_or(Error::Hidpp20(0xFF))
 }
 
-/// Запись DPI по `0x2201`.
+/// Writes DPI through `0x2201`.
 pub fn old_set(dpi: u16) -> Write {
     let [hi, lo] = dpi.to_be_bytes();
     Write {
@@ -185,7 +185,7 @@ pub fn old_set(dpi: u16) -> Write {
     }
 }
 
-/// Записать DPI по X/Y и lift-off.
+/// Writes the X/Y DPI and lift-off.
 pub fn set_parameters(x: u16, y: u16, lift_off: LiftOff) -> Write {
     let [x_hi, x_lo] = x.to_be_bytes();
     let [y_hi, y_lo] = y.to_be_bytes();
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn words_span_odd_pages() {
-        // 13 + 13 байт: слово 0x01F4 разрезано между страницами.
+        // 13 + 13 bytes: the word 0x01F4 is split between the pages.
         let mut bytes = vec![
             0x00, 0x64, 0xE0, 0x01, 0x00, 0xC8, 0xE0, 0x02, 0x01, 0xF4, 0xE0, 0x05, 0x01,
         ];

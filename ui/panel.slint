@@ -4,40 +4,43 @@ import { Theme } from "theme.slint";
 import { IconButton } from "widgets.slint";
 import { DeviceCard, DeviceInfo, DeviceKind } from "cards/device_card.slint";
 import { DeviceRow, EqBand, ProfileRow, SettingsWindow } from "settings.slint";
+import { KeyCap } from "keyboard_editor.slint";
 
-export { Theme, DeviceInfo, DeviceKind, DeviceRow, EqBand, ProfileRow, SettingsWindow }
+export { Theme, DeviceInfo, DeviceKind, DeviceRow, EqBand, KeyCap, ProfileRow, SettingsWindow }
 
 export component Panel inherits Window {
     in property <[DeviceInfo]> devices;
-    // Найдено хоть одно устройство (карточек может не быть — все скрыты).
+    // At least one device was found (there may be no cards: all are hidden).
     in property <bool> has-devices;
-    // Свои цвета палитры клавиатуры (раздел настроек «Цвета клавиатуры»).
+    // Your own keyboard palette colours (added with "+" in the keyboard card).
     in property <[color]> custom-colors;
     in property <int> max-colors;
     callback add-color(int, int, int);
     callback remove-color(color);
-    // Фон Mica от DWM: окно прозрачное, иначе — сплошной цвет темы.
+    // Mica background from DWM: the window is transparent, otherwise a solid theme colour.
     in property <bool> backdrop;
-    // Панель показана (содержимое проявляется) и включены ли системные «Эффекты анимации».
+    // The panel is shown (the content fades in), and whether the system "Animation effects" are on.
     in property <bool> shown;
     in-out property <bool> animated: true;
-    // Профили настроек: имена и индекс действующего (список виден, если профилей больше одного).
+    // Settings profiles: names and the index of the active one (the list is visible with more than one profile).
     in property <[string]> profiles;
     in property <int> profile;
     callback select-profile(int);
     callback open-settings();
-    // Высота по содержимому, не больше максимальной; выше — карточки прокручиваются.
+    // Exit from Hubless (the tray icon has no menu).
+    callback exit();
+    // Height by content, no more than the maximum; beyond that the cards scroll.
     out property <length> content-height: min(
         Theme.panel-padding * 2 + header.preferred-height + Theme.spacing-s + cards.preferred-height,
         Theme.panel-max-height);
-    // Esc — закрыть панель.
+    // Esc closes the panel.
     callback dismiss();
-    // Высота по содержимому изменилась (раскрыли «Ещё») — пересчитать положение у панели задач.
+    // The content height changed (a block was expanded): recompute the position at the taskbar.
     callback resized();
     changed content-height => {
         root.resized();
     }
-    // Действия карточек (мышь — DPI, клавиатура — яркость и подсветка).
+    // Card actions (mouse: DPI; keyboard: brightness and lighting).
     callback select-dpi(int);
     callback drag-dpi(float);
     callback enter-dpi(float);
@@ -46,6 +49,7 @@ export component Panel inherits Window {
     callback set-effect(int);
     callback pick-color(color);
     callback set-sidetone(int);
+    callback select-eq-preset(int);
 
     title: "Hubless";
     no-frame: true;
@@ -96,12 +100,21 @@ export component Panel inherits Window {
                     }
                 }
 
-                // Шестерёнка — окно настроек (язык, профили).
+                // The gear opens the settings window.
                 IconButton {
                     glyph: Theme.glyph-settings;
                     label: @tr("Settings");
                     clicked => {
                         root.open-settings();
+                    }
+                }
+
+                // Exit: hands the lighting back to the keyboard and closes the app.
+                IconButton {
+                    glyph: Theme.glyph-power;
+                    label: @tr("Exit");
+                    clicked => {
+                        root.exit();
                     }
                 }
             }
@@ -116,7 +129,7 @@ export component Panel inherits Window {
                     alignment: start;
                     spacing: Theme.spacing-s;
 
-                    // Карточек нет: устройств не найдено или все скрыты в настройках.
+                    // No cards: no devices found, or all are hidden in the settings.
                     if root.devices.length == 0: Text {
                         text: root.has-devices
                             ? @tr("All devices are hidden. Choose which to show in Settings → Devices.")
@@ -159,6 +172,9 @@ export component Panel inherits Window {
                         }
                         set-sidetone(v) => {
                             root.set-sidetone(v);
+                        }
+                        select-eq-preset(i) => {
+                            root.select-eq-preset(i);
                         }
                     }
                 }

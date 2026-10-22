@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `0x8071` RGB Effects (раскладка — по Solaar `RGBEffectsInfo`, `RGBControl`, `rgb_power`).
+//! `0x8071` RGB Effects (layout per Solaar `RGBEffectsInfo`, `RGBControl`, `rgb_power`).
 //!
 //! fn0 `getInfo(zone, effect, 0)`:
 //! - `(0xFF, 0xFF)` → `[_, _, zone_count, _(2), caps(2)]`;
 //! - `(zone, 0xFF)` → `[zone, _, location(2), effect_count]`;
 //! - `(zone, effect)` → `[zone, effect, id(2), caps(2), period(2)]`.
 //!
-//! Смена эффекта требует перехвата управления подсветкой (fn5), после чего гасить подсветку
-//! при простое должно приложение — см. раздел «Программное управление» ниже.
+//! Changing the effect requires taking over the lighting control (fn5), after which the app has to turn
+//! the lighting off when idle; see the "Software control" section below.
 
 use crate::hidpp::{Device, Error, Write};
 
@@ -36,7 +36,7 @@ pub struct Info {
     pub zones: Vec<Zone>,
 }
 
-/// Имя эффекта по ID (справочник — Solaar `LEDEffects`).
+/// The effect name by ID (reference: Solaar `LEDEffects`).
 pub fn effect_name(id: u16) -> Option<&'static str> {
     Some(match id {
         0x00 => "Disabled",
@@ -56,7 +56,7 @@ pub fn effect_name(id: u16) -> Option<&'static str> {
     })
 }
 
-/// Расположение зоны (справочник — Solaar `LEDZoneLocations`).
+/// The zone location (reference: Solaar `LEDZoneLocations`).
 pub fn location_name(location: u16) -> &'static str {
     match location {
         0x01 => "Primary",
@@ -100,21 +100,21 @@ pub fn info(dev: &Device) -> Result<Info, Error> {
     Ok(Info { caps, zones })
 }
 
-// --- Программное управление подсветкой (по Solaar `RGBControl` и `rgb_power`) ---
+// --- Software control of the lighting (per Solaar `RGBControl` and `rgb_power`) ---
 //
 // fn1 `setZoneEffect(zone, effect_index, params[10], persist=1)`;
-// fn1 событие `onUserActivity`: params[0] = 0 — простой, иначе — активность;
-// fn5 `SW control`: `[00]` — чтение, `[01, mode, flags]` — запись
-//     (mode 3 — управляет приложение; flags 4 — клавиатура следит за простоем, 2 — за активностью);
-// fn7 таймеры: `[00]` — чтение `[_, _, _, idle(2), sleep(2)]`, секунды;
-// fn8 питание подсветки: `[01, mode, 00]`, mode 3 — выключить (сон), 1 — включить.
+// fn1 event `onUserActivity`: params[0] = 0 means idle, anything else activity;
+// fn5 `SW control`: `[00]` reads, `[01, mode, flags]` writes
+//     (mode 3: the app controls it; flags 4: the keyboard tracks idle, 2: activity);
+// fn7 timers: `[00]` reads `[_, _, _, idle(2), sleep(2)]`, seconds;
+// fn8 lighting power: `[01, mode, 00]`, mode 3 turns it off (sleep), 1 turns it on.
 
 const SET_ZONE_EFFECT: u8 = 1;
 const SW_CONTROL: u8 = 5;
 const TIMERS: u8 = 7;
 const POWER: u8 = 8;
 
-/// ID эффектов, которые умеем задавать.
+/// IDs of the effects we can set.
 pub const EFFECT_DISABLED: u16 = 0x00;
 pub const EFFECT_STATIC: u16 = 0x01;
 
@@ -122,12 +122,12 @@ const SW_ACTIVE: [u8; 3] = [0x01, 0x03, 0x04];
 const SW_IDLE: [u8; 3] = [0x01, 0x03, 0x02];
 const SW_RELEASE: [u8; 3] = [0x01, 0x00, 0x00];
 
-/// Текущий режим программного управления: сырые байты ответа.
+/// The current software control mode: the raw reply bytes.
 pub fn sw_control(dev: &Device) -> Result<Vec<u8>, Error> {
     Ok(dev.call(ID, SW_CONTROL, &[0x00])?.params()[..4].to_vec())
 }
 
-/// Таймеры простоя и сна подсветки из прошивки, секунды.
+/// The firmware's lighting idle and sleep timers, seconds.
 pub fn timers(dev: &Device) -> Result<(u16, u16), Error> {
     let r = dev.call(ID, TIMERS, &[0x00])?;
     let p = r.params();
@@ -147,17 +147,17 @@ fn write(function: u8, params: &[u8], what: impl Into<String>) -> Write {
     }
 }
 
-/// Забрать управление подсветкой (клавиатура продолжает сообщать о простое).
+/// Takes over the lighting control (the keyboard keeps reporting idle).
 pub fn claim() -> Write {
     write(SW_CONTROL, &SW_ACTIVE, "lighting control: Hubless")
 }
 
-/// Режим простоя: клавиатура сообщает о возобновлении активности.
+/// Idle mode: the keyboard reports when activity resumes.
 pub fn idle_mode() -> Write {
     write(SW_CONTROL, &SW_IDLE, "lighting: idle mode")
 }
 
-/// Вернуть управление подсветкой клавиатуре.
+/// Hands the lighting control back to the keyboard.
 pub fn release() -> Write {
     write(SW_CONTROL, &SW_RELEASE, "lighting control: keyboard")
 }
@@ -170,7 +170,7 @@ pub fn power_on() -> Write {
     write(POWER, &[0x01, 0x01, 0x00], "lighting: wake")
 }
 
-/// Индекс эффекта с данным ID в зоне.
+/// The index of the effect with this ID in the zone.
 pub fn effect_index(zone: &Zone, effect_id: u16) -> Option<u8> {
     zone.effects
         .iter()
@@ -178,7 +178,7 @@ pub fn effect_index(zone: &Zone, effect_id: u16) -> Option<u8> {
         .map(|e| e.index)
 }
 
-/// Статичный цвет зоны (раскладка Static: цвет в байтах 0..3, ramp — 3).
+/// A static zone colour (Static layout: colour in bytes 0..3, ramp in 3).
 pub fn static_color(zone: &Zone, rgb: [u8; 3]) -> Option<Write> {
     let index = effect_index(zone, EFFECT_STATIC)?;
     let mut params = vec![zone.index, index, rgb[0], rgb[1], rgb[2]];
@@ -194,7 +194,7 @@ pub fn static_color(zone: &Zone, rgb: [u8; 3]) -> Option<Write> {
     ))
 }
 
-/// Выключить подсветку зоны эффектом Disabled.
+/// Turns the zone's lighting off with the Disabled effect.
 pub fn disabled(zone: &Zone) -> Option<Write> {
     let index = effect_index(zone, EFFECT_DISABLED)?;
     let mut params = vec![zone.index, index];
@@ -207,20 +207,20 @@ pub fn disabled(zone: &Zone) -> Option<Write> {
     ))
 }
 
-// --- Встроенные анимированные эффекты ---
+// --- Built-in animated effects ---
 //
-// Раскладка 10 байт параметров — по Solaar `LEDEffects` (hidpp20.py), числа big-endian.
-// У эффектов две версии ID: старая и с насыщенностью (0x15/0x16/0x17); берём ту, что есть в зоне.
+// The layout of the 10 parameter bytes is per Solaar `LEDEffects` (hidpp20.py); numbers are big-endian.
+// The effects have two ID versions, an old one and one with saturation (0x15/0x16/0x17); we take the one the zone has.
 //
-// | ID   | эффект  | раскладка                                                   |
+// | ID   | effect  | layout                                                      |
 // |------|---------|-------------------------------------------------------------|
-// | 0x0A | Breathe | цвет 0..3, период 3..5, форма 5, интенсивность 6            |
-// | 0x03 | Cycle   | период 5..7, интенсивность 7                                |
-// | 0x15 | Cycle   | насыщенность 1, период 6..8, интенсивность 8                |
-// | 0x04 | Wave    | период 6..8, направление 9                                  |
-// | 0x16 | Wave    | насыщенность 1, период 6..8, интенсивность 8, направление 9 |
-// | 0x0B | Ripple  | цвет 0..3, период 4..6                                      |
-// | 0x17 | Ripple  | цвет 0..3, насыщенность 3, период 6..8                      |
+// | 0x0A | Breathe | colour 0..3, period 3..5, waveform 5, intensity 6           |
+// | 0x03 | Cycle   | period 5..7, intensity 7                                    |
+// | 0x15 | Cycle   | saturation 1, period 6..8, intensity 8                      |
+// | 0x04 | Wave    | period 6..8, direction 9                                    |
+// | 0x16 | Wave    | saturation 1, period 6..8, intensity 8, direction 9         |
+// | 0x0B | Ripple  | colour 0..3, period 4..6                                    |
+// | 0x17 | Ripple  | colour 0..3, saturation 3, period 6..8                      |
 
 pub const EFFECT_CYCLE: u16 = 0x03;
 pub const EFFECT_WAVE: u16 = 0x04;
@@ -230,15 +230,15 @@ pub const EFFECT_CYCLE_S: u16 = 0x15;
 pub const EFFECT_WAVE_S: u16 = 0x16;
 pub const EFFECT_RIPPLE_S: u16 = 0x17;
 
-/// Период анимаций Breathe/Cycle/Wave, мс (диапазон Solaar).
+/// The period of the Breathe/Cycle/Wave animations, ms (Solaar's range).
 pub const PERIOD_MS: std::ops::RangeInclusive<u16> = 1000..=20000;
-/// Период Ripple — в своих единицах прошивки (диапазон и значение по умолчанию — Solaar).
+/// The Ripple period, in the firmware's own units (range and default per Solaar).
 pub const RIPPLE_PERIOD: std::ops::RangeInclusive<u16> = 2..=200;
 pub const RIPPLE_PERIOD_DEFAULT: u16 = 20;
-/// Насыщенность для версий с насыщенностью: полная, как по умолчанию в Solaar.
+/// Saturation for the versions with saturation: full, as Solaar's default.
 const SATURATION: u8 = 0xFF;
 
-/// Направление волны (значения — Solaar `LedDirectionChoices`).
+/// Wave direction (values per Solaar `LedDirectionChoices`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Direction {
@@ -285,7 +285,7 @@ impl Direction {
     }
 }
 
-/// Первый из `ids`, который есть в зоне: (ID, индекс эффекта).
+/// The first of `ids` that the zone has: (ID, effect index).
 fn pick(zone: &Zone, ids: &[u16]) -> Option<(u16, u8)> {
     ids.iter()
         .find_map(|&id| effect_index(zone, id).map(|i| (id, i)))
@@ -306,7 +306,7 @@ fn color_text(rgb: [u8; 3]) -> String {
     format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2])
 }
 
-/// Дыхание цветом. Форма волны 0 — по умолчанию (прошивка 0x8071 её фиксирует).
+/// Breathing in a colour. Waveform 0 is the default (the 0x8071 firmware fixes it).
 pub fn breathe(zone: &Zone, rgb: [u8; 3], period_ms: u16, intensity: u8) -> Option<Write> {
     let (_, index) = pick(zone, &[EFFECT_BREATHE])?;
     let mut p = [0; 10];
@@ -325,7 +325,7 @@ pub fn breathe(zone: &Zone, rgb: [u8; 3], period_ms: u16, intensity: u8) -> Opti
     ))
 }
 
-/// Смена цветов по кругу.
+/// Cycling through colours.
 pub fn cycle(zone: &Zone, period_ms: u16, intensity: u8) -> Option<Write> {
     let (id, index) = pick(zone, &[EFFECT_CYCLE_S, EFFECT_CYCLE])?;
     let mut p = [0; 10];
@@ -348,7 +348,7 @@ pub fn cycle(zone: &Zone, period_ms: u16, intensity: u8) -> Option<Write> {
     ))
 }
 
-/// Цветная волна. Интенсивность есть только у версии 0x16.
+/// A colour wave. Only version 0x16 has intensity.
 pub fn wave(zone: &Zone, period_ms: u16, direction: Direction, intensity: u8) -> Option<Write> {
     let (id, index) = pick(zone, &[EFFECT_WAVE_S, EFFECT_WAVE])?;
     let mut p = [0; 10];
@@ -370,7 +370,7 @@ pub fn wave(zone: &Zone, period_ms: u16, direction: Direction, intensity: u8) ->
     ))
 }
 
-/// Рябь от нажатых клавиш.
+/// Ripples from pressed keys.
 pub fn ripple(zone: &Zone, rgb: [u8; 3], period: u16) -> Option<Write> {
     let (id, index) = pick(zone, &[EFFECT_RIPPLE_S, EFFECT_RIPPLE])?;
     let mut p = [0; 10];
@@ -393,14 +393,14 @@ pub fn ripple(zone: &Zone, rgb: [u8; 3], period: u16) -> Option<Write> {
     ))
 }
 
-/// Событие `onUserActivity` (fn1, sw_id 0): `Some(true)` — активность, `Some(false)` — простой.
+/// The `onUserActivity` event (fn1, sw_id 0): `Some(true)` activity, `Some(false)` idle.
 pub fn activity_event(dev: &Device, r: &crate::hidpp::message::Report) -> Option<bool> {
     let f = dev.feature(ID)?;
     (r.device() == dev.index && r.sub_id() == f.index && r.address() == SET_ZONE_EFFECT << 4)
         .then(|| r.params()[0] != 0)
 }
 
-/// Запись эффекта для сохранённой настройки подсветки.
+/// The effect write for a saved lighting setting.
 pub fn effect_for(zone: &Zone, lighting: crate::settings::Lighting) -> Option<Write> {
     use crate::settings::Lighting as L;
     match lighting {
@@ -424,7 +424,7 @@ pub fn effect_for(zone: &Zone, lighting: crate::settings::Lighting) -> Option<Wr
     }
 }
 
-/// Разбор цвета `RRGGBB` или `#RRGGBB`.
+/// Parses a colour `RRGGBB` or `#RRGGBB`.
 pub fn parse_rgb(s: &str) -> Option<[u8; 3]> {
     let s = s.strip_prefix('#').unwrap_or(s);
     if s.len() != 6 {
@@ -489,7 +489,7 @@ mod tests {
     #[test]
     fn animated_layouts() {
         let z = zone_with(&[0x00, 0x01, 0x0A, 0x15, 0x16, 0x17]);
-        // 5000 мс = 0x1388
+        // 5000 ms = 0x1388
         assert_eq!(
             breathe(&z, [0xFF, 0x80, 0x00], 5000, 100).unwrap().params,
             vec![0, 2, 0xFF, 0x80, 0x00, 0x13, 0x88, 0, 100, 0, 0, 0, 1]

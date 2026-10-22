@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! CLI-подкоманды устройств. Каждая запись сначала печатает свой пакет; `--dry-run` — только печать.
+//! CLI subcommands for devices. Every write prints its packet first; `--dry-run` only prints.
 
 use std::process::ExitCode;
 
@@ -13,7 +13,7 @@ use crate::hidpp::features::{
 use crate::hidpp::message::hex;
 use crate::hidpp::{Error, Write};
 use crate::settings::{self, DeviceSettings, MouseSettings};
-use crate::{centurion, headset_eq};
+use crate::{centurion, headset_eq, keyboard_layout};
 
 pub const MOUSE_USAGE: &str =
     "  hubless mouse [status]    mouse state: battery, DPI, polling rate, lift-off, onboard
@@ -77,8 +77,8 @@ pub fn mouse(args: &[String]) -> ExitCode {
     }
 }
 
-/// Построить запись по аргументам с проверкой против того, что поддерживает мышь.
-/// Как сохранить применённую запись в `devices.toml`.
+/// Builds a write from the arguments, checked against what the mouse supports, plus
+/// how to save the applied write in `devices.toml`.
 type Save = Box<dyn FnOnce(&mut MouseSettings)>;
 
 fn plan_write(found: &Found, cmd: &str, args: &[String]) -> Result<(Write, Save), String> {
@@ -167,7 +167,7 @@ fn plan_write(found: &Found, cmd: &str, args: &[String]) -> Result<(Write, Save)
     }
 }
 
-/// Пакет в hex; младшая тетрада 4-го байта (sw_id) показана как `x`, хвост нулей свёрнут.
+/// A packet in hex; the low nibble of the 4th byte (sw_id) is shown as `x`, and trailing zeros are folded.
 fn packet_text(bytes: &[u8]) -> String {
     let mut text: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
     if let Some(b) = bytes.get(3) {
@@ -327,7 +327,10 @@ pub const KEYBOARD_USAGE: &str =
                                                built-in effects; period 1000–20000 ms (default 5000),
                                                directions: right, left, up, down, center-out, center-in, in, out, cycle
   hubless keyboard keys <KEYS> <RRGGBB> [--dry-run]
-                                               colour single keys (0x8081): wasd, w,a,s,d, f1,space, esc…";
+                                               colour single keys (0x8081): wasd, w,a,s,d, f1,space, esc…;
+                                               saved in the current profile, shown with the static effect
+  hubless keyboard keys <KEYS> none            remove the saved colours of these keys
+  hubless keyboard keys clear                  remove all saved key colours";
 
 pub fn keyboard(args: &[String]) -> ExitCode {
     let dry_run = args.iter().any(|a| a == "--dry-run");
@@ -368,8 +371,52 @@ pub fn keyboard(args: &[String]) -> ExitCode {
                 ExitCode::from(2)
             }
         },
+        Some("keys") if args.get(1).map(String::as_str) == Some("clear") => {
+            if dry_run {
+                println!("--dry-run: nothing is sent; the saved key colours would be removed");
+                return ExitCode::SUCCESS;
+            }
+            save_settings(|s| s.keyboard.keys.clear());
+            ExitCode::SUCCESS
+        }
+        Some("keys") if args.get(2).map(String::as_str) == Some("none") => {
+            let zones = match per_key::parse_keys(&args[1]) {
+                Ok(z) => z,
+                Err(e) => {
+                    eprintln!("{e}");
+                    return ExitCode::from(2);
+                }
+            };
+            if dry_run {
+                println!(
+                    "--dry-run: nothing is sent; the saved colours of these keys would be removed"
+                );
+                return ExitCode::SUCCESS;
+            }
+            save_settings(|s| {
+                for key in zones.iter().filter_map(|&z| keyboard_layout::by_zone(z)) {
+                    s.keyboard.set_key(key.name, None);
+                }
+            });
+            ExitCode::SUCCESS
+        }
         Some("keys") => match plan_keys(found, &args[1..]) {
-            Ok(writes) => run_sequence(found, &writes, dry_run),
+            Ok(KeysPlan { writes, zones, rgb }) => {
+                let code = run_sequence(found, &writes, dry_run);
+                if !dry_run && code == ExitCode::SUCCESS {
+                    let saved = save_settings(|s| {
+                        for key in zones.iter().filter_map(|&z| keyboard_layout::by_zone(z)) {
+                            s.keyboard.set_key(key.name, Some(rgb));
+                        }
+                    });
+                    if keyboard::key_base(saved.keyboard.lighting).is_none() {
+                        println!(
+                            "  Hubless shows saved key colours with the static effect:                              hubless keyboard lighting static <RRGGBB>"
+                        );
+                    }
+                }
+                code
+            }
             Err(e) => {
                 eprintln!("{e}");
                 ExitCode::from(2)
@@ -448,6 +495,22 @@ fn print_keyboard_status(found: &Found) {
         }
         Err(e) => println!("  lighting zones: error: {e}"),
     }
+    if dev.feature(per_key::ID).is_some() {
+        match per_key::supported_zones(&dev) {
+            Ok(zones) => {
+                let list: Vec<String> = zones.iter().map(u8::to_string).collect();
+                println!("  per-key zones: {} ({})", zones.len(), list.join(" "));
+            }
+            Err(e) => println!("  per-key zones: error: {e}"),
+        }
+    }
+    // `0x4540` KEYBOARD_LAYOUT_2: fn0 reads the layout (the reply format isn't decoded, so we print the bytes).
+    if dev.feature(keyboard::LAYOUT).is_some() {
+        match dev.call(keyboard::LAYOUT, 0, &[]) {
+            Ok(r) => println!("  layout:      raw bytes {}", hex(r.params())),
+            Err(e) => println!("  layout:      error: {e}"),
+        }
+    }
     if let Ok(raw) = rgb_effects::sw_control(&dev) {
         println!(
             "  control:     {} (raw bytes {})",
@@ -481,7 +544,7 @@ fn print_keyboard_status(found: &Found) {
     );
 }
 
-/// Изменить `devices.toml` и попросить запущенный Hubless применить настройки заново.
+/// Changes `devices.toml` and asks the running Hubless to apply the settings again.
 fn save_settings(update: impl FnOnce(&mut DeviceSettings)) -> DeviceSettings {
     let settings = match DeviceSettings::update(update) {
         Ok(s) => {
@@ -499,7 +562,7 @@ fn save_settings(update: impl FnOnce(&mut DeviceSettings)) -> DeviceSettings {
     settings
 }
 
-/// Запись в клавиатуру: печать пакета, отправка, проверка чтением, сохранение в настройки.
+/// A write to the keyboard: print the packet, send it, verify by reading, save to the settings.
 fn run_keyboard_write(found: &Found, w: &Write, dry_run: bool) -> ExitCode {
     let dev = found.device();
     let packet = match dev.preview(w) {
@@ -541,8 +604,8 @@ fn run_keyboard_write(found: &Found, w: &Write, dry_run: bool) -> ExitCode {
     }
 }
 
-/// Последовательность записей для подсветки (как в Solaar: режим host + перехват управления).
-/// Возвращает записи и новое значение настройки (`None` — подсветкой управляет клавиатура).
+/// The write sequence for the lighting (as in Solaar: host mode + taking over control).
+/// Returns the writes and the new setting value (`None` means the keyboard controls the lighting).
 fn plan_lighting(
     found: &Found,
     args: &[String],
@@ -597,7 +660,7 @@ fn plan_lighting(
             );
         }
     };
-    // Все зоны, которые умеют эффект (у G815 — логотип и клавиши), как в трее.
+    // All zones that support the effect (on the G815, the logo and the keys), as in the tray.
     let effects: Vec<Write> = info
         .zones
         .iter()
@@ -611,9 +674,16 @@ fn plan_lighting(
     Ok((writes, Some(lighting)))
 }
 
-/// Цвет отдельных клавиш (`0x8081`): режим host и управление подсветкой, как у эффектов,
-/// затем диапазоны зон и применение кадра. Пробная команда — на железе ещё не проверена.
-fn plan_keys(found: &Found, args: &[String]) -> Result<Vec<Write>, String> {
+/// Colours of single keys (`0x8081`): host mode and lighting control, as for effects,
+/// then the zone ranges and applying the frame (verified on hardware 2026-10-22).
+struct KeysPlan {
+    writes: Vec<Write>,
+    /// The key zones and the colour, for saving in the profile.
+    zones: Vec<u8>,
+    rgb: [u8; 3],
+}
+
+fn plan_keys(found: &Found, args: &[String]) -> Result<KeysPlan, String> {
     let dev = found.device();
     if dev.feature(per_key::ID).is_none() {
         return Err("the keyboard has no per-key lighting (0x8081)".into());
@@ -625,10 +695,10 @@ fn plan_keys(found: &Found, args: &[String]) -> Result<Vec<Write>, String> {
     let rgb = rgb_effects::parse_rgb(color).ok_or("give the colour as RRGGBB, e.g. ff0000")?;
     let mut writes = vec![onboard::set_mode(onboard::Mode::Host), rgb_effects::claim()];
     writes.extend(per_key::paint(&zones, rgb));
-    Ok(writes)
+    Ok(KeysPlan { writes, zones, rgb })
 }
 
-/// Необязательные параметры встроенных эффектов: `--period`, `--intensity`, `--direction`.
+/// Optional parameters of the built-in effects: `--period`, `--intensity`, `--direction`.
 struct EffectOptions {
     period: Option<u16>,
     intensity: u8,
@@ -689,7 +759,7 @@ impl EffectOptions {
     }
 }
 
-/// Напечатать все пакеты последовательности, затем (без --dry-run) отправить по порядку.
+/// Prints all packets of the sequence, then (without --dry-run) sends them in order.
 fn run_sequence(found: &Found, writes: &[Write], dry_run: bool) -> ExitCode {
     let dev = found.device();
     println!("{}:", found.name);
@@ -712,7 +782,8 @@ fn run_sequence(found: &Found, writes: &[Write], dry_run: bool) -> ExitCode {
             .iter()
             .any(|w| w.feature == rgb_effects::ID && w.params == rgb_effects::claim().params)
         {
-            print_idle_packets(&dev);
+            let per_key = writes.iter().any(|w| w.feature == per_key::ID);
+            print_idle_packets(&dev, per_key);
         }
         println!("  --dry-run: not sent");
         return ExitCode::SUCCESS;
@@ -732,15 +803,17 @@ fn run_sequence(found: &Found, writes: &[Write], dry_run: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Пакеты, которые Hubless в трее отправляет, пока держит управление подсветкой.
-fn print_idle_packets(dev: &crate::hidpp::Device) {
+/// The packets the tray sends while it controls the lighting.
+/// `per_key`: the sequence paints single keys; they are saved in the profile, and after waking the
+/// tray sends them again over the saved effect (static effect only).
+fn print_idle_packets(dev: &crate::hidpp::Device, per_key: bool) {
     println!("  While Hubless controls the lighting, it sends on idle and activity:");
     let steps = [
-        ("the keyboard reported idle", rgb_effects::idle_mode()),
         (
-            "(sleep − idle) seconds after idle",
-            rgb_effects::power_off(),
+            "the lighting timeout ran out (5 minutes by default; Settings → Devices)",
+            rgb_effects::idle_mode(),
         ),
+        ("right after it", rgb_effects::power_off()),
         (
             "the keyboard reported activity (after sleep)",
             rgb_effects::power_on(),
@@ -757,7 +830,13 @@ fn print_idle_packets(dev: &crate::hidpp::Device) {
             );
         }
     }
-    println!("   - after waking, the zone effect is sent again (packet 3 above)");
+    if per_key {
+        println!(
+            "   - after waking, the saved lighting effect and the saved key colours are sent again"
+        );
+    } else {
+        println!("   - after waking, the zone effects above are sent again");
+    }
 }
 
 pub const HEADSET_USAGE: &str =
@@ -870,7 +949,7 @@ fn print_headset_status(a: &mut centurion::Adapter) {
     }
 }
 
-/// Эквалайзер: без значений — показать кривую, с пятью значениями — записать.
+/// Equalizer: without values, show the curve; with five values, write it.
 fn headset_eq_command(a: &mut centurion::Adapter, args: &[String], dry_run: bool) -> ExitCode {
     let save = args.iter().any(|s| s == "--save");
     let gains: Vec<&String> = args.iter().filter(|s| *s != "--save").collect();
@@ -922,7 +1001,7 @@ fn headset_eq_command(a: &mut centurion::Adapter, args: &[String], dry_run: bool
     run_headset_write(a, &headset_eq::write(&bands, save), dry_run)
 }
 
-/// Запись в гарнитуру: печать кадров, отправка, ответ.
+/// A write to the headset: print the frames, send, show the reply.
 fn run_headset_write(a: &mut centurion::Adapter, w: &centurion::Write, dry_run: bool) -> ExitCode {
     let frames = match a.preview(w) {
         Ok(f) => f,
@@ -942,7 +1021,7 @@ fn run_headset_write(a: &mut centurion::Adapter, w: &centurion::Write, dry_run: 
     match a.apply(w) {
         Ok(r) => {
             println!("  reply: {}", hex(&r));
-            // Проверка чтением: значение — последний байт параметров записи.
+            // Verify by reading: the value is the last byte of the write's parameters.
             let expected = w.params.last().copied().unwrap_or(0);
             let actual = match w.feature {
                 centurion::SIDETONE => a.sidetone_level(),
@@ -987,7 +1066,7 @@ fn run_headset_write(a: &mut centurion::Adapter, w: &centurion::Write, dry_run: 
     }
 }
 
-/// Кадр Centurion в hex со свёрнутым хвостом нулей.
+/// A Centurion frame in hex with the trailing zeros folded.
 fn headset_frame_text(frame: &[u8]) -> String {
     let used = frame.iter().rposition(|&b| b != 0).map_or(1, |i| i + 1);
     let mut s = hex(&frame[..used]);
@@ -1050,9 +1129,9 @@ pub fn profile(args: &[String]) -> ExitCode {
     }
 }
 
-/// Отладочная последовательность записей (для повторения захватов G Hub):
-/// `2202:6 00 03 20 03 20 02 , 2202:7 00 01 , 8061:3s 02` — фича (hex), функция, `s` — short-отчёт,
-/// затем байты параметров. Записи уходят подряд за один запуск; DFU-фичи отвергает `Device`.
+/// A debug sequence of writes (for repeating G Hub captures):
+/// `2202:6 00 03 20 03 20 02 , 2202:7 00 01 , 8061:3s 02`: the feature (hex), the function, `s` for a short report,
+/// then the parameter bytes. The writes go out one after another in a single run; `Device` rejects DFU features.
 fn parse_raw(args: &[String]) -> Result<Vec<Write>, String> {
     let mut writes = Vec::new();
     for group in args.split(|a| a == ",") {

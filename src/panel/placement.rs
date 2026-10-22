@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Позиционирование панели у иконки в трее с учётом стороны панели задач, мониторов и DPI.
+//! Placing the panel next to the tray icon, taking into account the taskbar side, monitors and DPI.
 
 use windows::Win32::Foundation::{POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
@@ -26,7 +26,7 @@ pub struct Monitor {
     pub scale: f32,
 }
 
-/// Прямоугольник иконки в трее, иначе точка под курсором.
+/// The tray icon's rectangle, or else a point under the cursor.
 pub fn anchor(tray_rect: Option<tray_icon::Rect>) -> RECT {
     if let Some(r) = tray_rect.filter(|r| r.size.width > 0) {
         let (x, y) = (r.position.x.round() as i32, r.position.y.round() as i32);
@@ -38,7 +38,7 @@ pub fn anchor(tray_rect: Option<tray_icon::Rect>) -> RECT {
         };
     }
     let mut p = POINT::default();
-    // SAFETY: запись в локальную структуру.
+    // SAFETY: writes into a local structure.
     let _ = unsafe { GetCursorPos(&mut p) };
     RECT {
         left: p.x,
@@ -49,7 +49,7 @@ pub fn anchor(tray_rect: Option<tray_icon::Rect>) -> RECT {
 }
 
 pub fn monitor_for(anchor: RECT) -> Monitor {
-    // SAFETY: MonitorFromRect с NEAREST всегда возвращает монитор; структуры локальные.
+    // SAFETY: MonitorFromRect with NEAREST always returns a monitor; the structures are local.
     unsafe {
         let hmon = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
         let mut info = MONITORINFO {
@@ -67,13 +67,13 @@ pub fn monitor_for(anchor: RECT) -> Monitor {
     }
 }
 
-/// Сторона панели задач: `ABM_GETTASKBARPOS`, иначе — по разнице рабочей области и монитора.
+/// The taskbar side: `ABM_GETTASKBARPOS`, or else from the difference between the work area and the monitor.
 pub fn taskbar_edge(mon: &Monitor) -> Edge {
     let mut data = APPBARDATA {
         cbSize: size_of::<APPBARDATA>() as u32,
         ..Default::default()
     };
-    // SAFETY: data — локальная структура с корректным cbSize.
+    // SAFETY: data is a local structure with a correct cbSize.
     if unsafe { SHAppBarMessage(ABM_GETTASKBARPOS, &mut data) } != 0 {
         return match data.uEdge {
             ABE_LEFT => Edge::Left,
@@ -94,8 +94,8 @@ pub fn taskbar_edge(mon: &Monitor) -> Edge {
     }
 }
 
-/// Левый верхний угол панели размером `size` (физ. px). Панель прижата к панели задач
-/// с отступом `margin`, вдоль неё — центрирована по иконке и не выходит за рабочую область.
+/// The top-left corner of a panel of `size` (physical px). The panel sits against the taskbar
+/// with a `margin`, and along it is centered on the icon without leaving the work area.
 pub fn position(
     anchor: RECT,
     mon: &Monitor,
@@ -119,7 +119,7 @@ pub fn position(
         work.bottom - margin - h,
     );
 
-    // Если рабочая область не уменьшена (автоскрытие), границей служит сама иконка.
+    // If the work area isn't reduced (auto-hide), the icon itself is the boundary.
     let (x, y) = match edge {
         Edge::Bottom => {
             let limit = if work.bottom < r.bottom {
@@ -154,7 +154,7 @@ pub fn position(
             (limit - margin - w, along_y)
         }
     };
-    // Панель выше экрана — прижимаем к верху рабочей области.
+    // The panel is taller than the screen: pin it to the top of the work area.
     (x.max(work.left), y.max(work.top))
 }
 

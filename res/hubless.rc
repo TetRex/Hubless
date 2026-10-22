@@ -1,7 +1,7 @@
 #define RT_MANIFEST 24
 1 RT_MANIFEST "hubless.exe.manifest"
 
-// Иконка exe: генерируется из src/tray/icon.rs (cargo test --release write_exe_icon -- --ignored).
+// The exe icon is generated from src/tray/icon.rs (cargo test --release write_exe_icon -- --ignored).
 1 ICON "hubless.ico"
 
 1 VERSIONINFO

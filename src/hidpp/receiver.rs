@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Регистры ресивера (HID++ 1.0) — только чтение, для диагностики.
-//! Номера регистров — по Solaar; расшифровка минимальная, сырые байты сохраняются в дампе.
+//! Receiver registers (HID++ 1.0): read-only, for diagnostics.
+//! Register numbers per Solaar; minimal decoding, the raw bytes are kept in the dump.
 
 use super::Error;
 use super::message::DEVICE_SELF;
@@ -9,10 +9,10 @@ use super::transport::Transport;
 const CONNECTION_STATE: u8 = 0x02;
 const RECEIVER_INFO: u8 = 0xB5;
 const FIRMWARE: u8 = 0xF1;
-/// Подрегистр RECEIVER_INFO с информацией о паре в слоте `n` (1..6): `0x20 + n - 1`.
+/// The RECEIVER_INFO subregister with the pairing info of slot `n` (1..6): `0x20 + n - 1`.
 const PAIRING_INFO: u8 = 0x20;
-/// Подрегистр RECEIVER_INFO с именем устройства в слоте `n`: `0x40 + n - 1` (по Solaar;
-/// у Bolt — другие подрегистры, не читается).
+/// The RECEIVER_INFO subregister with the device name of slot `n`: `0x40 + n - 1` (per Solaar;
+/// Bolt uses other subregisters, not read).
 const DEVICE_NAME: u8 = 0x40;
 
 pub struct RegisterValue {
@@ -46,8 +46,8 @@ pub fn read_info(t: &Transport) -> Vec<RegisterValue> {
         read(t, "firmware_build", FIRMWARE, false, [0x02, 0, 0]),
         read(t, "bootloader", FIRMWARE, false, [0x04, 0, 0]),
     ];
-    // У LIGHTSPEED-ресиверов 1–2 слота, пустые не отвечают вовсе: быстрый режим
-    // и остановка после двух пустых слотов подряд.
+    // LIGHTSPEED receivers have 1–2 slots, and empty ones don't answer at all: quick mode,
+    // and stop after two empty slots in a row.
     let mut empty_in_row = 0;
     for slot in 1..=6u8 {
         let reg = t.quick(|| {
@@ -63,7 +63,7 @@ pub fn read_info(t: &Transport) -> Vec<RegisterValue> {
         empty_in_row = if paired { 0 } else { empty_in_row + 1 };
         regs.push(reg);
         if paired {
-            // Имя знает сам ресивер — есть и у спящего устройства.
+            // The receiver itself knows the name, so a sleeping device has it too.
             regs.push(t.quick(|| {
                 read(
                     t,
@@ -81,13 +81,13 @@ pub fn read_info(t: &Transport) -> Vec<RegisterValue> {
     regs
 }
 
-/// Wireless PID устройства из ответа pairing info (байты 3..5 после адреса регистра).
+/// The device's wireless PID from the pairing info reply (bytes 3..5 after the register address).
 pub fn pairing_wpid(raw: &[u8]) -> Option<u16> {
     let wpid = u16::from_be_bytes([*raw.get(3)?, *raw.get(4)?]);
     (wpid != 0).then_some(wpid)
 }
 
-/// Имя устройства из ответа DEVICE_NAME: `[подрегистр, длина, имя…]` (по Solaar).
+/// The device name from the DEVICE_NAME reply: `[subregister, length, name…]` (per Solaar).
 pub fn pairing_name(raw: &[u8]) -> Option<String> {
     let len = usize::from(*raw.get(1)?);
     let bytes = raw.get(2..2 + len)?;
@@ -98,8 +98,8 @@ pub fn pairing_name(raw: &[u8]) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-/// Тип устройства из pairing info (байт 7, младшая тетрада; по Solaar): 1 — клавиатура, 2 — мышь.
-/// Возвращает тип в терминах `0x0005` (0 — клавиатура, 3 — мышь), если он известен.
+/// The device type from pairing info (byte 7, low nibble; per Solaar): 1 is a keyboard, 2 a mouse.
+/// Returns the type in `0x0005` terms (0 keyboard, 3 mouse), if it is known.
 pub fn pairing_device_type(raw: &[u8]) -> Option<u8> {
     match raw.get(7)? & 0x0F {
         1 => Some(0),

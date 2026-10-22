@@ -6,7 +6,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping! Create the report in Hubless: **Settings → Device report → Create report**
+        Thanks for helping! Create the report in Hubless: **Settings → Advanced → Create report**
         (or run `hubless --report`). Close G Hub completely first.
         The report only reads from your devices and contains no serial numbers or personal data.
   - type: input
@@ -39,7 +39,7 @@ body:
     id: report
     attributes:
       label: Report
-      description: Attach the report file (drag it here) or paste its text (Settings → Device report → Copy).
+      description: Attach the report file (drag it here) or paste its text (Settings → Advanced → Copy).
       render: text
     validations:
       required: true

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Жизненный цикл панели: создаётся лениво при первом открытии, уничтожается,
-//! если скрыта дольше [`DESTROY_AFTER`]. Пока окна нет, UI не держит ресурсов.
+//! The panel's life cycle: created lazily on the first open and destroyed
+//! if hidden for longer than [`DESTROY_AFTER`]. While there is no window, the UI holds no resources.
 
 mod outside_click;
 mod placement;
@@ -35,31 +35,31 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::app::PanelAction;
 use crate::app::{self, AppEvent};
 use crate::devices::manager::Controls;
-use crate::state::{AppState, BatteryState, DeviceKind, Link};
+use crate::state::{AppState, DeviceKind, Link};
 use crate::theme::{Fonts, SystemTheme};
 use crate::ui;
 
 const DESTROY_AFTER: Duration = Duration::from_secs(60);
-/// Анимации открытия и закрытия (раздел 7 плана; совпадают с `Theme.anim-open/close`).
+/// Open and close animations (section 7 of the plan; they match `Theme.anim-open/close`).
 const OPEN_ANIMATION: Duration = Duration::from_millis(150);
 const CLOSE_ANIMATION: Duration = Duration::from_millis(100);
-/// Шаг сдвига окна при открытии (~60 кадров/с, только на время анимации).
+/// The step of moving the window while opening (~60 fps, only for the duration of the animation).
 const SLIDE_TICK: Duration = Duration::from_millis(16);
-/// Клик по иконке сначала снимает фокус с панели (и скрывает её), затем приходит сам клик.
-/// Такой клик не должен открывать панель заново.
+/// A click on the icon first takes focus away from the panel (and hides it), then the click itself arrives.
+/// Such a click must not open the panel again.
 const REOPEN_GUARD: Duration = Duration::from_millis(400);
 
 thread_local! {
-    /// Следующее создаваемое окно Slint — панель. Хук атрибутов общий для всех окон и
-    /// вызывается при создании компонента, когда заголовка ещё нет, — различаем по флагу.
+    /// The next Slint window to be created is the panel. The attributes hook is shared by all windows and
+    /// called when a component is created, before it has a title, so we tell them apart by this flag.
     static NEXT_IS_PANEL: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Хук атрибутов winit для окон Slint (вызывается при создании компонента): панель —
-/// без рамки, поверх окон и без кнопки на панели задач; остальные окна — обычные.
+/// The winit attributes hook for Slint windows (called when a component is created): the panel is
+/// frameless, always on top and without a taskbar button; the other windows are normal.
 pub fn window_attributes(attrs: WindowAttributes) -> WindowAttributes {
     if !NEXT_IS_PANEL.replace(false) {
-        // Иконка окна настроек (заголовок, панель задач, Alt+Tab) — та же, что у exe.
+        // The settings window icon (title bar, taskbar, Alt+Tab) is the same as the exe's.
         const ICON_SIZE: u32 = 32;
         let icon = slint::winit_030::winit::window::Icon::from_rgba(
             crate::tray::icon::app_icon_rgba(ICON_SIZE),
@@ -83,26 +83,26 @@ pub fn window_attributes(attrs: WindowAttributes) -> WindowAttributes {
 
 pub struct PanelController {
     ui: Option<ui::Panel>,
-    /// winit-окно создано и настроено (стиль, обработчик фокуса).
+    /// The winit window has been created and set up (style, focus handler).
     window_ready: bool,
     visible: bool,
     hidden_at: Option<Instant>,
     destroy_timer: slint::Timer,
     theme: SystemTheme,
     fonts: Fonts,
-    /// Момент начала открытия — до первого кадра (замер «быстрее 150 мс»).
+    /// When opening started, before the first frame (for the "under 150 ms" measurement).
     opening: Rc<Cell<Option<(Instant, bool)>>>,
-    /// Иконка, у которой открыта панель (для пересчёта положения при смене высоты).
+    /// The icon whose panel is open (for recomputing the position when the height changes).
     tray_rect: Option<tray_icon::Rect>,
-    /// Сдвиг окна при открытии (тикает только ~150 мс анимации).
+    /// Moving the window while opening (ticks only during the ~150 ms animation).
     slide_timer: Rc<slint::Timer>,
-    /// Куда въезжает окно. Обновляется при каждой расстановке: высота панели может измениться
-    /// уже во время сдвига (при создании окна вёрстка готова только после показа).
+    /// Where the window slides to. Updated on every placement: the panel height may change
+    /// during the slide (when the window is created, the layout is ready only after it is shown).
     slide_target: Rc<Cell<PhysicalPosition>>,
-    /// Скрыть окно после анимации закрытия.
+    /// Hides the window after the close animation.
     close_timer: slint::Timer,
-    /// Хук мыши, пока панель показана: закрыть её щелчком по чужому окну, даже если фокуса
-    /// панель не получила (см. `outside_click`).
+    /// A mouse hook while the panel is shown: close it on a click on another app's window, even if the
+    /// panel didn't get focus (see `outside_click`).
     outside: Option<outside_click::OutsideClick>,
 }
 
@@ -146,6 +146,7 @@ impl PanelController {
                 Ok(panel) => {
                     panel.on_dismiss(|| app::post(AppEvent::PanelDismiss));
                     panel.on_open_settings(|| app::post(AppEvent::OpenSettings(None)));
+                    panel.on_exit(|| app::post(AppEvent::Exit));
                     panel.on_resized(|| app::post(AppEvent::PanelResized));
                     panel.on_drag_dpi(|v| {
                         app::post(AppEvent::Panel(PanelAction::DpiDrag(v)));
@@ -170,6 +171,9 @@ impl PanelController {
                         app::post(AppEvent::Panel(
                             PanelAction::Sidetone(v.clamp(0, 100) as u8),
                         ));
+                    });
+                    panel.on_select_eq_preset(|i| {
+                        app::post(AppEvent::Panel(PanelAction::EqPreset(i)));
                     });
                     panel.on_select_profile(|i| {
                         app::post(AppEvent::Panel(PanelAction::Profile(i)));
@@ -198,7 +202,7 @@ impl PanelController {
                     panel.set_max_colors(crate::settings::MAX_COLORS as i32);
                     self.ui = Some(panel);
                     self.window_ready = false;
-                    // Переводы Slint выбираются после создания компонента.
+                    // Slint translations are selected after the component is created.
                     crate::i18n::apply_to_slint();
                 }
                 Err(e) => {
@@ -217,7 +221,7 @@ impl PanelController {
         let placed = place(panel, tray_rect, None);
         self.slide_target.set(placed.pos);
 
-        // Окно ещё гаснет после закрытия — просто вернуть его, без сдвига.
+        // The window is still fading out after closing: just bring it back, without the slide.
         let closing = self.close_timer.running();
         self.close_timer.stop();
         let animated = client_area_animation();
@@ -238,8 +242,8 @@ impl PanelController {
         let dark = self.theme.apps_dark;
         let first = !self.window_ready;
         panel.window().with_winit_window(|w| {
-            // winit пересобирает ex-style при каждой смене видимости (и всегда ставит
-            // WS_EX_APPWINDOW), поэтому стиль применяем после каждого показа.
+            // winit rebuilds the ex-style on every visibility change (and always sets
+            // WS_EX_APPWINDOW), so we apply the style after every show.
             make_tool_window(w);
             w.set_theme(Some(if dark {
                 WinitTheme::Dark
@@ -256,8 +260,8 @@ impl PanelController {
                 match ev {
                     WindowEvent::Focused(false) => app::post(AppEvent::PanelFocusLost),
                     WindowEvent::RedrawRequested => {
-                        // Фон Acrylic — один раз на окно, когда winit-окно уже точно создано
-                        // (при первом `show()` его ещё нет).
+                        // The Acrylic background, once per window, when the winit window surely exists
+                        // (at the first `show()` it doesn't yet).
                         if !backdrop_done.replace(true) {
                             let backdrop =
                                 window.with_winit_window(apply_backdrop).unwrap_or(false);
@@ -267,8 +271,8 @@ impl PanelController {
                             }
                         }
                         if let Some((t, created)) = opening.take() {
-                            // При создании winit применяет флаги окна позже `show()` —
-                            // повторяем стиль, когда окно уже точно настроено.
+                            // On creation winit applies the window flags later than `show()`, so we
+                            // repeat the style when the window is surely set up.
                             window.with_winit_window(make_tool_window);
                             tracing::info!(
                                 ms = t.elapsed().as_secs_f32() * 1000.0,
@@ -284,7 +288,7 @@ impl PanelController {
             self.window_ready = true;
         }
 
-        // Окно создано на другом мониторе и пересчитало масштаб — поправить позицию по факту.
+        // The window was created on another monitor and recomputed its scale: correct the position by the actual size.
         let actual = panel.window().size();
         let actual = (actual.width as i32, actual.height as i32);
         if actual != placed.size {
@@ -311,7 +315,7 @@ impl PanelController {
         if let Some(panel) = &self.ui {
             panel.set_shown(false);
             if panel.get_animated() {
-                // Окно прячется, когда погаснет содержимое.
+                // The window hides when its content has faded out.
                 let weak = panel.as_weak();
                 self.close_timer
                     .start(TimerMode::SingleShot, CLOSE_ANIMATION, move || {
@@ -331,7 +335,7 @@ impl PanelController {
             });
     }
 
-    /// Уничтожить скрытую панель (по таймеру простоя).
+    /// Destroys the hidden panel (on the idle timer).
     pub fn destroy_if_hidden(&mut self) {
         if !self.visible && self.ui.take().is_some() {
             self.window_ready = false;
@@ -345,8 +349,8 @@ impl PanelController {
         self.ui = None;
     }
 
-    /// Въезд окна от края панели задач к месту, куда его поставил [`place`]: ease-out по
-    /// кубу за [`OPEN_ANIMATION`]. Таймер тикает только на время анимации.
+    /// The window slides in from the taskbar edge to where [`place`] put it: a cubic ease-out
+    /// over [`OPEN_ANIMATION`]. The timer ticks only during the animation.
     fn slide_in(&self, panel: &ui::Panel, edge: placement::Edge) {
         let end = self.slide_target.get();
         let offset = (panel.global::<ui::Theme>().get_anim_open_offset()
@@ -384,7 +388,7 @@ impl PanelController {
             });
     }
 
-    /// Высота панели изменилась — вернуть её к краю панели задач.
+    /// The panel height changed: bring it back to the taskbar edge.
     pub fn reposition(&self) {
         if let Some(panel) = self.ui.as_ref().filter(|_| self.visible) {
             self.slide_target
@@ -392,7 +396,7 @@ impl PanelController {
         }
     }
 
-    /// Обновить данные открытой (или созданной) панели.
+    /// Updates the data of the open (or newly created) panel.
     pub fn refresh(&self, state: &AppState) {
         if let Some(panel) = &self.ui {
             update_devices(panel, state);
@@ -426,8 +430,8 @@ struct Placed {
     scale: f32,
 }
 
-/// Поставить панель у иконки трея с учётом текущей высоты (в физических px по DPI монитора).
-/// `size` — фактический размер окна, если он уже известен.
+/// Places the panel next to the tray icon for its current height (in physical px for the monitor's DPI).
+/// `size` is the actual window size if it is already known.
 fn place(
     panel: &ui::Panel,
     tray_rect: Option<tray_icon::Rect>,
@@ -439,7 +443,7 @@ fn place(
     let theme = panel.global::<ui::Theme>();
     let to_px = |v: f32| (v * mon.scale).round() as i32;
     let margin = to_px(theme.get_panel_margin());
-    // Панель растёт по содержимому до высоты рабочей области; выше — карточки прокручиваются.
+    // The panel grows with its content up to the height of the work area; beyond that the cards scroll.
     let work_height = mon.work.bottom - mon.work.top - 2 * margin;
     theme.set_panel_max_height(work_height.max(0) as f32 / mon.scale);
     let size = size.unwrap_or((
@@ -460,7 +464,7 @@ fn apply_theme(panel: &ui::Panel, theme: &SystemTheme, fonts: &Fonts) {
     apply_theme_global(&panel.global::<ui::Theme>(), theme, fonts);
 }
 
-/// Системная тема в глобал `Theme` окна (у каждого окна Slint свои глобалы).
+/// The system theme into the window's `Theme` global (every Slint window has its own globals).
 pub fn apply_theme_global(t: &ui::Theme<'_>, theme: &SystemTheme, fonts: &Fonts) {
     t.set_dark(theme.apps_dark);
     let (r, g, b) = theme.accent;
@@ -469,8 +473,8 @@ pub fn apply_theme_global(t: &ui::Theme<'_>, theme: &SystemTheme, fonts: &Fonts)
     t.set_icon_font(fonts.icons.into());
 }
 
-/// Обновить карточки на месте: модель живёт, пока живёт окно, меняются только изменившиеся
-/// строки — раскрытые блоки и перетаскиваемый ползунок не сбрасываются.
+/// Updates the cards in place: the model lives as long as the window, and only the rows that changed
+/// are replaced, so expanded blocks and a slider being dragged aren't reset.
 fn update_devices(panel: &ui::Panel, state: &AppState) {
     panel.set_has_devices(!state.devices.is_empty());
     let colors: Vec<slint::Color> = state
@@ -501,7 +505,7 @@ fn update_devices(panel: &ui::Panel, state: &AppState) {
     }
 }
 
-/// Список профилей в шапке панели.
+/// The profile list in the panel header.
 fn update_profiles(panel: &ui::Panel, state: &AppState) {
     let names: Vec<slint::SharedString> = state.profiles.iter().map(Into::into).collect();
     let current = panel.get_profiles();
@@ -529,7 +533,7 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
             name: d.display_name().into(),
             connected: d.connected,
             wired: d.link == Some(Link::Usb),
-            // Подробность ошибки — в логе; в карточке короткое сообщение на языке интерфейса.
+            // The error details are in the log; the card shows a short message in the interface language.
             error: if d.error.is_some() {
                 crate::i18n::tr("Couldn't apply the setting").into()
             } else {
@@ -547,10 +551,12 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
             effect: 0,
             color_custom: false,
             sidetone: -1,
+            eq_presets: ModelRc::default(),
+            eq_preset: -1,
             color: slint::Color::default(),
             battery: d.battery.map_or(-1, |b| i32::from(b.percent)),
             charging: d.battery.is_some_and(|b| b.charging),
-            low: d.battery.is_some_and(BatteryState::is_low),
+            low: d.battery.is_some_and(|b| b.is_low(state.low_battery)),
         })
         .zip(&devices)
         .map(|(mut info, d)| {
@@ -560,12 +566,21 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
                     .and_then(|l| l.color())
                     .is_some_and(|c| state.colors.contains(&c));
             }
+            if d.kind == DeviceKind::Headset
+                && let Some(gains) = state.headset_eq()
+            {
+                let presets = crate::eq_presets::all(&state.eq_presets);
+                let (names, index) = crate::eq_presets::choices(&presets, &gains);
+                let names: Vec<slint::SharedString> = names.iter().map(Into::into).collect();
+                info.eq_presets = ModelRc::new(VecModel::from(names));
+                info.eq_preset = index as i32;
+            }
             info
         })
         .collect()
 }
 
-/// Значения контролов карточки из снимка устройства.
+/// The card's control values from the device snapshot.
 fn fill_controls(info: &mut ui::DeviceInfo, c: &Controls) {
     match c {
         Controls::None => {}
@@ -593,6 +608,7 @@ fn fill_controls(info: &mut ui::DeviceInfo, c: &Controls) {
             brightness,
             brightness_range,
             lighting,
+            ..
         } => {
             info.brightness = brightness.map_or(-1, i32::from);
             if let Some((min, max)) = brightness_range {
@@ -607,10 +623,10 @@ fn fill_controls(info: &mut ui::DeviceInfo, c: &Controls) {
     }
 }
 
-/// Системная настройка «Эффекты анимации» (`SPI_GETCLIENTAREAANIMATION`).
+/// The system "Animation effects" setting (`SPI_GETCLIENTAREAANIMATION`).
 fn client_area_animation() -> bool {
     let mut on = windows::core::BOOL(1);
-    // SAFETY: запись BOOL в локальную переменную.
+    // SAFETY: writes a BOOL into a local variable.
     let ok = unsafe {
         SystemParametersInfoW(
             SPI_GETCLIENTAREAANIMATION,
@@ -630,16 +646,16 @@ fn hwnd_of(w: &WinitWindow) -> Option<HWND> {
     Some(HWND(h.hwnd.get() as *mut _))
 }
 
-/// Системный фон Mica (`DWMSBT_MAINWINDOW`, Windows 11 22H2+).
-/// Рамка DWM расширяется на всё окно: тогда DWM берёт альфу пикселей, которые рисует
-/// программный рендер Slint (premultiplied ARGB), и прозрачный фон панели показывает Acrylic.
-/// `false` — система не умеет, остаётся сплошной фон из темы.
+/// The system Mica background (`DWMSBT_MAINWINDOW`, Windows 11 22H2+).
+/// The DWM frame is extended to the whole window: then DWM uses the alpha of the pixels drawn by
+/// Slint's software renderer (premultiplied ARGB), and the panel's transparent background shows the backdrop.
+/// `false`: the system can't do it, and a solid background from the theme remains.
 fn apply_backdrop(w: &WinitWindow) -> bool {
     let Some(hwnd) = hwnd_of(w) else {
         return false;
     };
-    // Acrylic (`DWMSBT_TRANSIENTWINDOW`) на этом окне DWM не рисует — фон просто прозрачный
-    // (проверено 2026-10-20); Mica рисуется и дешевле: тон берётся из обоев, без живого размытия.
+    // DWM doesn't draw Acrylic (`DWMSBT_TRANSIENTWINDOW`) on this window: the background is just transparent
+    // (verified 2026-10-20); Mica is drawn and is cheaper: its tone comes from the wallpaper, with no live blur.
     let kind = DWMSBT_MAINWINDOW;
     let margins = MARGINS {
         cxLeftWidth: -1,
@@ -647,7 +663,7 @@ fn apply_backdrop(w: &WinitWindow) -> bool {
         cyTopHeight: -1,
         cyBottomHeight: -1,
     };
-    // SAFETY: hwnd принадлежит живому окну этого потока; атрибут и поля — локальные значения.
+    // SAFETY: hwnd belongs to a live window of this thread; the attribute and fields are local values.
     unsafe {
         DwmSetWindowAttribute(
             hwnd,
@@ -661,17 +677,17 @@ fn apply_backdrop(w: &WinitWindow) -> bool {
     }
 }
 
-/// `WS_EX_TOOLWINDOW`: без кнопки на панели задач и без Alt+Tab.
+/// `WS_EX_TOOLWINDOW`: no taskbar button and no Alt+Tab.
 fn make_tool_window(w: &WinitWindow) {
     let Some(hwnd) = hwnd_of(w) else {
         return;
     };
-    // SAFETY: hwnd принадлежит живому окну этого потока.
+    // SAFETY: hwnd belongs to a live window of this thread.
     unsafe {
         let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         let style = (style | WS_EX_TOOLWINDOW.0 as isize) & !(WS_EX_APPWINDOW.0 as isize);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
-        // Без системного меню: иначе DWM рисует кнопку «×» в рамке, расширенной под фон Mica.
+        // No system menu: otherwise DWM draws a "×" button in the frame extended for the Mica background.
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE) & !(WS_SYSMENU.0 as isize);
         SetWindowLongPtrW(hwnd, GWL_STYLE, style);
         let _ = SetWindowPos(

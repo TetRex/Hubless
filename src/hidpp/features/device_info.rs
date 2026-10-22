@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `0x0003` DeviceFwVersion: модель, транспорты, версии прошивок.
+//! `0x0003` DeviceFwVersion: model, transports, firmware versions.
 //!
-//! Раскладка ответов — по Solaar; в дампе рядом сохраняются сырые байты,
-//! чтобы расшифровку можно было перепроверить.
+//! The reply layouts are per Solaar; the raw bytes are saved next to them in the dump
+//! so that the decoding can be rechecked.
 
 use crate::hidpp::{Device, Error};
 
@@ -10,13 +10,13 @@ pub const ID: u16 = 0x0003;
 const GET_DEVICE_INFO: u8 = 0;
 const GET_FW_INFO: u8 = 1;
 
-/// Байты unit id в ответе GetDeviceInfo — идентификатор экземпляра; не разбираем, в дампах маскируем.
+/// The unit ID bytes in the GetDeviceInfo reply identify the instance; not decoded, masked in dumps.
 pub const UNIT_ID_BYTES: std::ops::Range<usize> = 1..5;
 
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
     pub entity_count: u8,
-    /// Битовая маска транспортов (USB, eQuad, BT, BLE...).
+    /// A bitmask of transports (USB, eQuad, BT, BLE...).
     pub transport: u16,
     pub model_ids: [u16; 3],
     pub extended_model_id: u8,
@@ -28,7 +28,7 @@ pub struct DeviceInfo {
 pub struct FirmwareInfo {
     pub entity: u8,
     pub kind: &'static str,
-    /// Например `U1 12.01.B0040`; для аппаратной ревизии — только номер.
+    /// For example `U1 12.01.B0040`; for the hardware revision, only the number.
     pub version: String,
     pub raw: Vec<u8>,
 }

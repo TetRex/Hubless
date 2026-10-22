@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Отчёты HID++: short `0x10` (7 байт), long `0x11` (20), very long `0x12` (64).
+//! HID++ reports: short `0x10` (7 bytes), long `0x11` (20), very long `0x12` (64).
 //!
-//! Формат: `[report_id][device_index][feature_index | sub_id][function<<4 | sw_id | address][params...]`.
+//! Format: `[report_id][device_index][feature_index | sub_id][function<<4 | sw_id | address][params...]`.
 
 use std::fmt;
 
@@ -13,12 +13,12 @@ pub const SHORT_LEN: usize = 7;
 pub const LONG_LEN: usize = 20;
 pub const VERY_LONG_LEN: usize = 64;
 
-/// `device_index` проводного устройства или самого ресивера.
+/// The `device_index` of a wired device or of the receiver itself.
 pub const DEVICE_SELF: u8 = 0xFF;
 
-/// Ошибка HID++ 2.0: `feature_index = 0xFF`.
+/// HID++ 2.0 error: `feature_index = 0xFF`.
 pub const ERROR_20: u8 = 0xFF;
-/// Ошибка HID++ 1.0: `sub_id = 0x8F`.
+/// HID++ 1.0 error: `sub_id = 0x8F`.
 pub const ERROR_10: u8 = 0x8F;
 
 pub const fn report_len(report_id: u8) -> Option<usize> {
@@ -37,7 +37,7 @@ pub struct Report {
 }
 
 impl Report {
-    /// Отчёт из сырых байт (с report id). Неизвестный id или короткий буфер — `None`.
+    /// A report from raw bytes (with the report ID). An unknown ID or a short buffer gives `None`.
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         let len = report_len(*bytes.first()?)?;
         if bytes.len() < len {
@@ -48,7 +48,7 @@ impl Report {
         Some(Self { buf, len })
     }
 
-    /// Новый отчёт; параметры дополняются нулями до размера отчёта.
+    /// A new report; the parameters are padded with zeros to the report size.
     pub fn new(report_id: u8, device: u8, sub_id: u8, address: u8, params: &[u8]) -> Self {
         let len = report_len(report_id).expect("valid HID++ report id");
         assert!(
@@ -73,12 +73,12 @@ impl Report {
         self.buf[1]
     }
 
-    /// HID++ 2.0: индекс фичи; HID++ 1.0: sub id.
+    /// HID++ 2.0: the feature index; HID++ 1.0: the sub ID.
     pub fn sub_id(&self) -> u8 {
         self.buf[2]
     }
 
-    /// HID++ 2.0: `function << 4 | sw_id`; HID++ 1.0: адрес регистра.
+    /// HID++ 2.0: `function << 4 | sw_id`; HID++ 1.0: the register address.
     pub fn address(&self) -> u8 {
         self.buf[3]
     }
@@ -105,7 +105,7 @@ pub fn hex(bytes: &[u8]) -> String {
     s
 }
 
-/// Коды ошибок HID++ 2.0.
+/// HID++ 2.0 error codes.
 pub fn error_20_name(code: u8) -> &'static str {
     match code {
         0x00 => "no error",
@@ -122,7 +122,7 @@ pub fn error_20_name(code: u8) -> &'static str {
     }
 }
 
-/// Коды ошибок HID++ 1.0.
+/// HID++ 1.0 error codes.
 pub fn error_10_name(code: u8) -> &'static str {
     match code {
         0x01 => "invalid sub id",

@@ -1014,31 +1014,31 @@
           "wpid": "40B0"
         },
         {
-          "error": "нет ответа",
+          "error": "no reply",
           "label": "pairing_info_slot2",
           "params": "21 00 00",
           "register": "B5"
         },
         {
-          "error": "нет ответа",
+          "error": "no reply",
           "label": "pairing_info_slot3",
           "params": "22 00 00",
           "register": "B5"
         },
         {
-          "error": "нет ответа",
+          "error": "no reply",
           "label": "pairing_info_slot4",
           "params": "23 00 00",
           "register": "B5"
         },
         {
-          "error": "нет ответа",
+          "error": "no reply",
           "label": "pairing_info_slot5",
           "params": "24 00 00",
           "register": "B5"
         },
         {
-          "error": "нет ответа",
+          "error": "no reply",
           "label": "pairing_info_slot6",
           "params": "25 00 00",
           "register": "B5"
@@ -1047,7 +1047,7 @@
       "release": "0402",
       "role": "receiver",
       "self_protocol": {
-        "error": "нет ответа"
+        "error": "no reply"
       },
       "usb_serial": null
     }

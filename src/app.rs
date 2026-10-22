@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Состояние приложения на главном потоке и диспетчер событий.
+//! App state on the main thread and the event dispatcher.
 //!
-//! Все внешние источники (tray-icon, скрытое окно, таймеры, панель) шлют [`AppEvent`]
-//! через [`post`]: событие выполняется позже в event loop Slint, без реентерабельности
-//! внутри оконных процедур.
+//! All external sources (tray-icon, the hidden window, timers, the panel) send an [`AppEvent`]
+//! through [`post`]: the event runs later in the Slint event loop, with no reentrancy
+//! inside window procedures.
 
 use std::cell::RefCell;
 
@@ -14,57 +14,57 @@ use windows::core::{PCWSTR, w};
 use crate::config::Config;
 use crate::config::log_dir;
 use crate::devices::manager::{self, Command, Role, Snapshot};
+use crate::eq_presets;
 use crate::foreground::ForegroundHook;
 use crate::hidden_window::HiddenWindow;
+use crate::hidpp::features::battery::ChargeState;
 use crate::i18n::{self, tr};
 use crate::panel::PanelController;
 use crate::report;
 use crate::settings::{self, DeviceSettings, Lighting, PanelLayout, SettingsFile};
 use crate::settings_window::{self, SettingsAction, SettingsController};
-use crate::state::{AppState, BatteryState, DeviceKind, LOW_BATTERY, Link};
+use crate::state::{AppState, BatteryState, DeviceKind, Link};
 use crate::theme::SystemTheme;
 use crate::tray::{self, Tray, autostart};
 use crate::win::wide;
 
-#[derive(Debug, Clone, Copy)]
-pub enum MenuCommand {
-    Exit,
-}
-
-/// Изменение настройки из панели.
+/// A setting change from the panel.
 #[derive(Debug, Clone, Copy)]
 pub enum PanelAction {
-    /// DPI мыши (переводит мышь в режим host).
+    /// Mouse DPI (switches the mouse to host mode).
     Dpi(u16),
-    /// Любое значение DPI с ползунка — применяется после паузы, подгоняется к допустимому.
+    /// Any DPI value from the slider: applied after a pause, snapped to an allowed value.
     DpiDrag(f32),
-    /// Любое значение DPI из поля ввода — сразу, подгоняется к допустимому.
+    /// Any DPI value from the input field: applied right away, snapped to an allowed value.
     DpiExact(f32),
-    /// Частота опроса мыши, Гц (переводит мышь в режим host).
+    /// Mouse polling rate, Hz (switches the mouse to host mode).
     Rate(u32),
-    /// `true` — настройки мыши применяет Hubless (host), `false` — из памяти мыши (onboard).
+    /// `true`: Hubless applies the mouse settings (host); `false`: they come from the mouse's memory (onboard).
     MouseHost(bool),
-    /// Lift-off мыши (в режиме host).
+    /// Mouse lift-off (in host mode).
     LiftOff(settings::LiftOff),
-    /// Яркость клавиатуры — применяется после паузы (debounce).
+    /// Keyboard brightness: applied after a pause (debounce).
     Brightness(u16),
-    /// Эффект подсветки по индексу списка в карточке (0 — управляет клавиатура).
+    /// Lighting effect: 1 static … 5 ripple (the card's list item + 1); 0 hands the
+    /// lighting back to the keyboard (the panel has no such item).
     Effect(i32),
-    /// Статичный цвет подсветки.
+    /// A static lighting colour.
     Color([u8; 3]),
-    /// Свой цвет: добавить в палитру (и включить), убрать из палитры.
+    /// Your own colour: add it to the palette (and turn it on), or remove it from the palette.
     AddColor([u8; 3]),
     RemoveColor([u8; 3]),
-    /// Sidetone гарнитуры 0–100 — после паузы (debounce).
+    /// Headset sidetone 0–100: after a pause (debounce).
     Sidetone(u8),
-    /// Автоотключение гарнитуры, минуты (0 — никогда).
+    /// Headset auto power-off, minutes (0 = never).
     AutoOff(u8),
-    /// Профиль настроек по индексу в списке шапки панели.
+    /// A headset equalizer preset by its index in the list (built-in ones, then your own).
+    EqPreset(i32),
+    /// A settings profile by its index in the panel header list.
     Profile(i32),
 }
 
-/// Эффект для пункта списка в карточке клавиатуры (порядок — как в `device_card.slint`),
-/// параметры анимаций — по умолчанию (как в Solaar).
+/// The effect for an item of the keyboard card's list (the order is as in `device_card.slint`);
+/// animation parameters are the defaults (as in Solaar).
 fn effect_by_index(i: i32, color: [u8; 3]) -> Option<Lighting> {
     use crate::hidpp::features::rgb_effects::{Direction, RIPPLE_PERIOD_DEFAULT};
     const PERIOD_MS: u16 = 5000;
@@ -93,7 +93,7 @@ fn effect_by_index(i: i32, color: [u8; 3]) -> Option<Lighting> {
     })
 }
 
-/// Индекс пункта списка эффектов для текущей подсветки (0 — управляет клавиатура).
+/// The effect list index for the current lighting (0: the keyboard controls it).
 pub fn effect_index(l: Option<Lighting>) -> i32 {
     match l {
         None | Some(Lighting::Off) => 0,
@@ -105,7 +105,7 @@ pub fn effect_index(l: Option<Lighting>) -> i32 {
     }
 }
 
-/// Ближайшее к `value` значение DPI из списка допустимых (список по возрастанию).
+/// The allowed DPI value nearest to `value` (the list is ascending).
 fn nearest_dpi(supported: &[u16], value: f32) -> Option<u16> {
     if !value.is_finite() {
         return None;
@@ -117,53 +117,57 @@ fn nearest_dpi(supported: &[u16], value: f32) -> Option<u16> {
     })
 }
 
-/// Пауза перед записью яркости: слайдер шлёт значения непрерывно.
+/// A pause before writing brightness: the slider sends values continuously.
 const SLIDER_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
-/// Пауза перед сохранением кривой эквалайзера в гарнитуре (последняя запись — с флагом сохранения).
+/// A pause before saving the equalizer curve in the headset (the last write carries the save flag).
 const EQ_SAVE_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
-/// Цвет подсветки, когда свой цвет включают впервые.
+/// The update check at startup isn't immediate: after logging in to Windows the network doesn't come up instantly.
+const STARTUP_UPDATE_DELAY: std::time::Duration = std::time::Duration::from_secs(30);
+/// The lighting colour when your own colour is turned on for the first time.
 const DEFAULT_COLOR: [u8; 3] = [0xFF, 0x80, 0x00];
 
 #[derive(Debug)]
 pub enum AppEvent {
-    /// Левый клик по иконке (прямоугольник иконки в физ. px).
+    /// A click on the icon (the icon's rectangle in physical px).
     TrayClick(tray_icon::Rect),
-    Menu(MenuCommand),
-    /// Запрос от второго экземпляра.
+    /// Exit: the button in the panel or `hubless --quit`.
+    Exit,
+    /// A request from a second instance.
     ShowPanel,
-    /// Esc в панели.
+    /// Esc in the panel.
     PanelDismiss,
     PanelFocusLost,
-    /// Высота панели изменилась.
+    /// The panel height changed.
     PanelResized,
-    /// Панель скрыта дольше порога — уничтожить окно.
+    /// The panel has been hidden for longer than the threshold: destroy the window.
     PanelIdle,
     ThemeChanged,
     DevicesChanged,
-    /// `hubless --test-toast`: показать тестовое уведомление.
+    /// `hubless --test-toast`: show a test notification.
     TestNotification,
-    /// Состояние устройства от device manager (`None` — не найдено).
+    /// Device state from the device manager (`None`: not found).
     Device(Role, Option<Snapshot>),
-    /// Действие в карточке панели.
+    /// An action in a panel card.
     Panel(PanelAction),
-    /// Яркость после паузы debounce.
+    /// Brightness after the debounce pause.
     BrightnessSettled(u16),
-    /// Sidetone после паузы debounce.
+    /// Sidetone after the debounce pause.
     SidetoneSettled(u8),
-    /// Эквалайзер гарнитуры после паузы debounce (живая запись) и после паузы сохранения.
+    /// Headset equalizer after the debounce pause (the live write) and after the save pause.
     EqSettled,
     EqSave,
-    /// DPI с ползунка после паузы debounce.
+    /// DPI from the slider after the debounce pause.
     DpiSettled(f32),
-    /// Сменилось активное окно (имя exe в нижнем регистре).
+    /// The foreground window changed (exe name in lowercase).
     Foreground(String),
-    /// Открыть окно настроек (шестерёнка в панели); `Some` — на разделе с этим номером.
+    /// Open the settings window (the gear in the panel); `Some` opens the section with this number.
     OpenSettings(Option<usize>),
-    /// Действие в окне настроек.
+    /// An action in the settings window.
     Settings(SettingsAction),
-    /// Проверка обновлений завершилась (в фоновом потоке).
+    /// The update check finished (on a background thread): from the button in the settings and at startup.
     UpdateChecked(Result<crate::update::Release, String>),
-    /// Отчёт об устройствах собран (в фоновом потоке).
+    StartupUpdate(Result<crate::update::Release, String>),
+    /// The device report is ready (on a background thread).
     ReportReady(Result<report::Report, String>),
 }
 
@@ -171,18 +175,28 @@ struct App {
     tray: Tray,
     panel: PanelController,
     state: AppState,
-    /// Уведомление о низком заряде уже показано (сбрасывается при зарядке или заряде ≥ порога).
+    /// The low battery notification was already shown (reset when charging or when the charge is ≥ the threshold).
     low_notified: bool,
+    /// Charging devices that were charging while Hubless ran (the "charged" notification is only
+    /// for them), and those it was already shown for. Both are reset when the device is taken off the charger.
+    charging_seen: Vec<DeviceKind>,
+    charged_notified: Vec<DeviceKind>,
+    /// `config.toml`: battery threshold, notifications, update check.
+    config: Config,
     devices: manager::Handle,
-    /// Debounce слайдеров яркости и sidetone.
+    /// Debounce for the brightness and sidetone sliders.
     brightness_timer: slint::Timer,
     sidetone_timer: slint::Timer,
-    /// Эквалайзер: кривая, которую тянут в настройках, и таймеры записи и сохранения.
+    /// Equalizer: the curve being dragged in the settings, and the write and save timers.
     eq_gains: Option<[i8; crate::headset_eq::BANDS]>,
     eq_timer: slint::Timer,
     eq_save_timer: slint::Timer,
+    /// The profile the pending equalizer edit belongs to (`None`: the curve came from a profile switch,
+    /// nothing to save), and the curve that was on before the edit started.
+    eq_profile: Option<String>,
+    eq_before: Option<[i8; crate::headset_eq::BANDS]>,
     dpi_timer: slint::Timer,
-    /// Профиль, включённый по активному окну (`None` — выбранный вручную).
+    /// The profile switched on by the foreground window (`None`: the one selected by hand).
     auto_profile: Option<String>,
     settings: SettingsController,
     _foreground: Option<ForegroundHook>,
@@ -196,17 +210,27 @@ thread_local! {
 pub fn init() -> Result<(), Box<dyn std::error::Error>> {
     let theme = SystemTheme::read();
     tracing::info!(?theme, "системная тема");
+    let config = Config::load().0;
+    let check_updates = config.check_updates;
     let app = App {
         tray: Tray::new(theme.taskbar_light)?,
         panel: PanelController::new(theme),
-        state: AppState::default(),
+        state: AppState {
+            low_battery: config.low_battery_percent(),
+            ..AppState::default()
+        },
         low_notified: false,
+        charging_seen: Vec::new(),
+        charged_notified: Vec::new(),
+        config,
         devices: manager::spawn(|role, s| post(AppEvent::Device(role, s))),
         brightness_timer: slint::Timer::default(),
         sidetone_timer: slint::Timer::default(),
         eq_gains: None,
         eq_timer: slint::Timer::default(),
         eq_save_timer: slint::Timer::default(),
+        eq_profile: None,
+        eq_before: None,
         dpi_timer: slint::Timer::default(),
         auto_profile: None,
         settings: SettingsController::default(),
@@ -219,16 +243,32 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
             app.refresh_profiles();
         }
     });
+    if check_updates {
+        check_updates_later();
+    }
     Ok(())
+}
+
+/// Checks for updates after [`STARTUP_UPDATE_DELAY`] (turned on in the settings).
+fn check_updates_later() {
+    let spawned = std::thread::Builder::new()
+        .name("update-check".into())
+        .spawn(|| {
+            std::thread::sleep(STARTUP_UPDATE_DELAY);
+            post(AppEvent::StartupUpdate(crate::update::latest()));
+        });
+    if let Err(e) = spawned {
+        tracing::warn!("проверка обновлений при запуске: {e}");
+    }
 }
 
 pub fn shutdown() {
     tray::remove_handlers();
-    // Drop убирает иконку из трея и закрывает окна.
+    // Drop removes the tray icon and closes the windows.
     drop(APP.take());
 }
 
-/// Поставить событие в очередь event loop (можно из любого потока).
+/// Puts an event into the event loop queue (from any thread).
 pub fn post(ev: AppEvent) {
     if let Err(e) = slint::invoke_from_event_loop(move || dispatch(ev)) {
         tracing::warn!("invoke_from_event_loop: {e}");
@@ -261,7 +301,7 @@ impl App {
             AppEvent::DevicesChanged => {
                 tracing::debug!("HID hotplug");
                 self.devices.send(Command::Rescan);
-                // Сюда же приходит «настройки изменились» от CLI — профили могли поменяться.
+                // "Settings changed" from the CLI arrives here too, so the profiles may have changed.
                 self.refresh_profiles();
             }
             AppEvent::Foreground(exe) => self.on_foreground(exe),
@@ -269,6 +309,7 @@ impl App {
             AppEvent::Settings(action) => self.on_settings(action),
             AppEvent::ReportReady(result) => self.settings.report_finished(result),
             AppEvent::UpdateChecked(result) => self.settings.update_finished(result),
+            AppEvent::StartupUpdate(result) => self.startup_update(result),
             AppEvent::Device(role, s) => self.on_device(role, s),
             AppEvent::Panel(action) => self.on_panel(action),
             AppEvent::DpiSettled(v) => self.set_free_dpi(v),
@@ -282,14 +323,18 @@ impl App {
                 }
             }
             AppEvent::EqSave => {
-                // Как G Hub: последняя запись с флагом «сохранить в гарнитуре».
+                // Like G Hub: the last write carries the "save in the headset" flag.
                 if let Some(gains) = self.eq_gains.take() {
                     tracing::info!(?gains, "эквалайзер: сохранить в гарнитуре");
                     self.devices
                         .send_to(Role::Headset, Command::Eq(gains, true));
-                    // Кривую — в состояние сразу: до ответа гарнитуры окно не покажет старую.
+                    // The curve goes into the state right away, so the window won't show the old one before the headset replies.
                     self.set_state_eq(gains);
                     self.settings.set_eq_editing(false);
+                    if let Some(name) = self.eq_profile.take() {
+                        self.save_profile_eq(&name, gains);
+                    }
+                    self.eq_before = None;
                 }
             }
             AppEvent::BrightnessSettled(v) => {
@@ -299,7 +344,7 @@ impl App {
                 tr("Hubless: notification test"),
                 tr("This is what the low battery warning looks like."),
             ),
-            AppEvent::Menu(cmd) => self.menu(cmd),
+            AppEvent::Exit => self.exit(),
         }
     }
 
@@ -310,7 +355,8 @@ impl App {
             Role::Keyboard => DeviceKind::Keyboard,
             Role::Headset => DeviceKind::Headset,
         };
-        // Нет снимка — устройства (и его ресивера или адаптера) нет: карточка исчезает.
+        let had_eq = self.state.headset_eq().is_some();
+        // No snapshot: the device (and its receiver or adapter) is gone, so the card disappears.
         match s {
             None => self.state.remove_device(kind),
             Some(s) => {
@@ -319,16 +365,88 @@ impl App {
                 m.link = s
                     .connected
                     .then_some(if s.wired { Link::Usb } else { Link::Wireless });
-                m.battery = s.battery.map(|b| BatteryState {
-                    percent: b.percent,
-                    charging: b.charging.is_charging() || b.external_power,
+                m.battery = s.battery.map(|b| {
+                    let charging = b.charging.is_charging() || b.external_power;
+                    BatteryState {
+                        percent: b.percent,
+                        charging,
+                        full: b.charging == ChargeState::Full || (charging && b.percent >= 100),
+                    }
                 });
                 m.name = s.name;
                 m.controls = s.controls;
                 m.error = s.error;
             }
         }
+        // The headset returns the saved curve: a write without the "save" flag isn't visible to reads
+        // (2026-10-22). Until the edit is saved, we keep it in the state; otherwise the selected preset
+        // jumps back to the old one for those seconds.
+        if kind == DeviceKind::Headset
+            && let Some(gains) = self.eq_gains
+        {
+            self.set_state_eq(gains);
+        }
+        // The headset connected (or Hubless started): give it the active profile's curve.
+        if kind == DeviceKind::Headset && !had_eq && self.state.headset_eq().is_some() {
+            self.apply_profile_eq();
+        }
+        self.check_charged(kind);
         self.refresh_status();
+    }
+
+    /// The "charged" notification: one per charge, and only if the device was charging while Hubless ran,
+    /// so it doesn't appear at startup with a device that is already charged on the cable.
+    fn check_charged(&mut self, kind: DeviceKind) {
+        let battery = self
+            .state
+            .devices
+            .iter()
+            .find(|d| d.kind == kind && d.connected)
+            .and_then(|d| d.battery);
+        match battery {
+            Some(b) if b.full => {
+                if self.charging_seen.contains(&kind) && !self.charged_notified.contains(&kind) {
+                    self.charged_notified.push(kind);
+                    let name = self
+                        .state
+                        .devices
+                        .iter()
+                        .find(|d| d.kind == kind)
+                        .map(|d| d.display_name().to_owned())
+                        .unwrap_or_default();
+                    tracing::info!(name, "заряжено полностью");
+                    if self.config.notify_charged {
+                        self.tray.notify(tr("Fully charged"), &name);
+                    }
+                }
+            }
+            Some(b) if b.charging => {
+                if !self.charging_seen.contains(&kind) {
+                    self.charging_seen.push(kind);
+                }
+            }
+            _ => {
+                self.charging_seen.retain(|k| *k != kind);
+                self.charged_notified.retain(|k| *k != kind);
+            }
+        }
+    }
+
+    /// The result of the update check at startup: a new version gives a notification and the "Download" button
+    /// in the "General" section.
+    fn startup_update(&mut self, result: Result<crate::update::Release, String>) {
+        match result {
+            Ok(r) if crate::update::is_newer(&r.version, env!("CARGO_PKG_VERSION")) => {
+                tracing::info!(version = r.version, "доступна новая версия");
+                self.tray.notify(
+                    &tr("Hubless {} is available").replace("{}", &r.version),
+                    tr("Download it in Settings → General."),
+                );
+                self.settings.found_update(r);
+            }
+            Ok(r) => tracing::info!(latest = r.version, "обновлений нет"),
+            Err(e) => tracing::warn!("проверка обновлений при запуске: {e}"),
+        }
     }
 
     fn on_panel(&mut self, action: PanelAction) {
@@ -381,7 +499,7 @@ impl App {
                 s.keyboard.lighting = effect_by_index(i, color);
             }),
             PanelAction::AddColor(color) => {
-                // Новый цвет — в палитру и сразу на клавиатуру.
+                // A new colour goes into the palette and straight onto the keyboard.
                 if self.edit_colors(|f| f.add_color(color)) {
                     self.on_panel(PanelAction::Color(color));
                 }
@@ -406,6 +524,20 @@ impl App {
                 );
             }
             PanelAction::AutoOff(m) => self.devices.send_to(Role::Headset, Command::AutoOff(m)),
+            PanelAction::EqPreset(i) => {
+                // The "Custom" item at the end of the list isn't a preset: nothing to change.
+                let presets = eq_presets::all(&self.state.eq_presets);
+                let Some(preset) = presets.get(i.max(0) as usize) else {
+                    return;
+                };
+                let current = self.eq_gains.or_else(|| self.headset_eq());
+                if current.is_none_or(|g| g == preset.gains) {
+                    return;
+                }
+                tracing::info!(preset = preset.name, gains = ?preset.gains, "эквалайзер: пресет");
+                self.settings.show_eq_gains(&preset.gains);
+                self.user_eq_changed(preset.gains, std::time::Duration::ZERO);
+            }
             PanelAction::Profile(i) => {
                 let mut file = SettingsFile::load();
                 let Some(name) = file.names().get(i.max(0) as usize).cloned() else {
@@ -415,7 +547,7 @@ impl App {
                     tracing::error!("профиль: {e}");
                     return;
                 }
-                // Ручной выбор отменяет автопереключение до следующей смены окна.
+                // Choosing by hand cancels automatic switching until the next window change.
                 self.auto_profile = None;
                 settings::set_auto_profile(None);
                 tracing::info!(profile = name, "профиль выбран вручную");
@@ -424,7 +556,7 @@ impl App {
         }
     }
 
-    /// Активное окно сменилось: включить профиль, привязанный к его exe, или вернуться к ручному.
+    /// The foreground window changed: switch on the profile bound to its exe, or go back to the one chosen by hand.
     fn on_foreground(&mut self, exe: String) {
         let target = SettingsFile::load()
             .profile_for_exe(&exe)
@@ -438,21 +570,88 @@ impl App {
         self.profile_changed();
     }
 
-    /// Профиль сменился: применить его настройки и обновить шапку панели.
+    /// The profile changed: apply its settings and update the panel header.
     fn profile_changed(&mut self) {
         self.devices.send_to(Role::Mouse, Command::Apply);
         self.devices.send_to(Role::Keyboard, Command::Apply);
+        self.apply_profile_eq();
         self.refresh_profiles();
     }
 
-    /// Перечитать профили и раскладку панели из `devices.toml`.
+    /// Puts the active profile's equalizer curve on the headset (its own, otherwise Default's): on a
+    /// profile switch and when the headset connects. A profile without a curve leaves the headset as is.
+    fn apply_profile_eq(&mut self) {
+        // A pending edit belongs to the previous profile: save it there first.
+        if let (Some(name), Some(gains)) = (self.eq_profile.take(), self.eq_gains) {
+            self.save_profile_eq(&name, gains);
+        }
+        self.eq_before = None;
+        let file = SettingsFile::load();
+        let Some(target) = file
+            .eq_for(&file.current_name())
+            .and_then(|g| <[i8; crate::headset_eq::BANDS]>::try_from(g).ok())
+        else {
+            return;
+        };
+        // No headset: it gets the curve when it connects.
+        let Some(current) = self.eq_gains.or_else(|| self.headset_eq()) else {
+            return;
+        };
+        if current == target {
+            return;
+        }
+        tracing::info!(gains = ?target, "эквалайзер: кривая профиля");
+        self.settings.show_eq_gains(&target);
+        self.eq_changed(target, std::time::Duration::ZERO);
+    }
+
+    /// An equalizer change by the user (a preset or the sliders): it also goes into the active profile
+    /// when the curve is saved in the headset.
+    fn user_eq_changed(
+        &mut self,
+        gains: [i8; crate::headset_eq::BANDS],
+        delay: std::time::Duration,
+    ) {
+        if self.eq_profile.is_none() {
+            self.eq_before = self.headset_eq();
+        }
+        self.eq_profile = Some(SettingsFile::load().current_name());
+        self.eq_changed(gains, delay);
+    }
+
+    /// Saves the equalizer curve in profile `name` (see [`SettingsFile::set_eq`]).
+    fn save_profile_eq(&mut self, name: &str, gains: [i8; crate::headset_eq::BANDS]) {
+        let mut file = SettingsFile::load();
+        file.set_eq(name, &gains, self.eq_before.as_ref().map(|g| g.as_slice()));
+        match file.save() {
+            Ok(()) => tracing::info!(profile = name, ?gains, "эквалайзер: сохранён в профиле"),
+            Err(e) => tracing::error!("devices.toml: {e}"),
+        }
+    }
+
+    /// Rereads the profiles and the panel layout from `devices.toml`.
     fn refresh_profiles(&mut self) {
         let file = SettingsFile::load();
         let colors = file.custom_colors();
-        if file.panel != self.state.layout || colors != self.state.colors {
+        let eq_presets = file.custom_eq_presets();
+        if file.panel != self.state.layout
+            || colors != self.state.colors
+            || eq_presets != self.state.eq_presets
+        {
             self.state.layout = file.panel.clone();
             self.state.colors = colors;
+            self.state.eq_presets = eq_presets;
             self.refresh_status();
+        }
+        // Key colours of the active profile (taking automatic switching by window into account) and the layout.
+        let key_colors = DeviceSettings::load().keyboard.key_colors();
+        let key_layout = crate::keyboard_layout::Layout::parse(
+            file.keyboard_layout.as_deref().unwrap_or_default(),
+        );
+        if key_colors != self.state.key_colors || key_layout != self.state.key_layout {
+            self.state.key_colors = key_colors;
+            self.state.key_layout = key_layout;
+            self.settings.update_devices(&self.state);
         }
         let names = file.names();
         let current = file.current_name();
@@ -471,7 +670,7 @@ impl App {
         self.settings.open(self.panel.theme(), &self.state, page);
     }
 
-    /// Изменить свои цвета палитры в `devices.toml` и показать их в панели.
+    /// Changes your own palette colours in `devices.toml` and shows them in the panel.
     fn edit_colors(&mut self, f: impl FnOnce(&mut SettingsFile) -> Result<(), String>) -> bool {
         let mut file = SettingsFile::load();
         if let Err(e) = f(&mut file).and_then(|()| file.save()) {
@@ -482,18 +681,12 @@ impl App {
         true
     }
 
-    /// Кривая эквалайзера гарнитуры из последнего опроса.
+    /// The headset's equalizer curve from the last poll.
     fn headset_eq(&self) -> Option<[i8; crate::headset_eq::BANDS]> {
-        self.state.devices.iter().find_map(|d| match &d.controls {
-            manager::Controls::Headset { eq: Some(eq), .. } if d.connected => {
-                let gains: Vec<i8> = eq.iter().map(|&(_, g)| g).collect();
-                gains.try_into().ok()
-            }
-            _ => None,
-        })
+        self.state.headset_eq()
     }
 
-    /// Кривая эквалайзера гарнитуры в состоянии приложения (до ответа гарнитуры).
+    /// The headset's equalizer curve in the app state (before the headset replies).
     fn set_state_eq(&mut self, gains: [i8; crate::headset_eq::BANDS]) {
         for d in &mut self.state.devices {
             if let manager::Controls::Headset { eq: Some(eq), .. } = &mut d.controls {
@@ -504,11 +697,14 @@ impl App {
         }
     }
 
-    /// Новая кривая эквалайзера: записать после паузы `delay`, сохранить в гарнитуре через
-    /// [`EQ_SAVE_DELAY`] тишины (промежуточные записи — без сохранения, как у G Hub).
+    /// A new equalizer curve: write it after a `delay` pause, and save it in the headset after
+    /// [`EQ_SAVE_DELAY`] of quiet (intermediate writes don't save, as with G Hub).
     fn eq_changed(&mut self, gains: [i8; crate::headset_eq::BANDS], delay: std::time::Duration) {
         self.eq_gains = Some(gains);
         self.settings.set_eq_editing(true);
+        // The curve goes into the state right away, so the selected preset is visible before the headset replies.
+        self.set_state_eq(gains);
+        self.refresh_status();
         self.eq_timer
             .start(slint::TimerMode::SingleShot, delay, || {
                 post(AppEvent::EqSettled);
@@ -519,7 +715,48 @@ impl App {
             });
     }
 
-    /// Изменить порядок или видимость карточек в `devices.toml` и показать результат.
+    /// Key colour (`None` removes the key's own colour): saved in the active profile (the one applied to the
+    /// keyboard), shown in the settings window and painted on the keyboard; keys without their own colour get
+    /// the effect's colour.
+    fn set_keys(
+        &mut self,
+        keys: &[&'static crate::keyboard_layout::Key],
+        rgb: Option<[u8; 3]>,
+        base: Option<[u8; 3]>,
+    ) {
+        let saved = DeviceSettings::update(|s| {
+            for k in keys {
+                s.keyboard.set_key(k.name, rgb);
+            }
+        });
+        if let Err(e) = saved {
+            tracing::error!("devices.toml: {e}");
+            self.settings.set_error(&e);
+            return;
+        }
+        for k in keys {
+            match rgb {
+                Some(c) => {
+                    self.state.key_colors.insert(k.name.to_owned(), c);
+                }
+                None => {
+                    self.state.key_colors.remove(k.name);
+                }
+            }
+        }
+        if keys.len() > 1 {
+            tracing::info!(count = keys.len(), ?rgb, "цвета клавиш");
+        } else {
+            tracing::debug!(keys = ?keys.iter().map(|k| k.name).collect::<Vec<_>>(), ?rgb, "цвет клавиши");
+        }
+        self.settings.update_devices(&self.state);
+        if let Some(color) = rgb.or(base) {
+            let frame = keys.iter().map(|k| (k.zone(), color)).collect();
+            self.devices.send_to(Role::Keyboard, Command::Keys(frame));
+        }
+    }
+
+    /// Changes the order or visibility of the cards in `devices.toml` and shows the result.
     fn edit_layout(&mut self, f: impl FnOnce(&mut PanelLayout)) {
         let mut file = SettingsFile::load();
         f(&mut file.panel);
@@ -542,7 +779,7 @@ impl App {
             SettingsAction::RefreshRunning => self.settings.refresh_running(),
             SettingsAction::CreateReport => {
                 self.settings.report_started();
-                // Опрос устройств занимает секунды — не на главном потоке.
+                // Querying the devices takes seconds, so not on the main thread.
                 let spawned = std::thread::Builder::new()
                     .name("device-report".into())
                     .spawn(|| post(AppEvent::ReportReady(report::create())));
@@ -553,7 +790,7 @@ impl App {
             SettingsAction::OpenReports => open_folder(&report::reports_dir()),
             SettingsAction::CheckUpdates => {
                 self.settings.update_started();
-                // Запрос к GitHub — секунды; не на главном потоке.
+                // The request to GitHub takes seconds, so not on the main thread.
                 let spawned = std::thread::Builder::new()
                     .name("update-check".into())
                     .spawn(|| post(AppEvent::UpdateChecked(crate::update::latest())));
@@ -602,7 +839,7 @@ impl App {
                 if let Some(order) = self.state.moved(from.max(0) as usize, to.max(0) as usize) {
                     self.edit_layout(|l| l.order = order);
                 }
-                // Строки уже с новым порядком (или со старым при ошибке) — сбросить перетаскивание.
+                // The rows already have the new order (or the old one on error): reset the drag.
                 self.settings.finish_drop();
             }
             SettingsAction::MouseHost(on) => self.on_panel(PanelAction::MouseHost(on)),
@@ -625,20 +862,122 @@ impl App {
                     i32::from(*crate::headset_eq::GAIN_RANGE.start()),
                     i32::from(*crate::headset_eq::GAIN_RANGE.end()),
                 ) as i8;
-                // Ползунок сдвинулся в пределах того же деления (или его поставили из гарнитуры) —
-                // писать нечего. Без этой проверки подстановка значения порождала новую запись.
+                // The slider moved within the same step (or it was set from the headset):
+                // nothing to write. Without this check, setting the value triggered a new write.
                 if *slot == gain {
                     return;
                 }
                 *slot = gain;
-                self.eq_changed(gains, SLIDER_DEBOUNCE);
+                self.user_eq_changed(gains, SLIDER_DEBOUNCE);
             }
-            SettingsAction::EqReset => {
-                if self.headset_eq().is_some() {
-                    let flat = [0; crate::headset_eq::BANDS];
-                    self.settings.show_eq_gains(&flat);
-                    self.eq_changed(flat, std::time::Duration::ZERO);
+            SettingsAction::EqPreset(i) => self.on_panel(PanelAction::EqPreset(i)),
+            SettingsAction::SaveEqPreset(name) => {
+                let Some(gains) = self.eq_gains.or_else(|| self.headset_eq()) else {
+                    return;
+                };
+                let mut file = SettingsFile::load();
+                let name = name.trim().to_owned();
+                if file.eq_presets.len() >= settings::MAX_EQ_PRESETS
+                    && !file.eq_presets.iter().any(|p| p.name == name)
+                {
+                    self.settings.set_error(
+                        &tr("No more than {} presets")
+                            .replace("{}", &settings::MAX_EQ_PRESETS.to_string()),
+                    );
+                    return;
                 }
+                if let Err(e) = file
+                    .save_eq_preset(&name, &gains)
+                    .and_then(|()| file.save())
+                {
+                    tracing::warn!("пресет эквалайзера: {e}");
+                    self.settings.set_error(tr("Couldn't save the preset"));
+                    return;
+                }
+                tracing::info!(name, ?gains, "эквалайзер: свой пресет сохранён");
+                self.settings.set_error("");
+                self.refresh_profiles();
+            }
+            SettingsAction::DeleteEqPreset(i) => {
+                let presets = eq_presets::all(&self.state.eq_presets);
+                let Some(preset) = presets.get(i.max(0) as usize).filter(|p| p.custom) else {
+                    return;
+                };
+                let mut file = SettingsFile::load();
+                file.remove_eq_preset(&preset.name);
+                if let Err(e) = file.save() {
+                    tracing::warn!("пресет эквалайзера: {e}");
+                    return;
+                }
+                tracing::info!(name = preset.name, "эквалайзер: свой пресет удалён");
+                self.refresh_profiles();
+            }
+            SettingsAction::LightingOff(m) => {
+                let m = m.clamp(0, i32::from(u16::MAX)) as u16;
+                tracing::info!(minutes = m, "гашение подсветки клавиатуры");
+                self.change(Role::Keyboard, |s| s.keyboard.lighting_off_min = Some(m));
+            }
+            SettingsAction::KeyLayout(i) => {
+                let layout = if i == 1 {
+                    crate::keyboard_layout::Layout::Iso
+                } else {
+                    crate::keyboard_layout::Layout::Ansi
+                };
+                let mut file = SettingsFile::load();
+                file.keyboard_layout = (layout != crate::keyboard_layout::Layout::Ansi)
+                    .then(|| layout.as_str().into());
+                if let Err(e) = file.save() {
+                    tracing::error!("devices.toml: {e}");
+                    self.settings.set_error(&e);
+                    return;
+                }
+                tracing::info!(layout = layout.as_str(), "раскладка клавиатуры");
+                self.refresh_profiles();
+            }
+            SettingsAction::PaintKey(x, y, rgb) => {
+                let Some((keys, base)) = self.state.keyboard_keys() else {
+                    return;
+                };
+                let Some(key) = crate::keyboard_layout::key_at(&keys, x, y) else {
+                    return;
+                };
+                // Dragging over the same key, or the same colour: nothing to write.
+                if self.state.key_colors.get(key.name).copied() == rgb {
+                    return;
+                }
+                self.set_keys(&[key], rgb, base);
+            }
+            SettingsAction::FillKeys(rgb) => {
+                let Some((keys, base)) = self.state.keyboard_keys() else {
+                    return;
+                };
+                self.set_keys(&keys, rgb, base);
+            }
+            SettingsAction::LowBattery(i) => {
+                let Some(&percent) = crate::config::LOW_BATTERY_CHOICES.get(i.max(0) as usize)
+                else {
+                    return;
+                };
+                if let Err(e) = Config::save_low_battery(percent) {
+                    tracing::error!("config.toml: {e}");
+                }
+                tracing::info!(percent, "порог низкого заряда");
+                self.config.low_battery = percent;
+                self.state.low_battery = percent;
+                self.refresh_status();
+            }
+            SettingsAction::NotifyCharged(on) => {
+                if let Err(e) = Config::save_notify_charged(on) {
+                    tracing::error!("config.toml: {e}");
+                }
+                self.config.notify_charged = on;
+            }
+            SettingsAction::UpdateOnStart(on) => {
+                if let Err(e) = Config::save_check_updates(on) {
+                    tracing::error!("config.toml: {e}");
+                }
+                tracing::info!(on, "проверка обновлений при запуске");
+                self.config.check_updates = on;
             }
             SettingsAction::ShowDevice(i, shown) => {
                 let Some(key) = self
@@ -658,7 +997,6 @@ impl App {
                 }
                 i18n::set(choice.resolve());
                 tracing::info!(language = choice.as_str(), "язык интерфейса");
-                self.tray.relabel();
                 self.refresh_status();
                 self.refresh_profiles();
             }
@@ -700,7 +1038,7 @@ impl App {
             SettingsAction::Use(i) => {
                 let Some(name) = name_at(i) else { return };
                 if self.edit_profiles(|f| f.select(&name)) {
-                    // Ручной выбор отменяет автопереключение до следующей смены окна.
+                    // Choosing by hand cancels automatic switching until the next window change.
                     self.auto_profile = None;
                     settings::set_auto_profile(None);
                     tracing::info!(profile = name, "профиль выбран вручную");
@@ -725,7 +1063,7 @@ impl App {
         }
     }
 
-    /// Изменить профили в `devices.toml`; ошибка — сообщением в окне настроек.
+    /// Changes the profiles in `devices.toml`; an error becomes a message in the settings window.
     fn edit_profiles(&mut self, f: impl FnOnce(&mut SettingsFile) -> Result<(), String>) -> bool {
         let mut file = SettingsFile::load();
         match f(&mut file).and_then(|()| file.save()) {
@@ -738,7 +1076,7 @@ impl App {
         }
     }
 
-    /// Любое значение DPI: подогнать к ближайшему, которое принимает мышь, и применить (host).
+    /// Any DPI value: snap it to the nearest one the mouse accepts and apply it (host).
     fn set_free_dpi(&mut self, value: f32) {
         let supported = self
             .state
@@ -759,7 +1097,7 @@ impl App {
         });
     }
 
-    /// Изменить `devices.toml` и попросить поток устройства применить его.
+    /// Changes `devices.toml` and asks the device thread to apply it.
     fn change(&mut self, role: Role, f: impl FnOnce(&mut DeviceSettings)) {
         if let Err(e) = DeviceSettings::update(f) {
             tracing::error!("devices.toml: {e}");
@@ -768,16 +1106,14 @@ impl App {
         self.devices.send_to(role, Command::Apply);
     }
 
-    /// Трей, уведомление о низком заряде и панель по текущему состоянию.
+    /// The tray, the low battery notification and the panel from the current state.
     fn refresh_status(&mut self) {
         let low = self.state.any_low_battery();
         self.tray.set_status(&self.state.tray_lines(), low);
         if low && !self.low_notified {
             let names: Vec<String> = self
                 .state
-                .devices
-                .iter()
-                .filter(|d| d.connected && d.battery.is_some_and(BatteryState::is_low))
+                .low_battery_devices()
                 .map(|d| {
                     format!(
                         "{} — {}",
@@ -787,7 +1123,7 @@ impl App {
                 })
                 .collect();
             self.tray.notify(
-                &tr("Battery below {}%").replace("{}", &LOW_BATTERY.to_string()),
+                &tr("Battery below {}%").replace("{}", &self.state.low_battery.to_string()),
                 &names.join("\n"),
             );
         }
@@ -796,21 +1132,17 @@ impl App {
         self.settings.update_devices(&self.state);
     }
 
-    fn menu(&mut self, cmd: MenuCommand) {
-        match cmd {
-            MenuCommand::Exit => {
-                tracing::info!("выход");
-                self.panel.destroy();
-                let _ = slint::quit_event_loop();
-            }
-        }
+    fn exit(&mut self) {
+        tracing::info!("выход");
+        self.panel.destroy();
+        let _ = slint::quit_event_loop();
     }
 }
 
 fn open_folder(path: &std::path::Path) {
     let _ = std::fs::create_dir_all(path);
     let path = wide(path);
-    // SAFETY: строки живут до конца вызова.
+    // SAFETY: the strings live until the end of the call.
     let res = unsafe {
         ShellExecuteW(
             None,
@@ -821,7 +1153,7 @@ fn open_folder(path: &std::path::Path) {
             SW_SHOWNORMAL,
         )
     };
-    // ShellExecuteW возвращает значение > 32 при успехе.
+    // ShellExecuteW returns a value > 32 on success.
     if res.0 as isize <= 32 {
         tracing::warn!("ShellExecuteW: {}", res.0 as isize);
     }
@@ -856,7 +1188,7 @@ mod tests {
         let blue = breathe.with_color([0, 0xAA, 0xFF]);
         assert_eq!(effect_index(Some(blue)), 2);
         assert_eq!(blue.color(), Some([0, 0xAA, 0xFF]));
-        // У цикла нет цвета — выбор цвета делает статичный.
+        // Cycle has no colour: choosing a colour makes the effect static.
         let cycle = effect_by_index(3, DEFAULT_COLOR).unwrap();
         assert_eq!(effect_index(Some(cycle.with_color([1, 2, 3]))), 1);
     }

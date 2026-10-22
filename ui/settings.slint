@@ -1,47 +1,53 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Окно настроек: слева меню разделов, справа страница раздела.
-// «Общие» — язык и автозапуск; «Устройства» — порядок и видимость карточек панели;
-// «Профили» — карточки профилей, раскрывается выбранная.
-// Создаётся по требованию и уничтожается при закрытии.
+// The settings window: the section menu on the left, the section page on the right.
+// "General": language, start with Windows, battery notifications, updates; "Devices": order and visibility
+// of the panel cards and device settings; "Profiles": profile cards, the selected one expands;
+// "Advanced": logs and the device report. Created on demand and destroyed when closed.
 import { Button, ComboBox, LineEdit, ScrollView, Slider, Switch, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { IconButton } from "widgets.slint";
+import { KeyboardEditor, KeyCap } from "keyboard_editor.slint";
 import { DeviceKind } from "cards/device_card.slint";
 
-// Полоса эквалайзера гарнитуры (готовит Rust).
+// A headset equalizer band (prepared by Rust).
 export struct EqBand {
     // «80 Hz», «2.2 kHz».
     label: string,
-    // Положение вертикального ползунка = −усиление, дБ: он растёт вниз, а «+» должен быть сверху.
-    // Ползунок связан с полем в обе стороны и не теряет связь с данными (сброс «Ровно»).
+    // The vertical slider position = −gain, dB: it grows downwards, and "+" must be at the top.
+    // The slider is bound to the field both ways and doesn't lose the link to the data (a preset was chosen).
     position: float,
 }
 
-// Устройство в разделе «Устройства» (готовит Rust, в порядке панели).
+// A device in the "Devices" section (prepared by Rust, in panel order).
 export struct DeviceRow {
     kind: DeviceKind,
     name: string,
     connected: bool,
-    // Карточка видна в панели.
+    // The card is visible in the panel.
     shown: bool,
-    // Мышь: есть переключатель host/onboard (у G903 и мышей со старыми фичами — нет: режим host
-    // выключает кнопку DPI на мыши) и его положение.
+    // Mouse: there is a host/onboard switch (not on the G903 and mice with the old features: host mode
+    // disables the DPI button on the mouse), and its position.
     host-mode: bool,
     host: bool,
-    // Мышь: lift-off — 1 medium, 2 high, 0 low; -1 — не умеет или не подключена.
+    // Mouse: lift-off, 1 medium, 2 high, 0 low; -1 if it can't or isn't connected.
     lift-off: int,
-    // Гарнитура: автоотключение, минуты, 0 — никогда; -1 — не прочитано или не подключена.
+    // Headset: auto power-off, minutes, 0 = never; -1 if not read or not connected.
     auto-off: int,
+    // Keyboard: single keys can be painted (connected, has `0x8081`).
+    per-key: bool,
+    // Keyboard: turn the lighting off after this many idle minutes, 0 = never; -1 if the keyboard
+    // controls the lighting itself (or isn't connected).
+    light-off: int,
 }
 
-// Профиль для карточки (готовит Rust).
+// A profile for a card (prepared by Rust).
 export struct ProfileRow {
     name: string,
-    // Строка под именем: привязанные программы или пояснение для «Обычного».
+    // The line under the name: bound programs, or an explanation for "Default".
     summary: string,
     programs: [string],
     active: bool,
-    // «Обычный»: без программ, не переименовывается и не удаляется.
+    // "Default": no programs, can't be renamed or deleted.
     base: bool,
 }
 
@@ -51,7 +57,7 @@ component Caption inherits Text {
     vertical-alignment: center;
 }
 
-// Пункт меню разделов: значок и подпись; выбранный — с полоской акцента слева.
+// A section menu item: icon and label; the selected one has an accent bar on the left.
 component NavItem inherits Rectangle {
     in property <string> glyph;
     in property <string> label;
@@ -105,8 +111,8 @@ component NavItem inherits Rectangle {
         }
     }
 
-    // Область клика поверх FocusScope: иначе первый клик только забирает фокус
-    // (FocusScope принимает нажатие, пока не в фокусе), и срабатывает лишь второй.
+    // The click area is above the FocusScope: otherwise the first click only takes focus
+    // (the FocusScope accepts the press while it isn't focused), and only the second one works.
     touch := TouchArea {
         clicked => {
             focus.focus();
@@ -115,7 +121,7 @@ component NavItem inherits Rectangle {
     }
 }
 
-// Строка настройки на странице «Общие»: подпись слева, элемент справа.
+// A setting row on the "General" page: the label on the left, the control on the right.
 component SettingRow inherits Rectangle {
     in property <string> label;
 
@@ -141,39 +147,72 @@ component SettingRow inherits Rectangle {
     }
 }
 
-// Строка устройства: ручка, значок, имя и состояние, видимость в панели; у мыши и гарнитуры —
-// кнопка, раскрывающая под строкой их настройки (host, lift-off; автоотключение, эквалайзер).
-// Порядок меняется перетаскиванием за любое место карточки, кроме переключателя,
-// или стрелками ↑/↓, когда ручка в фокусе (Tab).
+// A device row: grip, icon, name and state, visibility in the panel; the mouse, keyboard and headset
+// have a button that expands their settings under the row (host, lift-off; lighting, key colours; auto power-off, equalizer).
+// The order is changed by dragging by any part of the card except the switch,
+// or with ↑/↓ while the grip is focused (Tab).
 component DeviceRowCard inherits Rectangle {
     in property <DeviceRow> device;
-    // Привязан к строке модели в обе стороны: переключатель не теряет связь с данными,
-    // когда строки меняются местами.
+    // Bound to the model row both ways: the switch doesn't lose the link to the data
+    // when rows swap places.
     in-out property <bool> shown;
-    // Карточку сейчас тащат мышью.
+    // The card is being dragged with the mouse right now.
     in property <bool> dragged;
-    // Вернуть фокус на ручку: карточку передвинули с клавиатуры, и она теперь на этом месте.
+    // Give focus back to the grip: the card was moved with the keyboard and is now in this place.
     in property <bool> want-focus;
     callback drag-start();
-    // Сдвиг указателя по вертикали с прошлого события.
+    // The pointer's vertical offset since the previous event.
     callback drag-move(length);
     callback drag-end();
-    // Стрелка на ручке: -1 — выше, 1 — ниже.
+    // An arrow on the grip: -1 up, 1 down.
     callback step(int);
     callback show(bool);
-    // Настройки устройства под строкой: раскрыты ли и их высота (0 — настроек нет; считает окно).
+    // The device settings under the row: whether they are expanded, and their height (0: no settings; the window computes it).
     in property <bool> open;
     in property <length> settings-height;
-    // Гарнитура: встроенный эквалайзер — полосы и пределы усиления.
+    // Headset: the built-in equalizer, its bands and gain limits.
     in property <[EqBand]> eq-bands;
     in property <int> eq-min;
     in property <int> eq-max;
+    // Equalizer presets: the list (the last one is "Custom" if the curve matches none of them),
+    // the selected one and whether it is your own (your own can be deleted).
+    in property <[string]> eq-presets;
+    in-out property <int> eq-preset;
+    in property <bool> eq-preset-custom;
     callback toggle-settings();
     callback set-host(bool);
     callback set-lift-off(int);
     callback set-auto-off(int);
+    callback set-light-off(int);
     callback set-eq-band(int, int);
-    callback reset-eq();
+    callback select-eq-preset(int);
+    callback save-eq-preset(string);
+    callback delete-eq-preset(int);
+
+    // Keyboard: the colour editor's keys, your own palette colours, whether key colours are visible, the layout
+    // size in units; a click on a key and "Fill all".
+    in property <[KeyCap]> keys;
+    in property <[color]> custom-colors;
+    in property <bool> keys-active;
+    // The active profile (key colours and the equalizer curve are saved in it).
+    in property <string> active-profile;
+    in property <float> key-layout-width;
+    in property <float> key-layout-height;
+    in-out property <int> key-layout;
+    callback paint-key(float, float, color, bool);
+    callback fill-keys(color, bool);
+    callback set-key-layout(int);
+
+    // The name of a new preset is being entered (a name field instead of the list).
+    property <bool> naming;
+    property <string> new-preset-name;
+
+    function finish-naming() {
+        if (root.new-preset-name != "") {
+            root.save-eq-preset(root.new-preset-name);
+        }
+        root.naming = false;
+    }
 
     height: Theme.settings-device-row-height + (root.open ? root.settings-height : 0);
     background: Theme.card;
@@ -196,7 +235,7 @@ component DeviceRowCard inherits Rectangle {
             padding-right: Theme.spacing-l;
             spacing: Theme.spacing-m;
 
-            // Ручка, значок и имя; поверх них — область перетаскивания.
+            // Grip, icon and name; the drag area is on top of them.
             Rectangle {
                 horizontal-stretch: 1;
 
@@ -266,7 +305,7 @@ component DeviceRowCard inherits Rectangle {
                             root.drag-end();
                         }
                     }
-                    // Карточка едет за указателем: `mouse-y` считается от её нового места.
+                    // The card follows the pointer: `mouse-y` is measured from its new place.
                     moved => {
                         if (self.pressed) {
                             root.drag-move(self.mouse-y - self.pressed-y);
@@ -296,7 +335,7 @@ component DeviceRowCard inherits Rectangle {
             }
         }
 
-        // Мышь: настройки применяет Hubless (host) или память мыши (onboard).
+        // Mouse: the settings are applied by Hubless (host) or by the mouse's memory (onboard).
         if root.open && root.device.kind == DeviceKind.mouse && root.device.host-mode: HorizontalLayout {
             height: Theme.device-option-height;
             padding-left: Theme.spacing-l;
@@ -333,7 +372,7 @@ component DeviceRowCard inherits Rectangle {
                 horizontal-stretch: 1;
             }
 
-            // Без «низкого»: PRO X 2 отвергает lift-off 0 (INVALID_ARGUMENT, 2026-10-19).
+            // No "low": the PRO X 2 rejects lift-off 0 (INVALID_ARGUMENT, 2026-10-19).
             for name[i] in [@tr("medium"), @tr("high")]: Button {
                 text: name;
                 primary: i + 1 == root.device.lift-off;
@@ -343,7 +382,56 @@ component DeviceRowCard inherits Rectangle {
             }
         }
 
-        // Гарнитура: автоотключение без звука.
+        // Keyboard: turning the lighting off after idle (while Hubless controls it). It can't be shorter than
+        // 5 minutes: the keyboard itself reports idle, after 5 minutes on the PRO X TKL.
+        if root.open && root.device.kind == DeviceKind.keyboard && root.device.light-off >= 0: HorizontalLayout {
+            height: Theme.device-option-height;
+            padding-left: Theme.spacing-l;
+            padding-right: Theme.spacing-l;
+            padding-bottom: Theme.spacing-s;
+            spacing: Theme.spacing-xs;
+
+            Text {
+                text: @tr("Turn off the lighting after");
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+
+            for m in [5, 15, 30, 0]: Button {
+                text: m == 0 ? @tr("never") : @tr("{} min", m);
+                primary: m == root.device.light-off;
+                clicked => {
+                    root.set-light-off(m);
+                }
+            }
+        }
+
+        // Keyboard: colours of single keys.
+        if root.open && root.device.kind == DeviceKind.keyboard && root.device.per-key: KeyboardEditor {
+            height: Theme.key-editor-height;
+            padding-left: Theme.spacing-l;
+            padding-right: Theme.spacing-l;
+            padding-bottom: Theme.spacing-l;
+            keys: root.keys;
+            custom-colors: root.custom-colors;
+            active: root.keys-active;
+            profile: root.active-profile;
+            layout-width: root.key-layout-width;
+            layout-height: root.key-layout-height;
+            layout <=> root.key-layout;
+            set-layout(i) => {
+                root.set-key-layout(i);
+            }
+            paint(x, y, c, erase) => {
+                root.paint-key(x, y, c, erase);
+            }
+            fill(c, erase) => {
+                root.fill-keys(c, erase);
+            }
+        }
+
+        // Headset: auto power-off without sound.
         if root.open && root.device.kind == DeviceKind.headset && root.device.auto-off >= 0: HorizontalLayout {
             height: Theme.device-option-height;
             padding-left: Theme.spacing-l;
@@ -367,7 +455,8 @@ component DeviceRowCard inherits Rectangle {
             }
         }
 
-        // Эквалайзер: подпись и «Ровно», под ними — ползунки полос.
+        // Equalizer: a description, presets (choose, delete your own, "Save as preset"),
+        // and the band sliders under them.
         if root.open && root.device.kind == DeviceKind.headset && root.eq-bands.length > 0: VerticalLayout {
             height: Theme.eq-panel-height;
             padding-left: Theme.spacing-l;
@@ -375,23 +464,71 @@ component DeviceRowCard inherits Rectangle {
             padding-bottom: Theme.spacing-l;
             spacing: Theme.spacing-s;
 
-            HorizontalLayout {
-                spacing: Theme.spacing-m;
+            Caption {
+                text: @tr("The headset's built-in equalizer. The curve is saved in the profile “{}” and in the headset itself, so it also works without Hubless.", root.active-profile);
+                wrap: word-wrap;
+            }
 
-                Caption {
-                    text: @tr("The headset's built-in equalizer: the curve is stored in the headset and works without Hubless, on any computer.");
-                    wrap: word-wrap;
+            HorizontalLayout {
+                spacing: Theme.spacing-s;
+
+                if !root.naming: ComboBox {
                     horizontal-stretch: 1;
+                    model: root.eq-presets;
+                    current-index <=> root.eq-preset;
+                    selected => {
+                        root.select-eq-preset(self.current-index);
+                    }
                 }
 
-                VerticalLayout {
-                    alignment: center;
+                if !root.naming && root.eq-preset-custom: IconButton {
+                    glyph: Theme.glyph-delete;
+                    label: @tr("Delete preset");
+                    clicked => {
+                        root.delete-eq-preset(root.eq-preset);
+                    }
+                }
 
-                    Button {
-                        text: @tr("Flat");
-                        clicked => {
-                            root.reset-eq();
+                if !root.naming: Button {
+                    text: @tr("Save as preset");
+                    clicked => {
+                        root.new-preset-name = "";
+                        root.naming = true;
+                    }
+                }
+
+                if root.naming: LineEdit {
+                    horizontal-stretch: 1;
+                    placeholder-text: @tr("Preset name");
+                    text <=> root.new-preset-name;
+                    init => {
+                        self.focus();
+                    }
+                    accepted => {
+                        root.finish-naming();
+                    }
+                    key-pressed(event) => {
+                        if (event.text == Key.Escape) {
+                            root.naming = false;
+                            return accept;
                         }
+                        reject
+                    }
+                }
+
+                if root.naming: Button {
+                    text: @tr("Save");
+                    primary: true;
+                    enabled: root.new-preset-name != "";
+                    clicked => {
+                        root.finish-naming();
+                    }
+                }
+
+                if root.naming: Button {
+                    text: @tr("Cancel");
+                    clicked => {
+                        root.naming = false;
                     }
                 }
             }
@@ -417,7 +554,7 @@ component DeviceRowCard inherits Rectangle {
                         Slider {
                             orientation: vertical;
                             height: Theme.eq-slider-height;
-                            // Вертикальный ползунок растёт вниз — инвертируем, чтобы «+» был сверху.
+                            // A vertical slider grows downwards, so we invert it to have "+" at the top.
                             minimum: -root.eq-max;
                             maximum: -root.eq-min;
                             step: 1;
@@ -438,11 +575,11 @@ component DeviceRowCard inherits Rectangle {
     }
 }
 
-// Карточка профиля; выбранная раскрыта.
+// A profile card; the selected one is expanded.
 component ProfileCard inherits Rectangle {
     in property <ProfileRow> profile;
     in property <bool> expanded;
-    // Варианты для добавления: первый — подсказка, остальные — запущенные программы.
+    // Options for adding: the first is a hint, the others are running programs.
     in property <[string]> running;
     callback select();
     callback make-active();
@@ -459,7 +596,7 @@ component ProfileCard inherits Rectangle {
     border-width: 1px;
     border-color: root.expanded ? Theme.accent : Theme.card-stroke;
 
-    // Под содержимым: щелчок по свободному месту карточки выбирает её.
+    // Under the content: a click on an empty part of the card selects it.
     TouchArea {
         clicked => {
             root.select();
@@ -515,7 +652,7 @@ component ProfileCard inherits Rectangle {
             wrap: word-wrap;
         }
 
-        // Раскрытая карточка: программы, добавление, действия.
+        // The expanded card: programs, adding one, actions.
         if root.expanded && !root.profile.base: VerticalLayout {
             spacing: Theme.spacing-xs;
             padding-top: Theme.spacing-s;
@@ -575,7 +712,7 @@ component ProfileCard inherits Rectangle {
             }
         }
 
-        // Нижняя строка — только если в ней есть действия (у активного «Обычного» их нет).
+        // The bottom row only if it has actions (the active "Default" has none).
         if root.expanded && !(root.profile.active && root.profile.base): HorizontalLayout {
             spacing: Theme.spacing-s;
             padding-top: Theme.spacing-s;
@@ -611,54 +748,87 @@ component ProfileCard inherits Rectangle {
 }
 
 export component SettingsWindow inherits Window {
-    // Раздел: 0 — «Общие», 1 — «Устройства», 2 — «Профили», 3 — «Дополнительно»
-    // (обновления, логи, отчёт об устройствах).
+    // Section: 0 "General" (with updates), 1 "Devices", 2 "Profiles", 3 "Advanced"
+    // (logs, device report).
     in-out property <int> page;
-    // Общие
-    in-out property <int> language;           // 0 — английский, 1 — русский
+    // General
+    in-out property <int> language;           // 0 English, 1 Russian
     in-out property <bool> autostart;
-    // Устройства в порядке панели.
+    // The low battery threshold (index in the list of options) and the "charged" notification.
+    in property <[string]> low-battery-choices;
+    in-out property <int> low-battery;
+    in-out property <bool> notify-charged;
+    // Devices in panel order.
     in property <[DeviceRow]> devices;
-    // Встроенный эквалайзер гарнитуры (пусто — гарнитура не подключена) и пределы усиления.
+    // The headset's built-in equalizer (empty if the headset isn't connected) and the gain limits.
     in property <[EqBand]> eq-bands;
     in property <int> eq-min;
     in property <int> eq-max;
-    // Строка «Устройств» с раскрытыми настройками устройства (-1 — никакая).
+    // Equalizer presets: the list, the selected one, whether it is your own.
+    in property <[string]> eq-presets;
+    in-out property <int> eq-preset;
+    in property <bool> eq-preset-custom;
+    // Colours of single keys: the editor's keys, your own palette colours, whether key colours are visible
+    // (static effect), the layout size in units.
+    in property <[KeyCap]> keys;
+    in property <[color]> custom-colors;
+    in property <bool> keys-active;
+    // The active profile: key colours and the equalizer curve are saved in it.
+    in property <string> active-profile;
+    in property <float> key-layout-width;
+    in property <float> key-layout-height;
+    // The keyboard layout in the editor: 0 ANSI, 1 ISO.
+    in-out property <int> key-layout;
+    // The "Devices" row with expanded device settings (-1: none).
     in-out property <int> open-row: -1;
-    // Профили: карточки, раскрытая и варианты для добавления программы (первый — подсказка).
+    // Profiles: cards, the expanded one and options for adding a program (the first is a hint).
     in property <[ProfileRow]> profiles;
     in-out property <int> selected;
     in property <[string]> running;
-    // Сообщение об ошибке последнего действия (пусто — нет ошибки).
+    // The error message of the last action (empty: no error).
     in property <string> error;
-    // Отчёт об устройствах: идёт сбор, текст и путь готового отчёта, строка состояния,
-    // запущен ли G Hub.
+    // Device report: collection in progress, the text and path of the finished report, the status line,
+    // whether G Hub is running.
     in property <bool> report-busy;
     in property <string> report-text;
     in property <string> report-path;
     in property <string> report-status;
     in property <bool> ghub-running;
-    // Дополнительно: версия Hubless, проверка обновлений (идёт; итог; страница новой версии —
-    // пусто, если обновления нет) и итог действий с логами.
+    // General: the Hubless version, the update check (in progress; the result; the new version's page, empty
+    // if there is no update). Advanced: the result of actions with the logs.
     in property <string> version;
     in property <bool> update-busy;
     in property <string> update-status;
     in property <string> update-url;
+    // Check for updates at startup.
+    in-out property <bool> update-on-start;
     in property <string> logs-status;
 
     callback set-language(int);
     callback set-autostart(bool);
-    // Устройство по индексу в списке: переставить на новое место, показать или скрыть в панели.
-    // После перестановки Rust присылает новый порядок и вызывает finish-drop().
+    callback set-low-battery(int);
+    callback set-notify-charged(bool);
+    callback set-update-on-start(bool);
+    // A device by its index in the list: move it to a new place, show or hide it in the panel.
+    // After a move, Rust sends the new order and calls finish-drop().
     callback move-device(int, int);
     callback show-device(int, bool);
-    // Настройки устройства (по индексу строки): host мыши, lift-off, автоотключение гарнитуры.
+    // Device settings (by row index): mouse host mode, lift-off, headset auto power-off.
     callback set-mouse-host(bool);
     callback set-lift-off(int);
     callback set-auto-off(int);
-    // Полоса эквалайзера: номер и усиление, дБ; «Ровно» — все полосы в 0.
+    // Turning the keyboard lighting off, idle minutes (0 = never).
+    callback set-light-off(int);
+    // An equalizer band: number and gain, dB. Preset: choose one (index in the list), save
+    // the current curve under a name, delete your own.
     callback set-eq-band(int, int);
-    callback reset-eq();
+    callback select-eq-preset(int);
+    callback save-eq-preset(string);
+    callback delete-eq-preset(int);
+    // The key under a point (layout units), with the brush colour or the eraser; all keys.
+    callback paint-key(float, float, color, bool);
+    callback fill-keys(color, bool);
+    callback set-key-layout(int);
     callback select-profile(int);
     callback create-profile();
     callback rename-profile(int, string);
@@ -676,23 +846,23 @@ export component SettingsWindow inherits Window {
     callback open-logs();
     callback delete-logs();
 
-    // Перетаскивание в разделе «Устройства»: шаг строк, какая строка тащится (-1 — никакая),
-    // её сдвиг от своего места и место, куда она встанет.
+    // Dragging in the "Devices" section: the row pitch, which row is being dragged (-1: none),
+    // its offset from its place and the place it will drop into.
     property <length> device-pitch: Theme.settings-device-row-height + Theme.spacing-s;
     property <int> drag-from: -1;
     property <length> drag-dy;
     property <int> drag-to: root.drag-from < 0 ? -1
         : max(0, min(root.devices.length - 1,
             round((root.drag-from * root.device-pitch + root.drag-dy) / root.device-pitch)));
-    // Строку отпустили, ждём новый порядок от Rust (строки стоят, как при отпускании).
+    // The row was released; waiting for the new order from Rust (the rows stay as they were when released).
     property <bool> dropping;
-    // Строки встают на места без анимации (новый порядок пришёл — данные уже в строках).
+    // The rows settle into place without animation (the new order arrived, the data is already in the rows).
     property <bool> instant;
-    // Строка, которой вернуть фокус после перестановки с клавиатуры.
+    // The row to give focus back to after a move with the keyboard.
     property <int> focus-request: -1;
 
-    // Высота настроек под строкой `i` (0 — у устройства их нет): мышь — host и lift-off,
-    // гарнитура — автоотключение и эквалайзер.
+    // The height of the settings under row `i` (0 if the device has none): mouse host and lift-off,
+    // keyboard lighting timeout and key colours, headset auto power-off and equalizer.
     pure function settings-height(i: int) -> length {
         if (i < 0 || i >= root.devices.length) {
             return 0;
@@ -705,10 +875,14 @@ export component SettingsWindow inherits Window {
             return (root.devices[i].auto-off >= 0 ? Theme.device-option-height : 0)
                 + (root.eq-bands.length > 0 ? Theme.eq-panel-height : 0);
         }
+        if (root.devices[i].kind == DeviceKind.keyboard) {
+            return (root.devices[i].light-off >= 0 ? Theme.device-option-height : 0)
+                + (root.devices[i].per-key ? Theme.key-editor-height : 0);
+        }
         return 0;
     }
 
-    // Раскрытые настройки сдвигают строки ниже на свою высоту.
+    // Expanded settings push the rows below down by their height.
     property <length> open-height: root.settings-height(root.open-row);
 
     pure function device-y(slot: int) -> length {
@@ -716,7 +890,7 @@ export component SettingsWindow inherits Window {
             + (root.open-row >= 0 && slot > root.open-row ? root.open-height : 0);
     }
 
-    // Место строки `i`, пока тащат другую: строки между старым и новым местом сдвигаются на одно.
+    // The place of row `i` while another one is dragged: the rows between the old and new place shift by one.
     pure function device-slot(i: int) -> int {
         if (root.drag-from < 0) {
             return i;
@@ -730,14 +904,14 @@ export component SettingsWindow inherits Window {
         return i;
     }
 
-    // Строка `from` встаёт на место `to` (с анимацией), новый порядок — в Rust.
+    // Row `from` moves to place `to` (with animation); the new order goes to Rust.
     function drop(from: int, to: int) {
         root.dropping = true;
         root.drag-dy = (to - from) * root.device-pitch;
         root.move-device(from, to);
     }
 
-    // Rust прислал новый порядок: строки уже с новыми данными, сбросить сдвиги без анимации.
+    // Rust sent the new order: the rows already have the new data, so reset the offsets without animation.
     public function finish-drop() {
         root.instant = true;
         root.dropping = false;
@@ -755,7 +929,7 @@ export component SettingsWindow inherits Window {
     default-font-size: Theme.font-body;
 
     HorizontalLayout {
-        // Меню разделов.
+        // Section menu.
         VerticalLayout {
             width: Theme.settings-nav-width;
             padding: Theme.spacing-m;
@@ -799,7 +973,7 @@ export component SettingsWindow inherits Window {
             }
         }
 
-        // Страница раздела.
+        // Section page.
         VerticalLayout {
             horizontal-stretch: 1;
             padding: Theme.spacing-l;
@@ -807,7 +981,6 @@ export component SettingsWindow inherits Window {
             spacing: Theme.spacing-m;
 
             if root.page == 0: VerticalLayout {
-                alignment: start;
                 spacing: Theme.spacing-s;
 
                 Text {
@@ -817,34 +990,119 @@ export component SettingsWindow inherits Window {
                     color: Theme.text-primary;
                 }
 
-                SettingRow {
-                    label: @tr("Language");
+                // Scrolling and sticking to the top: the rows don't stretch to the window height.
+                ScrollView {
+                    vertical-stretch: 1;
 
-                    // По центру строки и в своей высоте (иначе раскладка тянет на всю строку).
                     VerticalLayout {
-                        alignment: center;
+                        alignment: start;
+                        spacing: Theme.spacing-s;
 
-                        ComboBox {
-                            width: Theme.settings-combo-width;
-                            // Названия языков не переводятся: каждый — на своём языке.
-                            model: ["English", "Русский"];
-                            current-index: root.language;
-                            selected => {
-                                root.language = self.current-index;
-                                root.set-language(self.current-index);
+                        SettingRow {
+                            label: @tr("Language");
+
+                            // Centred in the row and at its own height (otherwise the layout stretches it over the whole row).
+                            VerticalLayout {
+                                alignment: center;
+
+                                ComboBox {
+                                    width: Theme.settings-combo-width;
+                                    // Language names aren't translated: each one is in its own language.
+                                    model: ["English", "Русский"];
+                                    current-index: root.language;
+                                    selected => {
+                                        root.language = self.current-index;
+                                        root.set-language(self.current-index);
+                                    }
+                                }
                             }
                         }
-                    }
-                }
 
-                SettingRow {
-                    label: @tr("Start with Windows");
+                        SettingRow {
+                            label: @tr("Start with Windows");
 
-                    Switch {
-                        checked: root.autostart;
-                        toggled => {
-                            root.autostart = self.checked;
-                            root.set-autostart(self.checked);
+                            Switch {
+                                checked: root.autostart;
+                                toggled => {
+                                    root.autostart = self.checked;
+                                    root.set-autostart(self.checked);
+                                }
+                            }
+                        }
+
+                        SettingRow {
+                            label: @tr("Low battery warning below");
+
+                            VerticalLayout {
+                                alignment: center;
+
+                                ComboBox {
+                                    width: Theme.settings-combo-width;
+                                    model: root.low-battery-choices;
+                                    current-index <=> root.low-battery;
+                                    selected => {
+                                        root.set-low-battery(self.current-index);
+                                    }
+                                }
+                            }
+                        }
+
+                        SettingRow {
+                            label: @tr("Notify when a device is fully charged");
+
+                            Switch {
+                                checked <=> root.notify-charged;
+                                toggled => {
+                                    root.set-notify-charged(self.checked);
+                                }
+                            }
+                        }
+
+                        // Updates: on the button and, if turned on, at startup; otherwise Hubless doesn't
+                        // go online.
+                        SettingRow {
+                            label: @tr("Version {}", root.version);
+
+                            VerticalLayout {
+                                alignment: center;
+
+                                HorizontalLayout {
+                                    spacing: Theme.spacing-s;
+
+                                    if root.update-url != "": Button {
+                                        text: @tr("Download");
+                                        primary: true;
+                                        clicked => {
+                                            root.open-update();
+                                        }
+                                    }
+
+                                    Button {
+                                        text: root.update-busy ? @tr("Checking…") : @tr("Check for updates");
+                                        enabled: !root.update-busy;
+                                        clicked => {
+                                            root.check-updates();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Caption {
+                            text: root.update-status != "" ? root.update-status
+                                : @tr("Hubless connects to the internet only to check for updates: when you press the button, or at startup if that is on.");
+                            wrap: word-wrap;
+                        }
+
+                        SettingRow {
+                            label: @tr("Check for updates at startup");
+
+                            Switch {
+                                checked <=> root.update-on-start;
+                                toggled => {
+                                    root.set-update-on-start(self.checked);
+                                }
+                            }
                         }
                     }
                 }
@@ -877,8 +1135,8 @@ export component SettingsWindow inherits Window {
                         alignment: start;
                         padding-top: Theme.spacing-xs;
 
-                        // Строки стоят на местах по индексу; во время перетаскивания остальные
-                        // раздвигаются, освобождая место, куда упадёт перетаскиваемая.
+                        // The rows stand in places by index; during a drag the others
+                        // move apart, freeing the place where the dragged one will drop.
                         Rectangle {
                             height: max(0, root.devices.length * root.device-pitch - Theme.spacing-s
                                 + root.open-height);
@@ -889,7 +1147,7 @@ export component SettingsWindow inherits Window {
                                 y: i == root.drag-from ? i * root.device-pitch + root.drag-dy
                                     : root.device-y(root.device-slot(i));
                                 z: i == root.drag-from ? 1 : 0;
-                                // Тащимая мышью карточка идёт за указателем без задержки.
+                                // The card dragged with the mouse follows the pointer without delay.
                                 animate y {
                                     duration: root.instant || (i == root.drag-from && !root.dropping)
                                         ? 0ms : Theme.anim-open;
@@ -904,6 +1162,25 @@ export component SettingsWindow inherits Window {
                                 eq-bands: root.eq-bands;
                                 eq-min: root.eq-min;
                                 eq-max: root.eq-max;
+                                eq-presets: root.eq-presets;
+                                eq-preset <=> root.eq-preset;
+                                eq-preset-custom: root.eq-preset-custom;
+                                keys: root.keys;
+                                custom-colors: root.custom-colors;
+                                keys-active: root.keys-active;
+                                active-profile: root.active-profile;
+                                key-layout-width: root.key-layout-width;
+                                key-layout-height: root.key-layout-height;
+                                key-layout <=> root.key-layout;
+                                set-key-layout(i) => {
+                                    root.set-key-layout(i);
+                                }
+                                paint-key(x, y, c, erase) => {
+                                    root.paint-key(x, y, c, erase);
+                                }
+                                fill-keys(c, erase) => {
+                                    root.fill-keys(c, erase);
+                                }
                                 toggle-settings => {
                                     root.instant = false;
                                     root.open-row = root.open-row == i ? -1 : i;
@@ -917,17 +1194,26 @@ export component SettingsWindow inherits Window {
                                 set-auto-off(m) => {
                                     root.set-auto-off(m);
                                 }
+                                set-light-off(m) => {
+                                    root.set-light-off(m);
+                                }
                                 set-eq-band(band, gain) => {
                                     root.set-eq-band(band, gain);
                                 }
-                                reset-eq => {
-                                    root.reset-eq();
+                                select-eq-preset(index) => {
+                                    root.select-eq-preset(index);
+                                }
+                                save-eq-preset(name) => {
+                                    root.save-eq-preset(name);
+                                }
+                                delete-eq-preset(index) => {
+                                    root.delete-eq-preset(index);
                                 }
                                 drag-start => {
                                     if (root.dropping) {
                                         return;
                                     }
-                                    // Перетаскивание считает места строк одинаковой высоты.
+                                    // Dragging computes row places for rows of equal height.
                                     root.open-row = -1;
                                     root.instant = false;
                                     root.focus-request = -1;
@@ -947,7 +1233,7 @@ export component SettingsWindow inherits Window {
                                         return;
                                     }
                                     if (root.drag-to == i) {
-                                        // Не сдвинули: карточка возвращается на место.
+                                        // Not moved: the card returns to its place.
                                         root.drag-from = -1;
                                         root.drag-dy = 0;
                                         return;
@@ -1050,48 +1336,13 @@ export component SettingsWindow inherits Window {
                     color: Theme.text-primary;
                 }
 
-                // Прокрутка и прижатие к верху: блоки не растягиваются на высоту окна.
+                // Scrolling and sticking to the top: the blocks don't stretch to the window height.
                 ScrollView {
                     vertical-stretch: 1;
 
                     VerticalLayout {
                         alignment: start;
                         spacing: Theme.spacing-s;
-
-                        // Обновления: только по кнопке — иначе Hubless в сеть не ходит.
-                        SettingRow {
-                            label: @tr("Version {}", root.version);
-
-                            VerticalLayout {
-                                alignment: center;
-
-                                HorizontalLayout {
-                                    spacing: Theme.spacing-s;
-
-                                    if root.update-url != "": Button {
-                                        text: @tr("Download");
-                                        primary: true;
-                                        clicked => {
-                                            root.open-update();
-                                        }
-                                    }
-
-                                    Button {
-                                        text: root.update-busy ? @tr("Checking…") : @tr("Check for updates");
-                                        enabled: !root.update-busy;
-                                        clicked => {
-                                            root.check-updates();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        Caption {
-                            text: root.update-status != "" ? root.update-status
-                                : @tr("Hubless connects to the internet only when you check for updates.");
-                            wrap: word-wrap;
-                        }
 
                         SettingRow {
                             label: @tr("Logs");

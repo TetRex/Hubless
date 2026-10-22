@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Hubless — лёгкая замена G Hub для Windows.
+// Hubless: a lightweight G Hub replacement for Windows.
 // Copyright (C) 2026 TetRex
 
 #![windows_subsystem = "windows"]
@@ -10,11 +10,13 @@ mod cli;
 mod config;
 mod devices;
 mod dump;
+mod eq_presets;
 mod foreground;
 mod headset_eq;
 mod hidden_window;
 mod hidpp;
 mod i18n;
+mod keyboard_layout;
 mod logging;
 mod panel;
 mod report;
@@ -44,7 +46,8 @@ Usage:
   hubless --dump [file]     devices and HID++ feature tables (default hubless-dump.json)
   hubless --report          save a device report to send as a GitHub issue
   hubless --test-toast      show a test notification (Hubless must be running)
-  hubless --settings [devices|profiles|eq|advanced]   (eq — devices with the headset equalizer open)
+  hubless --settings [devices|profiles|eq|keys|advanced]
+                            (eq, keys — devices with the headset equalizer or the key colours open)
                             open the settings window of the running Hubless
   hubless --quit            quit the running Hubless (like Exit in the menu)
   hubless --help            this help
@@ -117,6 +120,7 @@ fn main() -> ExitCode {
                 Some("profiles") => 2,
                 Some("report" | "advanced") => 3,
                 Some("eq") => 4,
+                Some("keys") => 5,
                 _ => 0,
             };
             if hidden_window::request_settings(page) {
@@ -160,9 +164,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// GUI-подсистема не получает консоль; для CLI подключаемся к консоли родителя.
+/// The GUI subsystem doesn't get a console; for the CLI we attach to the parent's console.
 fn attach_console() {
-    // SAFETY: без побочных эффектов, если консоли у родителя нет.
+    // SAFETY: no side effects if the parent has no console.
     let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
 }
 
@@ -173,7 +177,7 @@ fn run_tray() -> ExitCode {
         tracing::warn!("конфиг: {e}");
     }
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "старт");
-    // Язык строк из Rust — сразу; переводы Slint выбираются после создания первого окна.
+    // The language of Rust strings right away; Slint translations are selected after the first window is created.
     i18n::set(i18n::Choice::parse(&cfg.language).resolve());
 
     let Some(_instance) = single_instance::acquire() else {
