@@ -19,6 +19,22 @@ pub fn is_enabled() -> bool {
     }
 }
 
+/// The program moved (installation): if start with Windows is on for any path, point it to `exe`.
+pub fn point_to(exe: &std::path::Path) {
+    if hkcu_read_string(RUN_KEY, VALUE).is_some()
+        && let Err(e) = hkcu_write_string(RUN_KEY, VALUE, &format!("\"{}\"", exe.display()))
+    {
+        tracing::warn!("автозапуск: {e}");
+    }
+}
+
+/// Turns start with Windows off, whatever path it points to (uninstalling).
+pub fn remove() {
+    if let Err(e) = hkcu_delete_value(RUN_KEY, VALUE) {
+        tracing::warn!("автозапуск: {e}");
+    }
+}
+
 pub fn set_enabled(enable: bool) -> std::io::Result<()> {
     if enable {
         let cmd =

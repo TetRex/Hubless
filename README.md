@@ -15,7 +15,13 @@ Hubless is under active development; the roadmap is in [Plan.md](Plan.md), proto
 1. Download `hubless.exe` from [Releases](https://github.com/TetRex/Hubless/releases/latest).
 2. Close G Hub completely (`lghub`, `lghub_agent`, `lghub_system_tray`; the `lghub_updater` service doesn't get in
    the way): the two programs can't control the devices at the same time.
-3. Run `hubless.exe`. To start it with Windows, turn that on in Settings → General.
+3. Run `hubless.exe`. It installs itself for your user (no admin rights needed): it copies itself to
+   `%LOCALAPPDATA%\Programs\Hubless`, adds a Start menu shortcut and an entry in Settings → Apps, and starts from
+   there. After that you can delete the downloaded file.
+4. To start Hubless with Windows, turn that on in Settings → General.
+
+To update, download the new `hubless.exe` and run it: it replaces the installed copy. To remove Hubless, use
+Settings → Apps → Hubless → Uninstall (or run `hubless --uninstall`); your settings in `%APPDATA%\Hubless` are kept.
 
 The exe is unsigned, so Windows SmartScreen may warn on first launch.
 
@@ -83,6 +89,7 @@ hubless --dump [file]         devices and HID++ feature tables (JSON and text)
 hubless --report              device report for a GitHub issue
 hubless --settings [section]  open the settings window of the running Hubless (devices, profiles, eq, keys, advanced)
 hubless --quit                quit the running Hubless (like Exit in the panel)
+hubless --uninstall           remove Hubless from this PC (the settings are kept)
 hubless mouse ...             DPI, polling rate, lift-off, onboard/host mode
 hubless keyboard ...          brightness, lighting and effects, key colours (keyboard keys wasd ff0000)
 hubless headset ...           sidetone, auto power-off, equalizer
@@ -100,10 +107,12 @@ You need Rust (stable, `x86_64-pc-windows-msvc`) and Visual Studio Build Tools w
 cargo build --release
 ```
 
-The result is `target/release/hubless.exe`.
+The result is `target/release/hubless.exe`. Builds inside Cargo's `target` directory run in place and don't install
+themselves; set `HUBLESS_PORTABLE=1` to run any copy in place.
 
 ## Files
 
+- `%LOCALAPPDATA%\Programs\Hubless\hubless.exe`: the installed program.
 - `%APPDATA%\Hubless\config.toml`: app settings (log level, HID tracing, language, battery notifications, update check
   at startup).
 - `%APPDATA%\Hubless\devices.toml`: device settings, profiles, the panel layout, your keyboard colours and equalizer

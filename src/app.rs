@@ -145,6 +145,8 @@ pub enum AppEvent {
     DevicesChanged,
     /// `hubless --test-toast`: show a test notification.
     TestNotification,
+    /// Started by the installer: the downloaded file can be deleted now.
+    Installed,
     /// Device state from the device manager (`None`: not found).
     Device(Role, Option<Snapshot>),
     /// An action in a panel card.
@@ -343,6 +345,10 @@ impl App {
             AppEvent::TestNotification => self.tray.notify(
                 tr("Hubless: notification test"),
                 tr("This is what the low battery warning looks like."),
+            ),
+            AppEvent::Installed => self.tray.notify(
+                tr("Hubless is installed"),
+                tr("You can delete the downloaded file. Hubless is in the Start menu, and you can remove it in Settings → Apps."),
             ),
             AppEvent::Exit => self.exit(),
         }

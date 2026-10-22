@@ -16,6 +16,7 @@ mod headset_eq;
 mod hidden_window;
 mod hidpp;
 mod i18n;
+mod install;
 mod keyboard_layout;
 mod logging;
 mod panel;
@@ -49,7 +50,8 @@ Usage:
   hubless --settings [devices|profiles|eq|keys|advanced]
                             (eq, keys — devices with the headset equalizer or the key colours open)
                             open the settings window of the running Hubless
-  hubless --quit            quit the running Hubless (like Exit in the menu)
+  hubless --quit            quit the running Hubless (like Exit in the panel)
+  hubless --uninstall       remove Hubless from this PC (the settings are kept)
   hubless --help            this help
   hubless --version         version
 
@@ -58,7 +60,16 @@ Mouse:";
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
-        None => run_tray(),
+        None => run_tray(false),
+        // Started by the installer from the downloaded file: the installed copy.
+        Some("--installed") => run_tray(true),
+        Some("--uninstall") => {
+            attach_console();
+            let (cfg, _) = config::Config::load();
+            logging::init(&cfg);
+            i18n::set(i18n::Choice::parse(&cfg.language).resolve());
+            install::uninstall()
+        }
         Some("--dump") => {
             attach_console();
             let (cfg, _) = config::Config::load();
@@ -170,7 +181,8 @@ fn attach_console() {
     let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
 }
 
-fn run_tray() -> ExitCode {
+/// The tray app. `installed`: started by the installer, so say that the downloaded file can go.
+fn run_tray(installed: bool) -> ExitCode {
     let (cfg, cfg_err) = config::Config::load();
     logging::init(&cfg);
     if let Some(e) = cfg_err {
@@ -179,6 +191,11 @@ fn run_tray() -> ExitCode {
     tracing::info!(version = env!("CARGO_PKG_VERSION"), "старт");
     // The language of Rust strings right away; Slint translations are selected after the first window is created.
     i18n::set(i18n::Choice::parse(&cfg.language).resolve());
+
+    // Started from a downloaded file: install it and hand over to the installed copy.
+    if !installed && let Some(code) = install::from_download() {
+        return code;
+    }
 
     let Some(_instance) = single_instance::acquire() else {
         tracing::info!("уже запущен — открываю панель существующего экземпляра");
@@ -199,6 +216,9 @@ fn run_tray() -> ExitCode {
     if let Err(e) = app::init() {
         tracing::error!("инициализация: {e}");
         return ExitCode::FAILURE;
+    }
+    if installed {
+        app::post(app::AppEvent::Installed);
     }
     let result = slint::run_event_loop_until_quit();
     app::shutdown();

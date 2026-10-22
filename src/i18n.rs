@@ -165,6 +165,16 @@ const RU: &[(&str, &str)] = &[
         "Download it in Settings → General.",
         "Скачать — в «Настройки → Общие».",
     ),
+    // Installation and removal.
+    ("Hubless is installed", "Hubless установлен"),
+    (
+        "You can delete the downloaded file. Hubless is in the Start menu, and you can remove it in Settings → Apps.",
+        "Скачанный файл можно удалить. Hubless есть в меню «Пуск», а удалить его можно в «Параметры → Приложения».",
+    ),
+    (
+        "Hubless has been removed. Your settings are kept in %APPDATA%\\Hubless.",
+        "Hubless удалён. Ваши настройки остались в %APPDATA%\\Hubless.",
+    ),
 ];
 
 #[cfg(test)]

@@ -26,7 +26,7 @@ Other Logitech devices with the same HID++ 2.0 are most likely already found and
 - Hotplug through `WM_DEVICECHANGE` / `RegisterDeviceNotification` in a hidden window, not through periodic enumeration.
   A device that is asleep at startup is picked up by the receiver's connection notification (`0x41`).
 - The control panel opens on a click on the tray icon **in under 150 ms** (measured: first frame 35 ms when the window is created, 6–12 ms when reopened). The window is created lazily and destroyed if the panel stays hidden for more than 60 s. The settings window is also created on demand and destroyed when closed.
-- A single exe (release ~9 MB), no installer at first.
+- A single exe (release ~10 MB) without a separate installer. Run from anywhere else, it installs itself for the user (2026-10-22, `install.rs`): it copies itself to `%LOCALAPPDATA%\Programs\Hubless`, adds a Start menu shortcut and an entry in Settings → Apps (HKCU `...\Uninstall\Hubless`, "Uninstall" runs `hubless --uninstall`), points start with Windows to the installed copy and starts it with `--installed` (a notification says the download can be deleted). A newer download asks the running copy to quit and replaces it. Uninstalling removes the program folder, shortcut, Apps entry and start with Windows, and keeps the settings. Builds inside a Cargo `target` directory and `HUBLESS_PORTABLE=1` run in place.
 - Files:
   - `%APPDATA%\Hubless\config.toml`: app settings (log level, HID tracing, language, battery notifications, update check at startup); the user edits it, the app only changes its own keys line by line;
   - `%APPDATA%\Hubless\devices.toml`: device settings, profiles and the panel layout, written by the app;

@@ -6,8 +6,8 @@ use std::os::windows::ffi::OsStrExt;
 
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, WIN32_ERROR};
 use windows::Win32::System::Registry::{
-    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_SZ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ,
-    RegDeleteKeyValueW, RegGetValueW, RegSetKeyValueW,
+    HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, REG_DWORD, REG_SZ, RRF_RT_REG_DWORD,
+    RRF_RT_REG_SZ, RegDeleteKeyValueW, RegDeleteTreeW, RegGetValueW, RegSetKeyValueW,
 };
 use windows::core::PCWSTR;
 
@@ -91,6 +91,32 @@ pub fn hkcu_write_string(subkey: &str, value: &str, data: &str) -> windows::core
             (data.len() * 2) as u32,
         )
     })
+}
+
+pub fn hkcu_write_dword(subkey: &str, value: &str, data: u32) -> windows::core::Result<()> {
+    let (subkey, value) = (wide(subkey), wide(value));
+    // SAFETY: all buffers live until the end of the call; the data is 4 bytes.
+    check(unsafe {
+        RegSetKeyValueW(
+            HKEY_CURRENT_USER,
+            PCWSTR(subkey.as_ptr()),
+            PCWSTR(value.as_ptr()),
+            REG_DWORD.0,
+            Some((&raw const data).cast()),
+            size_of::<u32>() as u32,
+        )
+    })
+}
+
+/// Deletes a key with all its values and subkeys; a key that doesn't exist counts as success.
+pub fn hkcu_delete_tree(subkey: &str) -> windows::core::Result<()> {
+    let subkey = wide(subkey);
+    // SAFETY: the string lives until the end of the call.
+    let err = unsafe { RegDeleteTreeW(HKEY_CURRENT_USER, PCWSTR(subkey.as_ptr())) };
+    if err == ERROR_FILE_NOT_FOUND {
+        return Ok(());
+    }
+    check(err)
 }
 
 /// Deleting a value that doesn't exist counts as success.
