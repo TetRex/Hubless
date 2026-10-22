@@ -98,9 +98,6 @@ pub fn tr(en: &'static str) -> &'static str {
 /// Русские строки для [`tr`] (строки `.slint` — в `translations/ru/LC_MESSAGES/hubless.po`).
 const RU: &[(&str, &str)] = &[
     ("No devices connected", "Нет подключённых устройств"),
-    ("Settings…", "Настройки…"),
-    ("Start with Windows", "Автозапуск"),
-    ("Open log folder", "Открыть папку логов"),
     ("Exit", "Выход"),
     (
         "Hubless: notification test",
@@ -141,7 +138,19 @@ const RU: &[(&str, &str)] = &[
     ("Mouse", "Мышь"),
     ("Keyboard", "Клавиатура"),
     ("Headset", "Гарнитура"),
-    ("Wireless", "Беспроводная"),
+    ("{} Hz", "{} Гц"),
+    ("Version {} is available", "Доступна версия {}"),
+    (
+        "You have the latest version",
+        "Установлена последняя версия",
+    ),
+    (
+        "Couldn't check for updates",
+        "Не удалось проверить обновления",
+    ),
+    ("Log files deleted: {}", "Удалено файлов логов: {}"),
+    ("Couldn't delete the logs", "Не удалось удалить логи"),
+    ("{} kHz", "{} кГц"),
 ];
 
 #[cfg(test)]

@@ -117,6 +117,25 @@ pub fn build_frame(payload: &[u8]) -> [u8; FRAME_LEN] {
     frame
 }
 
+/// Сколько байт сообщения помещается в кадр (как у G Hub: длина `0x3d` = флаги + 60).
+const CHUNK: usize = 60;
+
+/// Сообщение в кадры: длинное режется по 60 байт, флаги `(номер << 1) | ещё_будут`
+/// (захват эквалайзера G Hub 2026-10-20: `01 03 05 07 08`). Короткое — один кадр с флагами 0.
+pub fn build_frames(payload: &[u8]) -> Vec<[u8; FRAME_LEN]> {
+    let chunks: Vec<&[u8]> = payload.chunks(CHUNK).collect();
+    let last = chunks.len().saturating_sub(1);
+    chunks
+        .iter()
+        .enumerate()
+        .map(|(i, chunk)| {
+            let mut frame = build_frame(chunk);
+            frame[2] = ((i as u8) << 1) | u8::from(i < last);
+            frame
+        })
+        .collect()
+}
+
 /// Payload кадра (после байтов длины и флагов).
 pub fn parse_frame(frame: &[u8]) -> Option<&[u8]> {
     if frame.len() < 3 || frame[0] != REPORT_ID {
@@ -270,11 +289,19 @@ impl Adapter {
         self.bridged(i, FN_GET, &[])
     }
 
-    /// Кадр, который уйдёт в адаптер для записи (без отправки).
-    pub fn preview(&mut self, w: &Write) -> Result<[u8; FRAME_LEN], Error> {
+    /// Кадры, которые уйдут в адаптер для записи (без отправки).
+    pub fn preview(&mut self, w: &Write) -> Result<Vec<[u8; FRAME_LEN]>, Error> {
         let i = self.index_of(w.feature)?;
         let payload = self.bridge_payload(i, w.function, &w.params)?;
-        Ok(build_frame(&payload))
+        Ok(build_frames(&payload))
+    }
+
+    /// Текущая кривая встроенного эквалайзера гарнитуры.
+    pub fn eq(&mut self) -> Result<crate::headset_eq::Eq, Error> {
+        let i = self.index_of(crate::headset_eq::FEATURE)?;
+        let (function, params) = crate::headset_eq::read_request();
+        let r = self.bridged(i, function, &params)?;
+        crate::headset_eq::parse(&r).ok_or(Error::Malformed)
     }
 
     /// Отправить запись; ответ гарнитуры (данные после индекса и функции).
@@ -284,9 +311,11 @@ impl Adapter {
     }
 
     fn send(&mut self, payload: &[u8]) -> Result<(), Error> {
-        let frame = build_frame(payload);
-        tracing::debug!(target: "hubless::centurion", "→ {}", hex(&frame[..payload.len() + 3]));
-        self.dev.write(&frame)?;
+        for frame in build_frames(payload) {
+            let len = frame[1] as usize + 2;
+            tracing::debug!(target: "hubless::centurion", "→ {}", hex(&frame[..len]));
+            self.dev.write(&frame)?;
+        }
         Ok(())
     }
 
@@ -426,7 +455,6 @@ impl Adapter {
         let bridge = self.bridge.ok_or(Error::FeatureMissing(BRIDGE))?;
         let mut sub = vec![0x00, sub_index, (function & 0xF0) | SW_ID];
         sub.extend_from_slice(params);
-        assert!(sub.len() <= 56, "fragmented bridge messages are not needed");
         let mut payload = vec![
             bridge,
             BRIDGE_SEND | SW_ID,
@@ -520,6 +548,20 @@ fn parse_feature_entry(index: u8, r: &[u8]) -> Result<Feature, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn long_messages_are_split_like_g_hub() {
+        // Запись эквалайзера: 4 байта моста + 256 = 260 байт → кадры 60×4 + 20.
+        let payload: Vec<u8> = (0..260).map(|i| i as u8).collect();
+        let frames = build_frames(&payload);
+        let flags: Vec<u8> = frames.iter().map(|f| f[2]).collect();
+        assert_eq!(flags, vec![0x01, 0x03, 0x05, 0x07, 0x08]);
+        assert_eq!(frames[0][1], 0x3d);
+        assert_eq!(frames[4][1], 0x15);
+        assert_eq!(frames[1][3], 60);
+        assert_eq!(build_frames(&[1, 2, 3]).len(), 1);
+        assert_eq!(build_frames(&[1, 2, 3])[0][2], 0);
+    }
 
     #[test]
     fn frame_roundtrip() {

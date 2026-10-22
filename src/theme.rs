@@ -28,8 +28,14 @@ impl SystemTheme {
         let accent = hkcu_read_dword(DWM, "AccentColor")
             .map(|v| (v as u8, (v >> 8) as u8, (v >> 16) as u8))
             .unwrap_or(DEFAULT_ACCENT);
+        // Для проверки интерфейса без смены темы Windows: HUBLESS_THEME=light | dark.
+        let apps_dark = match std::env::var("HUBLESS_THEME").as_deref() {
+            Ok("light") => false,
+            Ok("dark") => true,
+            _ => apps_light == 0,
+        };
         Self {
-            apps_dark: apps_light == 0,
+            apps_dark,
             taskbar_light: taskbar_light != 0,
             accent,
         }

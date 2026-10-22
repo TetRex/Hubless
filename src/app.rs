@@ -28,9 +28,6 @@ use crate::win::wide;
 
 #[derive(Debug, Clone, Copy)]
 pub enum MenuCommand {
-    Settings,
-    ToggleAutostart,
-    OpenLogs,
     Exit,
 }
 
@@ -55,6 +52,9 @@ pub enum PanelAction {
     Effect(i32),
     /// Статичный цвет подсветки.
     Color([u8; 3]),
+    /// Свой цвет: добавить в палитру (и включить), убрать из палитры.
+    AddColor([u8; 3]),
+    RemoveColor([u8; 3]),
     /// Sidetone гарнитуры 0–100 — после паузы (debounce).
     Sidetone(u8),
     /// Автоотключение гарнитуры, минуты (0 — никогда).
@@ -119,6 +119,8 @@ fn nearest_dpi(supported: &[u16], value: f32) -> Option<u16> {
 
 /// Пауза перед записью яркости: слайдер шлёт значения непрерывно.
 const SLIDER_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(150);
+/// Пауза перед сохранением кривой эквалайзера в гарнитуре (последняя запись — с флагом сохранения).
+const EQ_SAVE_DELAY: std::time::Duration = std::time::Duration::from_secs(2);
 /// Цвет подсветки, когда свой цвет включают впервые.
 const DEFAULT_COLOR: [u8; 3] = [0xFF, 0x80, 0x00];
 
@@ -148,6 +150,9 @@ pub enum AppEvent {
     BrightnessSettled(u16),
     /// Sidetone после паузы debounce.
     SidetoneSettled(u8),
+    /// Эквалайзер гарнитуры после паузы debounce (живая запись) и после паузы сохранения.
+    EqSettled,
+    EqSave,
     /// DPI с ползунка после паузы debounce.
     DpiSettled(f32),
     /// Сменилось активное окно (имя exe в нижнем регистре).
@@ -156,6 +161,8 @@ pub enum AppEvent {
     OpenSettings(Option<usize>),
     /// Действие в окне настроек.
     Settings(SettingsAction),
+    /// Проверка обновлений завершилась (в фоновом потоке).
+    UpdateChecked(Result<crate::update::Release, String>),
     /// Отчёт об устройствах собран (в фоновом потоке).
     ReportReady(Result<report::Report, String>),
 }
@@ -170,6 +177,10 @@ struct App {
     /// Debounce слайдеров яркости и sidetone.
     brightness_timer: slint::Timer,
     sidetone_timer: slint::Timer,
+    /// Эквалайзер: кривая, которую тянут в настройках, и таймеры записи и сохранения.
+    eq_gains: Option<[i8; crate::headset_eq::BANDS]>,
+    eq_timer: slint::Timer,
+    eq_save_timer: slint::Timer,
     dpi_timer: slint::Timer,
     /// Профиль, включённый по активному окну (`None` — выбранный вручную).
     auto_profile: Option<String>,
@@ -193,6 +204,9 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
         devices: manager::spawn(|role, s| post(AppEvent::Device(role, s))),
         brightness_timer: slint::Timer::default(),
         sidetone_timer: slint::Timer::default(),
+        eq_gains: None,
+        eq_timer: slint::Timer::default(),
+        eq_save_timer: slint::Timer::default(),
         dpi_timer: slint::Timer::default(),
         auto_profile: None,
         settings: SettingsController::default(),
@@ -254,11 +268,29 @@ impl App {
             AppEvent::OpenSettings(page) => self.open_settings(page),
             AppEvent::Settings(action) => self.on_settings(action),
             AppEvent::ReportReady(result) => self.settings.report_finished(result),
+            AppEvent::UpdateChecked(result) => self.settings.update_finished(result),
             AppEvent::Device(role, s) => self.on_device(role, s),
             AppEvent::Panel(action) => self.on_panel(action),
             AppEvent::DpiSettled(v) => self.set_free_dpi(v),
             AppEvent::SidetoneSettled(v) => {
                 self.devices.send_to(Role::Headset, Command::Sidetone(v));
+            }
+            AppEvent::EqSettled => {
+                if let Some(gains) = self.eq_gains {
+                    self.devices
+                        .send_to(Role::Headset, Command::Eq(gains, false));
+                }
+            }
+            AppEvent::EqSave => {
+                // Как G Hub: последняя запись с флагом «сохранить в гарнитуре».
+                if let Some(gains) = self.eq_gains.take() {
+                    tracing::info!(?gains, "эквалайзер: сохранить в гарнитуре");
+                    self.devices
+                        .send_to(Role::Headset, Command::Eq(gains, true));
+                    // Кривую — в состояние сразу: до ответа гарнитуры окно не покажет старую.
+                    self.set_state_eq(gains);
+                    self.settings.set_eq_editing(false);
+                }
             }
             AppEvent::BrightnessSettled(v) => {
                 self.change(Role::Keyboard, |s| s.keyboard.brightness = Some(v));
@@ -348,6 +380,18 @@ impl App {
                     .unwrap_or(DEFAULT_COLOR);
                 s.keyboard.lighting = effect_by_index(i, color);
             }),
+            PanelAction::AddColor(color) => {
+                // Новый цвет — в палитру и сразу на клавиатуру.
+                if self.edit_colors(|f| f.add_color(color)) {
+                    self.on_panel(PanelAction::Color(color));
+                }
+            }
+            PanelAction::RemoveColor(color) => {
+                self.edit_colors(|f| {
+                    f.remove_color_value(color);
+                    Ok(())
+                });
+            }
             PanelAction::Color(color) => self.change(Role::Keyboard, |s| {
                 let current = s.keyboard.lighting.unwrap_or(Lighting::Static { color });
                 s.keyboard.lighting = Some(current.with_color(color));
@@ -404,8 +448,10 @@ impl App {
     /// Перечитать профили и раскладку панели из `devices.toml`.
     fn refresh_profiles(&mut self) {
         let file = SettingsFile::load();
-        if file.panel != self.state.layout {
+        let colors = file.custom_colors();
+        if file.panel != self.state.layout || colors != self.state.colors {
             self.state.layout = file.panel.clone();
+            self.state.colors = colors;
             self.refresh_status();
         }
         let names = file.names();
@@ -423,6 +469,54 @@ impl App {
     fn open_settings(&mut self, page: Option<usize>) {
         self.panel.hide();
         self.settings.open(self.panel.theme(), &self.state, page);
+    }
+
+    /// Изменить свои цвета палитры в `devices.toml` и показать их в панели.
+    fn edit_colors(&mut self, f: impl FnOnce(&mut SettingsFile) -> Result<(), String>) -> bool {
+        let mut file = SettingsFile::load();
+        if let Err(e) = f(&mut file).and_then(|()| file.save()) {
+            tracing::warn!("цвета палитры: {e}");
+            return false;
+        }
+        self.refresh_profiles();
+        true
+    }
+
+    /// Кривая эквалайзера гарнитуры из последнего опроса.
+    fn headset_eq(&self) -> Option<[i8; crate::headset_eq::BANDS]> {
+        self.state.devices.iter().find_map(|d| match &d.controls {
+            manager::Controls::Headset { eq: Some(eq), .. } if d.connected => {
+                let gains: Vec<i8> = eq.iter().map(|&(_, g)| g).collect();
+                gains.try_into().ok()
+            }
+            _ => None,
+        })
+    }
+
+    /// Кривая эквалайзера гарнитуры в состоянии приложения (до ответа гарнитуры).
+    fn set_state_eq(&mut self, gains: [i8; crate::headset_eq::BANDS]) {
+        for d in &mut self.state.devices {
+            if let manager::Controls::Headset { eq: Some(eq), .. } = &mut d.controls {
+                for ((_, g), new) in eq.iter_mut().zip(gains) {
+                    *g = new;
+                }
+            }
+        }
+    }
+
+    /// Новая кривая эквалайзера: записать после паузы `delay`, сохранить в гарнитуре через
+    /// [`EQ_SAVE_DELAY`] тишины (промежуточные записи — без сохранения, как у G Hub).
+    fn eq_changed(&mut self, gains: [i8; crate::headset_eq::BANDS], delay: std::time::Duration) {
+        self.eq_gains = Some(gains);
+        self.settings.set_eq_editing(true);
+        self.eq_timer
+            .start(slint::TimerMode::SingleShot, delay, || {
+                post(AppEvent::EqSettled);
+            });
+        self.eq_save_timer
+            .start(slint::TimerMode::SingleShot, EQ_SAVE_DELAY, || {
+                post(AppEvent::EqSave);
+            });
     }
 
     /// Изменить порядок или видимость карточек в `devices.toml` и показать результат.
@@ -457,6 +551,35 @@ impl App {
                 }
             }
             SettingsAction::OpenReports => open_folder(&report::reports_dir()),
+            SettingsAction::CheckUpdates => {
+                self.settings.update_started();
+                // Запрос к GitHub — секунды; не на главном потоке.
+                let spawned = std::thread::Builder::new()
+                    .name("update-check".into())
+                    .spawn(|| post(AppEvent::UpdateChecked(crate::update::latest())));
+                if let Err(e) = spawned {
+                    self.settings.update_finished(Err(format!("thread: {e}")));
+                }
+            }
+            SettingsAction::OpenUpdate => {
+                let url = self
+                    .settings
+                    .update_url()
+                    .unwrap_or(crate::update::RELEASES_URL)
+                    .to_owned();
+                open_folder(std::path::Path::new(&url));
+            }
+            SettingsAction::OpenLogs => open_folder(&log_dir()),
+            SettingsAction::DeleteLogs => {
+                let message = match crate::logging::clear() {
+                    Ok(n) => tr("Log files deleted: {}").replace("{}", &n.to_string()),
+                    Err(e) => {
+                        tracing::warn!("удаление логов: {e}");
+                        tr("Couldn't delete the logs").to_owned()
+                    }
+                };
+                self.settings.set_logs_status(&message);
+            }
             SettingsAction::CopyReport => {
                 let copied = self
                     .settings
@@ -473,7 +596,7 @@ impl App {
                 if let Err(e) = autostart::set_enabled(on) {
                     tracing::error!("автозапуск: {e}");
                 }
-                self.tray.set_autostart_checked(autostart::is_enabled());
+                tracing::info!(enabled = autostart::is_enabled(), "автозапуск");
             }
             SettingsAction::MoveDevice(from, to) => {
                 if let Some(order) = self.state.moved(from.max(0) as usize, to.max(0) as usize) {
@@ -481,6 +604,41 @@ impl App {
                 }
                 // Строки уже с новым порядком (или со старым при ошибке) — сбросить перетаскивание.
                 self.settings.finish_drop();
+            }
+            SettingsAction::MouseHost(on) => self.on_panel(PanelAction::MouseHost(on)),
+            SettingsAction::LiftOff(v) => self.on_panel(PanelAction::LiftOff(match v {
+                0 => settings::LiftOff::Low,
+                1 => settings::LiftOff::Medium,
+                _ => settings::LiftOff::High,
+            })),
+            SettingsAction::AutoOff(m) => {
+                self.on_panel(PanelAction::AutoOff(m.clamp(0, 255) as u8));
+            }
+            SettingsAction::EqBand(i, gain) => {
+                let Some(mut gains) = self.eq_gains.or_else(|| self.headset_eq()) else {
+                    return;
+                };
+                let Some(slot) = gains.get_mut(i.max(0) as usize) else {
+                    return;
+                };
+                let gain = gain.clamp(
+                    i32::from(*crate::headset_eq::GAIN_RANGE.start()),
+                    i32::from(*crate::headset_eq::GAIN_RANGE.end()),
+                ) as i8;
+                // Ползунок сдвинулся в пределах того же деления (или его поставили из гарнитуры) —
+                // писать нечего. Без этой проверки подстановка значения порождала новую запись.
+                if *slot == gain {
+                    return;
+                }
+                *slot = gain;
+                self.eq_changed(gains, SLIDER_DEBOUNCE);
+            }
+            SettingsAction::EqReset => {
+                if self.headset_eq().is_some() {
+                    let flat = [0; crate::headset_eq::BANDS];
+                    self.settings.show_eq_gains(&flat);
+                    self.eq_changed(flat, std::time::Duration::ZERO);
+                }
             }
             SettingsAction::ShowDevice(i, shown) => {
                 let Some(key) = self
@@ -640,17 +798,6 @@ impl App {
 
     fn menu(&mut self, cmd: MenuCommand) {
         match cmd {
-            MenuCommand::Settings => self.open_settings(None),
-            MenuCommand::ToggleAutostart => {
-                let enable = !autostart::is_enabled();
-                if let Err(e) = autostart::set_enabled(enable) {
-                    tracing::error!("автозапуск: {e}");
-                }
-                let enabled = autostart::is_enabled();
-                tracing::info!(enabled, "автозапуск");
-                self.tray.set_autostart_checked(enabled);
-            }
-            MenuCommand::OpenLogs => open_folder(&log_dir()),
             MenuCommand::Exit => {
                 tracing::info!("выход");
                 self.panel.destroy();

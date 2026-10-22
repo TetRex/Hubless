@@ -41,3 +41,47 @@ pub fn init(cfg: &Config) {
         tracing::error!("panic: {info}");
     }));
 }
+
+/// Удалить логи (кнопка в настройках): все файлы папки логов, кроме самого свежего — в него
+/// сейчас пишет этот процесс, и удалённый файл до ротации глотал бы новые записи, — его обнулить.
+/// Возвращает число удалённых и обнулённых файлов.
+pub fn clear() -> Result<usize, String> {
+    let dir = log_dir();
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(format!("{}: {e}", dir.display())),
+    };
+    let mut files: Vec<(std::path::PathBuf, std::time::SystemTime)> = entries
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .map(|e| {
+            let modified = e
+                .metadata()
+                .and_then(|m| m.modified())
+                .unwrap_or(std::time::UNIX_EPOCH);
+            (e.path(), modified)
+        })
+        .collect();
+    files.sort_by_key(|(_, modified)| *modified);
+    let current = files.pop();
+    let mut done = 0;
+    for (path, _) in files {
+        match std::fs::remove_file(&path) {
+            Ok(()) => done += 1,
+            Err(e) => tracing::warn!("лог {}: {e}", path.display()),
+        }
+    }
+    if let Some((path, _)) = current {
+        let truncated = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|f| f.set_len(0));
+        match truncated {
+            Ok(()) => done += 1,
+            Err(e) => tracing::warn!("лог {}: {e}", path.display()),
+        }
+    }
+    tracing::info!(files = done, "логи удалены");
+    Ok(done)
+}

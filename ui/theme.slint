@@ -27,8 +27,21 @@ export global Theme {
     out property <length> settings-nav-item-height: 36px;
     out property <length> settings-exe-field-width: 200px;
     out property <length> settings-combo-width: 160px;
+    // Превью отчёта об устройствах в разделе «Дополнительно».
+    out property <length> report-preview-height: 280px;
     // Строка устройства в разделе «Устройства» (высота постоянная — от неё считается перетаскивание).
     out property <length> settings-device-row-height: 56px;
+    // Редактор своего цвета в карточке клавиатуры: предпросмотр, подписи и значения ползунков R/G/B.
+    out property <length> color-preview-size: 56px;
+    out property <length> channel-label-width: 16px;
+    out property <length> channel-value-width: 32px;
+    // Эквалайзер в карточке гарнитуры (раздел «Устройства»): высота раскрытой части (постоянная —
+    // от неё считаются места строк ниже), высота ползунков полос и ширина столбца полосы.
+    out property <length> eq-panel-height: 236px;
+    // Строка настройки устройства под строкой «Устройств» (host, lift-off, автоотключение).
+    out property <length> device-option-height: 44px;
+    out property <length> eq-slider-height: 120px;
+    out property <length> eq-band-width: 72px;
     out property <length> nav-indicator-width: 3px;
     out property <length> nav-indicator-height: 16px;
     out property <length> font-title: 20px;
@@ -57,6 +70,9 @@ export global Theme {
     out property <string> glyph-keyboard: "\u{E765}";
     out property <string> glyph-headset: "\u{E7F6}";
     out property <string> glyph-charging: "\u{E945}";
+    // Связь в заголовке карточки: USB-штекер и антенна (радио через ресивер).
+    out property <string> glyph-usb: "\u{ECF0}";
+    out property <string> glyph-wireless: "\u{E704}";
     out property <string> glyph-settings: "\u{E713}";
     out property <string> glyph-profiles: "\u{E77B}";
     out property <string> glyph-close: "\u{E711}";
@@ -65,10 +81,12 @@ export global Theme {
     out property <string> glyph-refresh: "\u{E72C}";
     out property <string> glyph-add: "\u{E710}";
     out property <string> glyph-report: "\u{E9D9}";
+    out property <string> glyph-advanced: "\u{E90F}";
     out property <string> glyph-chevron-right: "\u{E76C}";
     out property <string> glyph-chevron-down: "\u{E70D}";
     out property <string> glyph-devices: "\u{E772}";
     out property <string> glyph-gripper: "\u{E76F}";
+    out property <string> glyph-equalizer: "\u{E9E9}";
 
     // Цвета
     out property <color> background: dark ? #2c2c2c : #f9f9f9;
@@ -79,10 +97,14 @@ export global Theme {
     out property <color> text-secondary: dark ? #ffffffc8 : #0000009e;
     out property <color> text-disabled: dark ? #ffffff5d : #0000005c;
     out property <color> divider: dark ? #ffffff15 : #0000000f;
-    // Полоска заряда: дорожка, заполнение — акцент, низкий заряд — Fluent «critical».
-    out property <color> battery-track: dark ? #ffffff1a : #0000001a;
+    // Заряд: заливка — акцент, низкий заряд — Fluent «critical».
     out property <color> battery-low: dark ? #ff99a4 : #c42b1c;
-    out property <length> battery-bar-height: 4px;
+    // Батарейка в заголовке карточки: корпус, «носик», отступ заливки от контура.
+    out property <length> battery-width: 22px;
+    out property <length> battery-height: 11px;
+    out property <length> battery-cap-width: 2px;
+    out property <length> battery-cap-height: 5px;
+    out property <length> battery-inset: 2px;
     out property <length> radius-bar: 2px;
     // Цвета подсветки в палитре карточки клавиатуры и размер кружка.
     out property <[color]> swatches: [#ff8000, #ffffff, #ff0000, #00ff00, #0080ff, #8000ff];

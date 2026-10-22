@@ -105,6 +105,8 @@ pub struct AppState {
     pub profile: usize,
     /// Порядок и скрытые карточки панели (из `devices.toml`).
     pub layout: PanelLayout,
+    /// Свои цвета палитры клавиатуры (из `devices.toml`).
+    pub colors: Vec<[u8; 3]>,
 }
 
 impl AppState {

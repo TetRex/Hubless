@@ -3,14 +3,19 @@ import { ComboBox, ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { IconButton } from "widgets.slint";
 import { DeviceCard, DeviceInfo, DeviceKind } from "cards/device_card.slint";
-import { DeviceRow, ProfileRow, SettingsWindow } from "settings.slint";
+import { DeviceRow, EqBand, ProfileRow, SettingsWindow } from "settings.slint";
 
-export { Theme, DeviceInfo, DeviceKind, DeviceRow, ProfileRow, SettingsWindow }
+export { Theme, DeviceInfo, DeviceKind, DeviceRow, EqBand, ProfileRow, SettingsWindow }
 
 export component Panel inherits Window {
     in property <[DeviceInfo]> devices;
     // Найдено хоть одно устройство (карточек может не быть — все скрыты).
     in property <bool> has-devices;
+    // Свои цвета палитры клавиатуры (раздел настроек «Цвета клавиатуры»).
+    in property <[color]> custom-colors;
+    in property <int> max-colors;
+    callback add-color(int, int, int);
+    callback remove-color(color);
     // Фон Mica от DWM: окно прозрачное, иначе — сплошной цвет темы.
     in property <bool> backdrop;
     // Панель показана (содержимое проявляется) и включены ли системные «Эффекты анимации».
@@ -37,13 +42,10 @@ export component Panel inherits Window {
     callback drag-dpi(float);
     callback enter-dpi(float);
     callback select-rate(int);
-    callback set-mouse-host(bool);
-    callback set-lift-off(int);
     callback set-brightness(int);
     callback set-effect(int);
     callback pick-color(color);
     callback set-sidetone(int);
-    callback set-auto-off(int);
 
     title: "Hubless";
     no-frame: true;
@@ -126,6 +128,14 @@ export component Panel inherits Window {
 
                     for device in root.devices: DeviceCard {
                         info: device;
+                        custom-colors: root.custom-colors;
+                        max-colors: root.max-colors;
+                        add-color(r, g, b) => {
+                            root.add-color(r, g, b);
+                        }
+                        remove-color(c) => {
+                            root.remove-color(c);
+                        }
                         select-dpi(v) => {
                             root.select-dpi(v);
                         }
@@ -138,12 +148,6 @@ export component Panel inherits Window {
                         select-rate(hz) => {
                             root.select-rate(hz);
                         }
-                        set-mouse-host(on) => {
-                            root.set-mouse-host(on);
-                        }
-                        set-lift-off(i) => {
-                            root.set-lift-off(i);
-                        }
                         set-brightness(v) => {
                             root.set-brightness(v);
                         }
@@ -155,9 +159,6 @@ export component Panel inherits Window {
                         }
                         set-sidetone(v) => {
                             root.set-sidetone(v);
-                        }
-                        set-auto-off(m) => {
-                            root.set-auto-off(m);
                         }
                     }
                 }

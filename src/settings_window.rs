@@ -29,6 +29,14 @@ pub enum SettingsAction {
     MoveDevice(i32, i32),
     /// Показать (`true`) или скрыть устройство в панели.
     ShowDevice(i32, bool),
+    /// Настройки устройства из раздела «Устройства»: host мыши, lift-off (1 medium, 2 high),
+    /// автоотключение гарнитуры, минуты.
+    MouseHost(bool),
+    LiftOff(i32),
+    AutoOff(i32),
+    /// Эквалайзер гарнитуры: полоса и усиление, дБ; сброс в ровную кривую.
+    EqBand(i32, i32),
+    EqReset,
     Select(i32),
     /// Новый профиль — копия действующего, имя «Профиль N» подбирается само.
     Create,
@@ -39,6 +47,11 @@ pub enum SettingsAction {
     RemoveProgram(i32, String),
     RefreshRunning,
     CreateReport,
+    /// Дополнительно: проверить обновления, открыть страницу новой версии, логи.
+    CheckUpdates,
+    OpenUpdate,
+    OpenLogs,
+    DeleteLogs,
     OpenReports,
     CopyReport,
     OpenIssue,
@@ -86,11 +99,16 @@ pub struct SettingsController {
     running: Vec<String>,
     /// Последний отчёт об устройствах (живёт, пока открыто окно).
     report: Option<crate::report::Report>,
+    /// Найденная новая версия (страница релиза для кнопки «Скачать»).
+    update: Option<crate::update::Release>,
+    /// Ползунки эквалайзера двигают: кривую из гарнитуры в них не подставлять, иначе ползунок
+    /// откатывается к последнему записанному значению, а подстановка порождает новую запись.
+    eq_editing: bool,
 }
 
 impl SettingsController {
     /// Открыть (или поднять) окно; `page` — раздел: 0 «Общие», 1 «Устройства», 2 «Профили»,
-    /// 3 «Отчёт об устройствах».
+    /// 3 «Отчёт об устройствах»; 4 — «Устройства» с раскрытым эквалайзером гарнитуры.
     pub fn open(&mut self, theme: SystemTheme, state: &AppState, page: Option<usize>) {
         if self.ui.is_none() {
             match ui::SettingsWindow::new() {
@@ -108,12 +126,25 @@ impl SettingsController {
         }
         let Some(w) = &self.ui else { return };
         if let Some(page) = page {
-            w.set_page(page.min(3) as i32);
+            // 4 — «Устройства» с раскрытыми настройками гарнитуры (там эквалайзер).
+            w.set_page(if page == 4 { 1 } else { page.min(3) as i32 });
         }
         w.set_ghub_running(crate::report::ghub_running());
         self.set_theme(theme);
         self.refresh(None);
         self.update_devices(state);
+        // После списка устройств: его первое заполнение сбрасывает раскрытую строку.
+        if page == Some(4)
+            && let Some(w) = &self.ui
+        {
+            let row = state
+                .ordered()
+                .iter()
+                .position(|d| d.kind == DeviceKind::Headset)
+                .map_or(-1, |i| i as i32);
+            w.set_open_row(row);
+        }
+        let Some(w) = &self.ui else { return };
         if let Err(e) = w.show() {
             tracing::error!("окно настроек: {e}");
             return;
@@ -127,6 +158,51 @@ impl SettingsController {
             let _ = w.hide();
         }
         self.report = None;
+        self.update = None;
+    }
+
+    /// Начата проверка обновлений: кнопка показывает «Проверка…».
+    pub fn update_started(&self) {
+        if let Some(w) = &self.ui {
+            w.set_update_busy(true);
+            w.set_update_status(SharedString::new());
+        }
+    }
+
+    pub fn update_finished(&mut self, result: Result<crate::update::Release, String>) {
+        let Some(w) = &self.ui else { return };
+        w.set_update_busy(false);
+        let current = env!("CARGO_PKG_VERSION");
+        self.update = None;
+        let status = match result {
+            Ok(r) if crate::update::is_newer(&r.version, current) => {
+                let text = i18n::tr("Version {} is available").replace("{}", &r.version);
+                self.update = Some(r);
+                text
+            }
+            Ok(_) => i18n::tr("You have the latest version").to_owned(),
+            Err(e) => {
+                tracing::warn!("проверка обновлений: {e}");
+                i18n::tr("Couldn't check for updates").to_owned()
+            }
+        };
+        w.set_update_url(
+            self.update
+                .as_ref()
+                .map_or(SharedString::new(), |r| r.url.as_str().into()),
+        );
+        w.set_update_status(status.into());
+    }
+
+    /// Страница найденной новой версии.
+    pub fn update_url(&self) -> Option<&str> {
+        self.update.as_ref().map(|r| r.url.as_str())
+    }
+
+    pub fn set_logs_status(&self, message: &str) {
+        if let Some(w) = &self.ui {
+            w.set_logs_status(message.into());
+        }
     }
 
     /// Начат сбор отчёта: кнопка показывает «Сбор…».
@@ -256,8 +332,10 @@ impl SettingsController {
                 name: d.display_name().into(),
                 connected: d.connected,
                 shown: !state.layout.is_hidden(d.kind.key()),
+                ..device_options(d)
             })
             .collect();
+        update_eq(w, state, self.eq_editing);
         let model = w.get_devices();
         match model.as_any().downcast_ref::<VecModel<ui::DeviceRow>>() {
             Some(current) if current.row_count() == rows.len() => {
@@ -267,7 +345,28 @@ impl SettingsController {
                     }
                 }
             }
-            _ => w.set_devices(ModelRc::new(VecModel::from(rows))),
+            _ => {
+                // Список устройств поменялся — раскрытая строка могла оказаться чужой.
+                w.set_open_row(-1);
+                w.set_devices(ModelRc::new(VecModel::from(rows)));
+            }
+        }
+    }
+
+    /// Ползунки эквалайзера двигают (до сохранения кривой в гарнитуре).
+    pub fn set_eq_editing(&mut self, editing: bool) {
+        self.eq_editing = editing;
+    }
+
+    /// Поставить ползунки эквалайзера на заданную кривую (кнопка «Ровно»).
+    pub fn show_eq_gains(&self, gains: &[i8]) {
+        let Some(w) = &self.ui else { return };
+        let model = w.get_eq_bands();
+        for (i, &gain) in gains.iter().enumerate().take(model.row_count()) {
+            if let Some(mut band) = model.row_data(i) {
+                band.position = -f32::from(gain);
+                model.set_row_data(i, band);
+            }
         }
     }
 
@@ -279,12 +378,103 @@ impl SettingsController {
     }
 }
 
+/// Раздел «Эквалайзер»: полосы гарнитуры. Строки меняются на месте, и только изменившиеся;
+/// пока ползунки двигают (`editing`), значения из гарнитуры не подставляются — только появление
+/// и пропажа гарнитуры.
+fn update_eq(w: &ui::SettingsWindow, state: &AppState, editing: bool) {
+    let bands: Vec<ui::EqBand> = state
+        .devices
+        .iter()
+        .find(|d| d.kind == DeviceKind::Headset && d.connected)
+        .and_then(|d| match &d.controls {
+            crate::devices::manager::Controls::Headset { eq: Some(eq), .. } => Some(eq.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(freq, gain)| ui::EqBand {
+            label: band_label(freq).into(),
+            position: -f32::from(gain),
+        })
+        .collect();
+    let model = w.get_eq_bands();
+    match model.as_any().downcast_ref::<VecModel<ui::EqBand>>() {
+        Some(current) if current.row_count() == bands.len() && editing => {}
+        Some(current) if current.row_count() == bands.len() => {
+            for (i, band) in bands.into_iter().enumerate() {
+                if current.row_data(i).as_ref() != Some(&band) {
+                    current.set_row_data(i, band);
+                }
+            }
+        }
+        _ => w.set_eq_bands(ModelRc::new(VecModel::from(bands))),
+    }
+}
+
+/// Настройки устройства для строки «Устройств» (у отключённого — нет).
+fn device_options(d: &crate::state::DeviceState) -> ui::DeviceRow {
+    use crate::devices::manager::Controls;
+    use crate::settings::LiftOff;
+    let mut row = ui::DeviceRow {
+        lift_off: -1,
+        auto_off: -1,
+        ..Default::default()
+    };
+    if !d.connected {
+        return row;
+    }
+    match &d.controls {
+        Controls::Mouse {
+            host,
+            host_mode,
+            lift_off,
+            ..
+        } => {
+            row.host = *host;
+            row.host_mode = *host_mode;
+            row.lift_off = match lift_off {
+                Some(LiftOff::Low) => 0,
+                Some(LiftOff::Medium) => 1,
+                Some(LiftOff::High) => 2,
+                None => -1,
+            };
+        }
+        Controls::Headset { auto_off, .. } => {
+            row.auto_off = auto_off.map_or(-1, i32::from);
+        }
+        _ => {}
+    }
+    row
+}
+
+/// «80 Hz», «2.2 kHz» на языке интерфейса.
+fn band_label(freq: u16) -> String {
+    if freq >= 1000 {
+        let khz = f32::from(freq) / 1000.0;
+        let text = if freq.is_multiple_of(1000) {
+            format!("{khz:.0}")
+        } else {
+            format!("{khz:.1}")
+        };
+        i18n::tr("{} kHz").replace("{}", &text)
+    } else {
+        i18n::tr("{} Hz").replace("{}", &freq.to_string())
+    }
+}
+
 fn wire(w: &ui::SettingsWindow) {
     let post = |a: SettingsAction| app::post(AppEvent::Settings(a));
     w.on_set_language(move |i| post(SettingsAction::Language(i)));
     w.on_set_autostart(move |on| post(SettingsAction::Autostart(on)));
     w.on_move_device(move |from, to| post(SettingsAction::MoveDevice(from, to)));
     w.on_show_device(move |i, on| post(SettingsAction::ShowDevice(i, on)));
+    w.on_set_mouse_host(move |on| post(SettingsAction::MouseHost(on)));
+    w.on_set_lift_off(move |v| post(SettingsAction::LiftOff(v)));
+    w.on_set_auto_off(move |m| post(SettingsAction::AutoOff(m)));
+    w.on_set_eq_band(move |i, gain| post(SettingsAction::EqBand(i, gain)));
+    w.on_reset_eq(move || post(SettingsAction::EqReset));
+    w.set_eq_min(i32::from(*crate::headset_eq::GAIN_RANGE.start()));
+    w.set_eq_max(i32::from(*crate::headset_eq::GAIN_RANGE.end()));
     w.on_select_profile(move |i| post(SettingsAction::Select(i)));
     w.on_create_profile(move || post(SettingsAction::Create));
     w.on_rename_profile(move |i, name| post(SettingsAction::Rename(i, name.into())));
@@ -294,6 +484,11 @@ fn wire(w: &ui::SettingsWindow) {
     w.on_remove_program(move |i, exe| post(SettingsAction::RemoveProgram(i, exe.into())));
     w.on_refresh_running(move || post(SettingsAction::RefreshRunning));
     w.on_create_report(move || post(SettingsAction::CreateReport));
+    w.on_check_updates(move || post(SettingsAction::CheckUpdates));
+    w.on_open_update(move || post(SettingsAction::OpenUpdate));
+    w.on_open_logs(move || post(SettingsAction::OpenLogs));
+    w.on_delete_logs(move || post(SettingsAction::DeleteLogs));
+    w.set_version(env!("CARGO_PKG_VERSION").into());
     w.on_open_reports(move || post(SettingsAction::OpenReports));
     w.on_copy_report(move || post(SettingsAction::CopyReport));
     w.on_open_issue(move || post(SettingsAction::OpenIssue));

@@ -22,7 +22,7 @@ use crate::devices::mouse;
 use crate::hidpp::Write;
 use crate::hidpp::features::battery::{self, Battery};
 use crate::hidpp::features::{brightness, dpi, onboard, report_rate, rgb_effects};
-use crate::hidpp::message::Report;
+use crate::hidpp::message::{ERROR_10, ERROR_20, Report};
 use crate::hidpp::root::{self, Protocol};
 use crate::hidpp::transport::{Event, Inbound};
 use crate::settings::DeviceSettings;
@@ -30,6 +30,14 @@ use crate::settings::DeviceSettings;
 const BATTERY_POLL: Duration = Duration::from_secs(5 * 60);
 /// WM_DEVICECHANGE приходит пачкой — ждём тишины перед пересканированием.
 const RESCAN_DEBOUNCE: Duration = Duration::from_millis(800);
+
+/// Перепроверки спящего устройства после ухода в ожидание (от момента поиска); дальше — только
+/// уведомления ресивера, без опроса.
+const SLEEP_RECHECKS: [Duration; 3] = [
+    Duration::from_secs(1),
+    Duration::from_secs(3),
+    Duration::from_secs(8),
+];
 
 /// HID++ 1.0 уведомление ресивера о связи с устройством (`sub_id 0x41`);
 /// бит 6 первого параметра — «связь не установлена».
@@ -96,6 +104,8 @@ pub enum Controls {
         sidetone: Option<u8>,
         /// Автоотключение, минуты (0 — никогда).
         auto_off: Option<u8>,
+        /// Встроенный эквалайзер: частота полосы, Гц, и усиление, дБ (`None` — не прочитан).
+        eq: Option<Vec<(u16, i8)>>,
     },
 }
 
@@ -126,6 +136,8 @@ pub enum Command {
     Sidetone(u8),
     /// Гарнитура: автоотключение, минуты (0 — никогда).
     AutoOff(u8),
+    /// Гарнитура: эквалайзер — усиление полос, дБ; `true` — сохранить в гарнитуре.
+    Eq([i8; crate::headset_eq::BANDS], bool),
     Quit,
 }
 
@@ -254,6 +266,9 @@ struct Worker {
     error: Option<String>,
     /// Ресивер со спящим устройством (когда `dev` нет).
     sleeping: Option<discovery::Sleeping>,
+    /// Когда устройство ушло в ожидание и сколько перепроверок ([`SLEEP_RECHECKS`]) уже было.
+    sleep_since: Instant,
+    sleep_rechecks: usize,
 }
 
 impl Worker {
@@ -270,6 +285,8 @@ impl Worker {
             lighting: None,
             error: None,
             sleeping: None,
+            sleep_since: Instant::now(),
+            sleep_rechecks: 0,
         }
     }
 
@@ -304,7 +321,7 @@ impl Worker {
                 self.publish_controls(true);
                 false
             }
-            Command::Sidetone(_) | Command::AutoOff(_) => false,
+            Command::Sidetone(_) | Command::AutoOff(_) | Command::Eq(..) => false,
             Command::Rescan => {
                 loop {
                     match self.rx.recv_timeout(RESCAN_DEBOUNCE) {
@@ -360,14 +377,24 @@ impl Worker {
         }
         // Спящее устройство — карточка «не подключено» с именем от ресивера (пустое — панель
         // подставит название типа).
+        // Ресивер не отдал имя — оставить прежнее, если устройство уже было найдено.
+        let known_name = self
+            .snapshot
+            .as_ref()
+            .map(|p| p.name.clone())
+            .filter(|n| !n.is_empty());
         let asleep = sleeping.as_ref().map(|s| Snapshot {
-            name: s.name.clone().unwrap_or_default(),
+            name: s.name.clone().or(known_name).unwrap_or_default(),
             connected: false,
             wired: false,
             battery: None,
             controls: Controls::None,
             error: None,
         });
+        if sleeping.is_some() {
+            self.sleep_since = Instant::now();
+            self.sleep_rechecks = 0;
+        }
         self.sleeping = sleeping;
         match found {
             Some(f) => {
@@ -394,13 +421,38 @@ impl Worker {
         let Some(s) = &self.sleeping else {
             return false;
         };
-        match s.transport.next_event(Duration::from_secs(3600)) {
+        let recheck_at = SLEEP_RECHECKS
+            .get(self.sleep_rechecks)
+            .map(|&d| self.sleep_since + d);
+        let timeout = recheck_at.map_or(Duration::from_secs(3600), |t| {
+            t.saturating_duration_since(Instant::now())
+        });
+        match s.transport.next_event(timeout) {
             Event::Report(r) => {
-                let online = r.sub_id() == DEVICE_CONNECTION
-                    && s.slots.contains(&r.device())
-                    && r.params()[0] & LINK_NOT_ESTABLISHED == 0;
+                let from_slot = s.slots.contains(&r.device());
+                // «Связь установлена» или любое сообщение самого устройства (не ответ-ошибка
+                // ресивера): уведомление о связи могло прийти до того, как мы начали слушать.
+                let online = from_slot
+                    && if r.sub_id() == DEVICE_CONNECTION {
+                        r.params()[0] & LINK_NOT_ESTABLISHED == 0
+                    } else {
+                        !matches!(r.sub_id(), ERROR_10 | ERROR_20)
+                    };
                 if online {
                     tracing::info!(role = ?self.role, slot = r.device(), "устройство проснулось");
+                    self.rescan();
+                }
+            }
+            Event::Timeout if recheck_at.is_some_and(|t| t <= Instant::now()) => {
+                // Короткая серия перепроверок после ухода в ожидание: устройство могло
+                // переподключиться (например, после отключения кабеля) раньше, чем мы стали слушать.
+                self.sleep_rechecks += 1;
+                let awake = s
+                    .slots
+                    .iter()
+                    .any(|&slot| matches!(root::ping(&s.transport, slot), Ok(Protocol::V2(..))));
+                if awake {
+                    tracing::info!(role = ?self.role, "устройство на связи (перепроверка)");
                     self.rescan();
                 }
             }

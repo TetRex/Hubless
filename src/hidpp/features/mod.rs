@@ -7,6 +7,7 @@ pub mod device_info;
 pub mod device_name;
 pub mod dpi;
 pub mod onboard;
+pub mod per_key;
 pub mod report_rate;
 pub mod rgb_effects;
 

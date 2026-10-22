@@ -1,52 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import { Button, ComboBox, LineEdit, Slider, Switch } from "std-widgets.slint";
 
-// Заголовок раскрывающегося блока «Ещё».
-component Expander inherits Rectangle {
-    in-out property <bool> expanded;
-
-    height: row.preferred-height;
-
-    row := HorizontalLayout {
-        spacing: Theme.spacing-xs;
-
-        Text {
-            text: root.expanded ? Theme.glyph-chevron-down : Theme.glyph-chevron-right;
-            font-family: Theme.icon-font;
-            font-size: Theme.font-caption;
-            color: Theme.text-secondary;
-            vertical-alignment: center;
-        }
-
-        Text {
-            text: @tr("More");
-            font-size: Theme.font-caption;
-            color: focus.has-focus ? Theme.text-primary : Theme.text-secondary;
-            vertical-alignment: center;
-            horizontal-stretch: 1;
-        }
-    }
-
-    focus := FocusScope {
-        key-pressed(event) => {
-            if (event.text == " " || event.text == Key.Return) {
-                root.expanded = !root.expanded;
-                return accept;
-            }
-            reject
-        }
-    }
-
-    // Область клика поверх FocusScope: иначе первый клик только забирает фокус
-    // (FocusScope принимает нажатие, пока не в фокусе), и срабатывает лишь второй.
-    TouchArea {
-        clicked => {
-            focus.focus();
-            root.expanded = !root.expanded;
-        }
-    }
-}
 import { Theme } from "../theme.slint";
+import { IconButton } from "../widgets.slint";
 
 export enum DeviceKind { mouse, keyboard, headset }
 
@@ -54,7 +10,8 @@ export struct DeviceInfo {
     kind: DeviceKind,
     name: string,
     connected: bool,
-    link: string,
+    // Подключено кабелем (USB), иначе — по радио.
+    wired: bool,
     // Заряд в процентах, -1 — неизвестен.
     battery: int,
     charging: bool,
@@ -65,12 +22,6 @@ export struct DeviceInfo {
     // Мышь: диапазон допустимых DPI (0 — неизвестен) для ползунка и поля.
     dpi-min: int,
     dpi-max: int,
-    // Мышь: настройки применяет Hubless (host) и lift-off: 0 low, 1 medium, 2 high, -1 — нет.
-    host: bool,
-    // Мышь: есть переключатель host/onboard (у G903 и других мышей со старыми фичами — нет:
-    // режим host выключает кнопку DPI на мыши).
-    host-mode: bool,
-    lift-off: int,
     // Мышь: частота опроса, Гц (-1 — неизвестна), и быстрые кнопки.
     rate: int,
     rate-presets: [int],
@@ -81,36 +32,24 @@ export struct DeviceInfo {
     // Эффект подсветки (индекс в списке effect-names; 0 — управляет сама клавиатура) и его цвет.
     effect: int,
     color: color,
-    // Гарнитура: sidetone 0–100 и автоотключение в минутах (0 — никогда); -1 — неизвестно.
+    // Текущий цвет — один из своих цветов палитры (его можно убрать из палитры).
+    color-custom: bool,
+    // Гарнитура: sidetone 0–100; -1 — неизвестно.
     sidetone: int,
-    auto-off: int,
     // Ошибка последней записи.
     error: string,
 }
 
-// Полоска заряда с процентом и значком зарядки.
-component BatteryBar inherits HorizontalLayout {
+// Заряд в заголовке карточки: значок зарядки, процент и батарейка с заливкой по заряду.
+component BatteryIndicator inherits HorizontalLayout {
     in property <int> percent;
     in property <bool> charging;
     in property <bool> low;
 
-    spacing: Theme.spacing-s;
-
-    Rectangle {
-        horizontal-stretch: 1;
-        height: Theme.battery-bar-height;
-        y: (parent.height - self.height) / 2;
-        border-radius: Theme.radius-bar;
-        background: Theme.battery-track;
-
-        Rectangle {
-            x: 0;
-            width: parent.width * clamp(root.percent, 0, 100) / 100;
-            height: parent.height;
-            border-radius: Theme.radius-bar;
-            background: root.low ? Theme.battery-low : Theme.accent;
-        }
-    }
+    // Свободное место строки — имени устройства, а не промежуткам между процентом и батарейкой.
+    horizontal-stretch: 0;
+    alignment: end;
+    spacing: Theme.spacing-xs;
 
     if root.charging: Text {
         text: Theme.glyph-charging;
@@ -125,7 +64,41 @@ component BatteryBar inherits HorizontalLayout {
         font-size: Theme.font-caption;
         color: root.low ? Theme.battery-low : Theme.text-secondary;
         vertical-alignment: center;
-        min-width: self.preferred-width;
+    }
+
+    // Корпус и «носик»; без обёртки раскладка растянула бы их на всю высоту строки.
+    VerticalLayout {
+        alignment: center;
+
+        HorizontalLayout {
+            Rectangle {
+                width: Theme.battery-width;
+                height: Theme.battery-height;
+                border-width: 1px;
+                border-radius: Theme.radius-bar;
+                border-color: root.low ? Theme.battery-low : Theme.text-secondary;
+
+                Rectangle {
+                    x: Theme.battery-inset;
+                    y: Theme.battery-inset;
+                    width: (parent.width - 2 * Theme.battery-inset) * clamp(root.percent, 0, 100) / 100;
+                    height: parent.height - 2 * Theme.battery-inset;
+                    border-radius: Theme.radius-bar / 2;
+                    background: root.low ? Theme.battery-low : Theme.accent;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+
+                Rectangle {
+                    width: Theme.battery-cap-width;
+                    height: Theme.battery-cap-height;
+                    border-radius: Theme.radius-bar / 2;
+                    background: root.low ? Theme.battery-low : Theme.text-secondary;
+                }
+            }
+        }
     }
 }
 
@@ -162,6 +135,86 @@ component Swatch inherits Rectangle {
     }
 }
 
+// Ползунок канала цвета 0–255: подпись, ползунок, значение.
+component ChannelSlider inherits HorizontalLayout {
+    in property <string> label;
+    in-out property <int> value;
+
+    spacing: Theme.spacing-s;
+
+    Text {
+        text: root.label;
+        width: Theme.channel-label-width;
+        font-size: Theme.font-caption;
+        color: Theme.text-secondary;
+        vertical-alignment: center;
+    }
+
+    Slider {
+        horizontal-stretch: 1;
+        minimum: 0;
+        maximum: 255;
+        value: root.value;
+        changed(v) => {
+            root.value = round(v);
+        }
+    }
+
+    Text {
+        text: root.value;
+        width: Theme.channel-value-width;
+        font-size: Theme.font-caption;
+        color: Theme.text-primary;
+        horizontal-alignment: right;
+        vertical-alignment: center;
+    }
+}
+
+// Кружок «+» в палитре: открыть редактор своего цвета.
+component AddSwatch inherits Rectangle {
+    in property <bool> active;
+    callback clicked();
+
+    width: Theme.swatch-size;
+    height: Theme.swatch-size;
+    border-radius: self.width / 2;
+    background: touch.has-hover || focus.has-focus || root.active ? Theme.card : transparent;
+    border-width: 1px;
+    border-color: root.active || focus.has-focus ? Theme.swatch-ring : Theme.card-stroke;
+    accessible-role: button;
+    accessible-label: @tr("Add colour");
+    accessible-action-default => {
+        root.clicked();
+    }
+
+    Text {
+        text: Theme.glyph-add;
+        font-family: Theme.icon-font;
+        font-size: Theme.font-caption;
+        color: Theme.text-secondary;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == " " || event.text == Key.Return) {
+                root.clicked();
+                return accept;
+            }
+            reject
+        }
+    }
+
+    // Поверх FocusScope — как у Swatch: иначе первый клик уходит на фокус.
+    touch := TouchArea {
+        clicked => {
+            focus.focus();
+            root.clicked();
+        }
+    }
+}
+
 component Label inherits Text {
     font-size: Theme.font-caption;
     color: Theme.text-secondary;
@@ -171,17 +224,36 @@ component Label inherits Text {
 // Карточка устройства. Отключённое устройство — свёрнутая серая карточка без контролов.
 export component DeviceCard inherits Rectangle {
     in property <DeviceInfo> info;
+    // Свои цвета палитры клавиатуры — второй ряд кружков — и их предел.
+    in property <[color]> custom-colors;
+    in property <int> max-colors;
+    // Редактор своего цвета (кнопка «+»): открыт ли и значения ползунков.
+    property <bool> editing-color;
+    property <int> new-red;
+    property <int> new-green;
+    property <int> new-blue;
+    // Можно ли добавить ещё цвет.
+    property <bool> can-add: root.custom-colors.length < root.max-colors;
+
+    function toggle-editor() {
+        root.editing-color = !root.editing-color;
+        if (root.editing-color) {
+            root.new-red = info.color.red;
+            root.new-green = info.color.green;
+            root.new-blue = info.color.blue;
+        }
+    }
     callback select-dpi(int);
     callback drag-dpi(float);
     callback enter-dpi(float);
     callback select-rate(int);
-    callback set-mouse-host(bool);
-    callback set-lift-off(int);
     callback set-brightness(int);
     callback set-effect(int);
     callback pick-color(color);
+    // Свой цвет: добавить в палитру (и включить) и убрать из неё.
+    callback add-color(int, int, int);
+    callback remove-color(color);
     callback set-sidetone(int);
-    callback set-auto-off(int);
 
     background: info.connected ? Theme.card : Theme.card-disabled;
     border-radius: Theme.radius-card;
@@ -214,18 +286,28 @@ export component DeviceCard inherits Rectangle {
                 overflow: elide;
             }
 
-            Text {
-                text: info.connected ? info.link : @tr("inactive");
+            // Связь значком, заряд — в конце строки.
+            if info.connected: Text {
+                text: info.wired ? Theme.glyph-usb : Theme.glyph-wireless;
+                font-family: Theme.icon-font;
+                font-size: Theme.font-icon;
+                color: Theme.text-secondary;
+                vertical-alignment: center;
+                accessible-label: info.wired ? @tr("USB") : @tr("Wireless");
+            }
+
+            if info.connected && info.battery >= 0: BatteryIndicator {
+                percent: info.battery;
+                charging: info.charging;
+                low: info.low;
+            }
+
+            if !info.connected: Text {
+                text: @tr("inactive");
                 font-size: Theme.font-caption;
-                color: info.connected ? Theme.text-secondary : Theme.text-disabled;
+                color: Theme.text-disabled;
                 vertical-alignment: center;
             }
-        }
-
-        if info.connected && info.battery >= 0: BatteryBar {
-            percent: info.battery;
-            charging: info.charging;
-            low: info.low;
         }
 
         // Мышь: быстрые кнопки DPI (новые мыши переводятся в режим host, G903 и др. — нет).
@@ -335,39 +417,6 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
-        // Мышь: редкие настройки.
-        if info.connected && info.kind == DeviceKind.mouse && (info.host-mode || info.lift-off >= 0): VerticalLayout {
-            spacing: Theme.spacing-s;
-
-            more := Expander { }
-
-            if more.expanded && info.host-mode: Switch {
-                text: @tr("Settings from Hubless (host)");
-                checked: info.host;
-                toggled => {
-                    root.set-mouse-host(self.checked);
-                }
-            }
-
-            if more.expanded && info.lift-off >= 0: HorizontalLayout {
-                spacing: Theme.spacing-xs;
-
-                Label {
-                    text: "Lift-off";
-                    min-width: self.preferred-width + Theme.spacing-s;
-                }
-
-                // Без «низкого»: PRO X 2 отвергает lift-off 0 (INVALID_ARGUMENT, 2026-10-19).
-                for name[i] in [@tr("medium"), @tr("high")]: Button {
-                    text: name;
-                    primary: i + 1 == info.lift-off;
-                    clicked => {
-                        root.set-lift-off(i + 1);
-                    }
-                }
-            }
-        }
-
         // Клавиатура: яркость.
         if info.connected && info.kind == DeviceKind.keyboard && info.brightness >= 0: HorizontalLayout {
             spacing: Theme.spacing-s;
@@ -406,22 +455,115 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
-        // Палитра — для эффектов с цветом: статичный, дыхание, рябь.
+        // Палитра — для эффектов с цветом: статичный, дыхание, рябь. Свои цвета — вторым рядом,
+        // «+» в конце последнего ряда открывает редактор своего цвета.
         if info.connected && info.kind == DeviceKind.keyboard
-            && (info.effect == 1 || info.effect == 2 || info.effect == 5): HorizontalLayout {
+            && (info.effect == 1 || info.effect == 2 || info.effect == 5): VerticalLayout {
             spacing: Theme.spacing-s;
-            alignment: end;
 
-            for c in Theme.swatches: Swatch {
-                value: c;
-                selected: c == info.color;
-                picked => {
-                    root.pick-color(c);
+            HorizontalLayout {
+                spacing: Theme.spacing-s;
+                alignment: end;
+
+                for c in Theme.swatches: Swatch {
+                    value: c;
+                    selected: c == info.color;
+                    picked => {
+                        root.pick-color(c);
+                    }
+                }
+
+                if root.custom-colors.length == 0: AddSwatch {
+                    active: root.editing-color;
+                    clicked => {
+                        root.toggle-editor();
+                    }
+                }
+            }
+
+            if root.custom-colors.length > 0: HorizontalLayout {
+                spacing: Theme.spacing-s;
+                alignment: end;
+
+                for c in root.custom-colors: Swatch {
+                    value: c;
+                    selected: c == info.color;
+                    picked => {
+                        root.pick-color(c);
+                    }
+                }
+
+                if root.can-add || root.editing-color: AddSwatch {
+                    active: root.editing-color;
+                    clicked => {
+                        root.toggle-editor();
+                    }
+                }
+            }
+
+            // Редактор: предпросмотр и ползунки R/G/B; «Добавить» — в палитру и на клавиатуру.
+            if root.editing-color: HorizontalLayout {
+                spacing: Theme.spacing-m;
+
+                Rectangle {
+                    width: Theme.color-preview-size;
+                    height: Theme.color-preview-size;
+                    border-radius: Theme.radius-control;
+                    border-width: 1px;
+                    border-color: Theme.card-stroke;
+                    background: rgb(root.new-red, root.new-green, root.new-blue);
+                }
+
+                VerticalLayout {
+                    horizontal-stretch: 1;
+                    alignment: center;
+
+                    ChannelSlider {
+                        label: "R";
+                        value <=> root.new-red;
+                    }
+
+                    ChannelSlider {
+                        label: "G";
+                        value <=> root.new-green;
+                    }
+
+                    ChannelSlider {
+                        label: "B";
+                        value <=> root.new-blue;
+                    }
+                }
+            }
+
+            if root.editing-color: HorizontalLayout {
+                spacing: Theme.spacing-s;
+                alignment: end;
+
+                if info.color-custom: IconButton {
+                    glyph: Theme.glyph-delete;
+                    label: @tr("Remove the selected colour from the palette");
+                    clicked => {
+                        root.remove-color(info.color);
+                    }
+                }
+
+                Rectangle {
+                    horizontal-stretch: 1;
+                }
+
+                Button {
+                    text: @tr("Add colour");
+                    primary: true;
+                    enabled: root.can-add;
+                    clicked => {
+                        root.add-color(root.new-red, root.new-green, root.new-blue);
+                        root.editing-color = false;
+                    }
                 }
             }
         }
 
-        // Гарнитура: свой голос в наушниках и автоотключение.
+        // Гарнитура: свой голос в наушниках.
         if info.connected && info.kind == DeviceKind.headset && info.sidetone >= 0: HorizontalLayout {
             spacing: Theme.spacing-s;
 
@@ -436,28 +578,6 @@ export component DeviceCard inherits Rectangle {
                 value: info.sidetone;
                 changed(v) => {
                     root.set-sidetone(round(v));
-                }
-            }
-        }
-
-        if info.connected && info.kind == DeviceKind.headset && info.auto-off >= 0: VerticalLayout {
-            spacing: Theme.spacing-s;
-
-            headset-more := Expander { }
-
-            if headset-more.expanded: Label {
-                text: @tr("Turn off when silent");
-            }
-
-            if headset-more.expanded: HorizontalLayout {
-                spacing: Theme.spacing-xs;
-
-                for m in [0, 10, 30, 60]: Button {
-                    text: m == 0 ? @tr("never") : @tr("{} min", m);
-                    primary: m == info.auto-off;
-                    clicked => {
-                        root.set-auto-off(m);
-                    }
                 }
             }
         }

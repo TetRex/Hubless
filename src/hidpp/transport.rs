@@ -30,6 +30,11 @@ pub const HIDPP_G_USAGE_PAGE: u16 = 0xFF43;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(1);
 /// Быстрый режим для перебора слотов, которые скорее всего пусты: без повтора.
 const QUICK_TIMEOUT: Duration = Duration::from_millis(150);
+/// Отказ записи отчёта (`os error 31`, ERROR_GEN_FAILURE): LIGHTSPEED-ресивер иногда кратко
+/// отвергает отчёт — так было, пока спящая мышь переподключалась (2026-10-22), и тогда поиск не
+/// видел мышь или её имя. Через паузу запись проходит — повторяем.
+const WRITE_ATTEMPTS: u32 = 3;
+const WRITE_RETRY_DELAY: Duration = Duration::from_millis(50);
 /// Таймаут blocking read в потоке чтения: как часто поток проверяет флаг остановки.
 const READ_TIMEOUT_MS: i32 = 1000;
 
@@ -344,7 +349,7 @@ impl Transport {
         for attempt in 0..attempts {
             self.drain();
             tracing::debug!(target: "hubless::hidpp", "→ {}", hex(request.as_bytes()));
-            writer.write(request.as_bytes())?;
+            write_with_retry(writer, request.as_bytes())?;
             let deadline = Instant::now() + timeout;
             loop {
                 let remaining = deadline.saturating_duration_since(Instant::now());
@@ -444,6 +449,22 @@ fn read_loop(dev: &HidDevice, tx: &Sender<Inbound>, stop: &AtomicBool) {
 fn error_code(r: &Report, marker: u8, first: u8, address: u8) -> Option<u8> {
     let p = r.params();
     (r.sub_id() == marker && r.address() == first && p[0] == address).then_some(p[1])
+}
+
+/// Запись отчёта с повтором при отказе устройства (см. [`WRITE_ATTEMPTS`]).
+fn write_with_retry(writer: &HidDevice, bytes: &[u8]) -> Result<(), Error> {
+    let mut attempt = 1;
+    loop {
+        match writer.write(bytes) {
+            Ok(_) => return Ok(()),
+            Err(e) if attempt < WRITE_ATTEMPTS => {
+                tracing::debug!(target: "hubless::hidpp", attempt, "запись отвергнута: {e}");
+                std::thread::sleep(WRITE_RETRY_DELAY);
+                attempt += 1;
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
 }
 
 #[cfg(test)]

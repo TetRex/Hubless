@@ -11,6 +11,7 @@ mod config;
 mod devices;
 mod dump;
 mod foreground;
+mod headset_eq;
 mod hidden_window;
 mod hidpp;
 mod i18n;
@@ -24,6 +25,7 @@ mod state;
 mod theme;
 mod timeutil;
 mod tray;
+mod update;
 mod win;
 
 mod ui {
@@ -42,7 +44,7 @@ Usage:
   hubless --dump [file]     devices and HID++ feature tables (default hubless-dump.json)
   hubless --report          save a device report to send as a GitHub issue
   hubless --test-toast      show a test notification (Hubless must be running)
-  hubless --settings [devices|profiles|report]
+  hubless --settings [devices|profiles|eq|advanced]   (eq — devices with the headset equalizer open)
                             open the settings window of the running Hubless
   hubless --quit            quit the running Hubless (like Exit in the menu)
   hubless --help            this help
@@ -113,7 +115,8 @@ fn main() -> ExitCode {
             let page = match args.get(1).map(String::as_str) {
                 Some("devices") => 1,
                 Some("profiles") => 2,
-                Some("report") => 3,
+                Some("report" | "advanced") => 3,
+                Some("eq") => 4,
                 _ => 0,
             };
             if hidden_window::request_settings(page) {

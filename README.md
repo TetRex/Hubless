@@ -11,7 +11,7 @@ Both are in Russian.
 ## Features
 
 - **Tray:** battery level of every device in the tooltip; a dot on the icon and a notification when a battery
-  drops below 15%; menu items "Start with Windows", "Open log folder" and "Exit".
+  drops below 15%; the right-click menu has just "Exit" (everything else is in the panel and the settings window).
 - **Panel** (left-click the tray icon):
   - mouse: DPI presets plus any value via the slider or input field, polling rate 125 Hz to 8 kHz,
     onboard/host mode, lift-off distance;
@@ -40,7 +40,7 @@ Hubless has been tested on three devices, but many Logitech mice and keyboards s
 To help add support for your device:
 
 1. Close G Hub completely.
-2. Open **Settings → Device report → Create report** (or run `hubless --report`).
+2. Open **Settings → Advanced → Create report** (or run `hubless --report`).
 3. Click **Open GitHub issue** and attach the report file (or paste its text using the **Copy** button).
 
 The report only reads data from the devices and contains no serial numbers or personal data; Hubless itself
@@ -52,7 +52,7 @@ sends nothing anywhere.
 hubless                       run in the tray
 hubless --dump [file]         devices and HID++ feature tables (JSON and text)
 hubless --report              device report for a GitHub issue
-hubless --settings [section]  open the settings window of the running Hubless (devices, profiles, report)
+hubless --settings [section]  open the settings window of the running Hubless (devices, profiles, eq, advanced)
 hubless --quit                quit the running Hubless (like "Exit" in the menu)
 hubless mouse ...             DPI, polling rate, lift-off, onboard/host mode
 hubless keyboard ...          brightness, lighting and effects

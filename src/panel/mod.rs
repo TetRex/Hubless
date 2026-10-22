@@ -2,6 +2,7 @@
 //! Жизненный цикл панели: создаётся лениво при первом открытии, уничтожается,
 //! если скрыта дольше [`DESTROY_AFTER`]. Пока окна нет, UI не держит ресурсов.
 
+mod outside_click;
 mod placement;
 
 use std::cell::Cell;
@@ -34,8 +35,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use crate::app::PanelAction;
 use crate::app::{self, AppEvent};
 use crate::devices::manager::Controls;
-use crate::settings::LiftOff;
-use crate::state::{AppState, BatteryState, DeviceKind, DeviceState, Link};
+use crate::state::{AppState, BatteryState, DeviceKind, Link};
 use crate::theme::{Fonts, SystemTheme};
 use crate::ui;
 
@@ -59,7 +59,17 @@ thread_local! {
 /// без рамки, поверх окон и без кнопки на панели задач; остальные окна — обычные.
 pub fn window_attributes(attrs: WindowAttributes) -> WindowAttributes {
     if !NEXT_IS_PANEL.replace(false) {
-        return attrs.with_class_name("Hubless.Settings");
+        // Иконка окна настроек (заголовок, панель задач, Alt+Tab) — та же, что у exe.
+        const ICON_SIZE: u32 = 32;
+        let icon = slint::winit_030::winit::window::Icon::from_rgba(
+            crate::tray::icon::app_icon_rgba(ICON_SIZE),
+            ICON_SIZE,
+            ICON_SIZE,
+        )
+        .ok();
+        return attrs
+            .with_class_name("Hubless.Settings")
+            .with_window_icon(icon);
     }
     attrs
         .with_decorations(false)
@@ -91,6 +101,9 @@ pub struct PanelController {
     slide_target: Rc<Cell<PhysicalPosition>>,
     /// Скрыть окно после анимации закрытия.
     close_timer: slint::Timer,
+    /// Хук мыши, пока панель показана: закрыть её щелчком по чужому окну, даже если фокуса
+    /// панель не получила (см. `outside_click`).
+    outside: Option<outside_click::OutsideClick>,
 }
 
 impl PanelController {
@@ -108,6 +121,7 @@ impl PanelController {
             slide_timer: Rc::default(),
             slide_target: Rc::new(Cell::new(PhysicalPosition::default())),
             close_timer: slint::Timer::default(),
+            outside: None,
         }
     }
 
@@ -152,24 +166,10 @@ impl PanelController {
                     panel.on_select_rate(|hz| {
                         app::post(AppEvent::Panel(PanelAction::Rate(hz.max(0) as u32)));
                     });
-                    panel.on_set_mouse_host(|on| {
-                        app::post(AppEvent::Panel(PanelAction::MouseHost(on)));
-                    });
-                    panel.on_set_lift_off(|i| {
-                        let l = match i {
-                            0 => LiftOff::Low,
-                            1 => LiftOff::Medium,
-                            _ => LiftOff::High,
-                        };
-                        app::post(AppEvent::Panel(PanelAction::LiftOff(l)));
-                    });
                     panel.on_set_sidetone(|v| {
                         app::post(AppEvent::Panel(
                             PanelAction::Sidetone(v.clamp(0, 100) as u8),
                         ));
-                    });
-                    panel.on_set_auto_off(|m| {
-                        app::post(AppEvent::Panel(PanelAction::AutoOff(m.clamp(0, 255) as u8)));
                     });
                     panel.on_select_profile(|i| {
                         app::post(AppEvent::Panel(PanelAction::Profile(i)));
@@ -184,6 +184,18 @@ impl PanelController {
                             c.blue(),
                         ])));
                     });
+                    panel.on_add_color(|r, g, b| {
+                        let c = |v: i32| v.clamp(0, 255) as u8;
+                        app::post(AppEvent::Panel(PanelAction::AddColor([c(r), c(g), c(b)])));
+                    });
+                    panel.on_remove_color(|c| {
+                        app::post(AppEvent::Panel(PanelAction::RemoveColor([
+                            c.red(),
+                            c.green(),
+                            c.blue(),
+                        ])));
+                    });
+                    panel.set_max_colors(crate::settings::MAX_COLORS as i32);
                     self.ui = Some(panel);
                     self.window_ready = false;
                     // Переводы Slint выбираются после создания компонента.
@@ -219,6 +231,9 @@ impl PanelController {
         }
         panel.set_shown(true);
         self.visible = true;
+        if self.outside.is_none() {
+            self.outside = outside_click::OutsideClick::install();
+        }
 
         let dark = self.theme.apps_dark;
         let first = !self.window_ready;
@@ -291,6 +306,7 @@ impl PanelController {
         if !self.visible {
             return;
         }
+        self.outside = None;
         self.slide_timer.stop();
         if let Some(panel) = &self.ui {
             panel.set_shown(false);
@@ -457,6 +473,20 @@ pub fn apply_theme_global(t: &ui::Theme<'_>, theme: &SystemTheme, fonts: &Fonts)
 /// строки — раскрытые блоки и перетаскиваемый ползунок не сбрасываются.
 fn update_devices(panel: &ui::Panel, state: &AppState) {
     panel.set_has_devices(!state.devices.is_empty());
+    let colors: Vec<slint::Color> = state
+        .colors
+        .iter()
+        .map(|&[r, g, b]| slint::Color::from_rgb_u8(r, g, b))
+        .collect();
+    let current = panel.get_custom_colors();
+    if current.row_count() != colors.len()
+        || colors
+            .iter()
+            .enumerate()
+            .any(|(i, c)| current.row_data(i).as_ref() != Some(c))
+    {
+        panel.set_custom_colors(ModelRc::new(VecModel::from(colors)));
+    }
     let items = device_infos(state);
     let model = panel.get_devices();
     match model.as_any().downcast_ref::<VecModel<ui::DeviceInfo>>() {
@@ -498,7 +528,7 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
             },
             name: d.display_name().into(),
             connected: d.connected,
-            link: link_text(d).into(),
+            wired: d.link == Some(Link::Usb),
             // Подробность ошибки — в логе; в карточке короткое сообщение на языке интерфейса.
             error: if d.error.is_some() {
                 crate::i18n::tr("Couldn't apply the setting").into()
@@ -509,17 +539,14 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
             dpi_presets: ModelRc::default(),
             dpi_min: 0,
             dpi_max: 0,
-            host: false,
-            host_mode: false,
-            lift_off: -1,
             rate: -1,
             rate_presets: ModelRc::default(),
             brightness: -1,
             brightness_min: 0,
             brightness_max: 100,
             effect: 0,
+            color_custom: false,
             sidetone: -1,
-            auto_off: -1,
             color: slint::Color::default(),
             battery: d.battery.map_or(-1, |b| i32::from(b.percent)),
             charging: d.battery.is_some_and(|b| b.charging),
@@ -528,6 +555,11 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
         .zip(&devices)
         .map(|(mut info, d)| {
             fill_controls(&mut info, &d.controls);
+            if let Controls::Keyboard { lighting, .. } = &d.controls {
+                info.color_custom = lighting
+                    .and_then(|l| l.color())
+                    .is_some_and(|c| state.colors.contains(&c));
+            }
             info
         })
         .collect()
@@ -537,33 +569,22 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
 fn fill_controls(info: &mut ui::DeviceInfo, c: &Controls) {
     match c {
         Controls::None => {}
-        Controls::Headset { sidetone, auto_off } => {
+        Controls::Headset { sidetone, .. } => {
             info.sidetone = sidetone.map_or(-1, i32::from);
-            info.auto_off = auto_off.map_or(-1, i32::from);
         }
         Controls::Mouse {
-            host,
             dpi,
             dpi_presets,
             dpi_supported,
-            lift_off,
             rate_hz,
             rate_presets,
-            host_mode,
+            ..
         } => {
-            info.host_mode = *host_mode;
             info.dpi_min = dpi_supported.first().map_or(0, |&v| i32::from(v));
             info.dpi_max = dpi_supported.last().map_or(0, |&v| i32::from(v));
             info.rate = rate_hz.map_or(-1, |hz| hz as i32);
             let rates: Vec<i32> = rate_presets.iter().map(|&hz| hz as i32).collect();
             info.rate_presets = ModelRc::new(VecModel::from(rates));
-            info.host = *host;
-            info.lift_off = match lift_off {
-                Some(LiftOff::Low) => 0,
-                Some(LiftOff::Medium) => 1,
-                Some(LiftOff::High) => 2,
-                None => -1,
-            };
             info.dpi = dpi.map_or(-1, i32::from);
             let presets: Vec<i32> = dpi_presets.iter().map(|&v| i32::from(v)).collect();
             info.dpi_presets = ModelRc::new(VecModel::from(presets));
@@ -583,15 +604,6 @@ fn fill_controls(info: &mut ui::DeviceInfo, c: &Controls) {
                 info.color = slint::Color::from_rgb_u8(r, g, b);
             }
         }
-    }
-}
-
-/// Подпись справа в карточке: тип связи (заряд — отдельной полоской).
-fn link_text(d: &DeviceState) -> &'static str {
-    match d.link {
-        Some(Link::Usb) => "USB",
-        Some(Link::Wireless) => crate::i18n::tr("Wireless"),
-        None => "",
     }
 }
 

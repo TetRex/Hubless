@@ -5,13 +5,15 @@ use std::process::ExitCode;
 
 use hidapi::HidApi;
 
-use crate::centurion;
 use crate::devices::discovery::{self, Found, TYPE_MOUSE};
 use crate::devices::{keyboard, mouse};
-use crate::hidpp::features::{battery, brightness, dpi, onboard, report_rate, rgb_effects};
+use crate::hidpp::features::{
+    battery, brightness, dpi, onboard, per_key, report_rate, rgb_effects,
+};
 use crate::hidpp::message::hex;
 use crate::hidpp::{Error, Write};
 use crate::settings::{self, DeviceSettings, MouseSettings};
+use crate::{centurion, headset_eq};
 
 pub const MOUSE_USAGE: &str =
     "  hubless mouse [status]    mouse state: battery, DPI, polling rate, lift-off, onboard
@@ -323,7 +325,9 @@ pub const KEYBOARD_USAGE: &str =
   hubless keyboard lighting wave [--direction DIR] [--period MS] [--intensity 0–100]
   hubless keyboard lighting ripple <RRGGBB> [--period 2–200]
                                                built-in effects; period 1000–20000 ms (default 5000),
-                                               directions: right, left, up, down, center-out, center-in, in, out, cycle";
+                                               directions: right, left, up, down, center-out, center-in, in, out, cycle
+  hubless keyboard keys <KEYS> <RRGGBB> [--dry-run]
+                                               colour single keys (0x8081): wasd, w,a,s,d, f1,space, esc…";
 
 pub fn keyboard(args: &[String]) -> ExitCode {
     let dry_run = args.iter().any(|a| a == "--dry-run");
@@ -359,6 +363,13 @@ pub fn keyboard(args: &[String]) -> ExitCode {
                 }
                 code
             }
+            Err(e) => {
+                eprintln!("{e}");
+                ExitCode::from(2)
+            }
+        },
+        Some("keys") => match plan_keys(found, &args[1..]) {
+            Ok(writes) => run_sequence(found, &writes, dry_run),
             Err(e) => {
                 eprintln!("{e}");
                 ExitCode::from(2)
@@ -600,6 +611,23 @@ fn plan_lighting(
     Ok((writes, Some(lighting)))
 }
 
+/// Цвет отдельных клавиш (`0x8081`): режим host и управление подсветкой, как у эффектов,
+/// затем диапазоны зон и применение кадра. Пробная команда — на железе ещё не проверена.
+fn plan_keys(found: &Found, args: &[String]) -> Result<Vec<Write>, String> {
+    let dev = found.device();
+    if dev.feature(per_key::ID).is_none() {
+        return Err("the keyboard has no per-key lighting (0x8081)".into());
+    }
+    let (Some(keys), Some(color)) = (args.first(), args.get(1)) else {
+        return Err("give keys and a colour, e.g. hubless keyboard keys wasd ff0000".into());
+    };
+    let zones = per_key::parse_keys(keys)?;
+    let rgb = rgb_effects::parse_rgb(color).ok_or("give the colour as RRGGBB, e.g. ff0000")?;
+    let mut writes = vec![onboard::set_mode(onboard::Mode::Host), rgb_effects::claim()];
+    writes.extend(per_key::paint(&zones, rgb));
+    Ok(writes)
+}
+
 /// Необязательные параметры встроенных эффектов: `--period`, `--intensity`, `--direction`.
 struct EffectOptions {
     period: Option<u16>,
@@ -735,7 +763,10 @@ fn print_idle_packets(dev: &crate::hidpp::Device) {
 pub const HEADSET_USAGE: &str =
     "  hubless headset [status]                     battery, sidetone, auto-off
   hubless headset sidetone <0–100> [--dry-run] how loud your own voice is in the headset
-  hubless headset auto-off <0–255> [--dry-run] turn off after N minutes, 0 means never";
+  hubless headset auto-off <0–255> [--dry-run] turn off after N minutes, 0 means never
+  hubless headset eq [<5 gains, dB>] [--save] [--dry-run]
+                                               onboard equalizer (80, 240, 750, 2200, 6600 Hz),
+                                               gains −12…+12; without gains — show the curve";
 
 pub fn headset(args: &[String]) -> ExitCode {
     let dry_run = args.iter().any(|a| a == "--dry-run");
@@ -790,6 +821,7 @@ pub fn headset(args: &[String]) -> ExitCode {
             };
             run_headset_write(&mut a, &centurion::set_sidetone(&state, level), dry_run)
         }
+        Some("eq") => headset_eq_command(&mut a, &args[1..], dry_run),
         Some("auto-off") => match value("auto-off", u8::MAX) {
             Ok(m) => run_headset_write(&mut a, &centurion::set_auto_sleep(m), dry_run),
             Err(c) => c,
@@ -820,6 +852,17 @@ fn print_headset_status(a: &mut centurion::Adapter) {
         Ok(v) => println!("  sidetone:    {v} (0–{})", centurion::SIDETONE_MAX),
         Err(e) => println!("  sidetone:    error: {e}"),
     }
+    match a.eq() {
+        Ok(eq) => {
+            let bands: Vec<String> = eq
+                .bands
+                .iter()
+                .map(|b| format!("{} Hz {:+}", b.freq, b.gain))
+                .collect();
+            println!("  equalizer:   {} dB", bands.join(", "));
+        }
+        Err(e) => println!("  equalizer:   error: {e}"),
+    }
     match a.auto_sleep_minutes() {
         Ok(0) => println!("  auto-off:    never"),
         Ok(m) => println!("  auto-off:    after {m} min"),
@@ -827,9 +870,61 @@ fn print_headset_status(a: &mut centurion::Adapter) {
     }
 }
 
-/// Запись в гарнитуру: печать кадра, отправка, ответ.
+/// Эквалайзер: без значений — показать кривую, с пятью значениями — записать.
+fn headset_eq_command(a: &mut centurion::Adapter, args: &[String], dry_run: bool) -> ExitCode {
+    let save = args.iter().any(|s| s == "--save");
+    let gains: Vec<&String> = args.iter().filter(|s| *s != "--save").collect();
+    let current = match a.eq() {
+        Ok(eq) => eq,
+        Err(e) => {
+            eprintln!("equalizer: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+    if gains.is_empty() {
+        let bands: Vec<String> = current
+            .bands
+            .iter()
+            .map(|b| format!("{} Hz {:+} dB", b.freq, b.gain))
+            .collect();
+        println!(
+            "  equalizer:   {}{}",
+            bands.join(", "),
+            if current.saved { " (saved)" } else { "" }
+        );
+        return ExitCode::SUCCESS;
+    }
+    let parsed: Option<Vec<i8>> = gains
+        .iter()
+        .map(|s| {
+            s.parse::<i8>()
+                .ok()
+                .filter(|g| headset_eq::GAIN_RANGE.contains(g))
+        })
+        .collect();
+    let (Some(parsed), true) = (parsed, current.bands.len() == headset_eq::BANDS) else {
+        eprintln!(
+            "give {} gains from {} to {} dB, e.g. hubless headset eq 0 2 0 0 -1",
+            headset_eq::BANDS,
+            headset_eq::GAIN_RANGE.start(),
+            headset_eq::GAIN_RANGE.end()
+        );
+        return ExitCode::from(2);
+    };
+    if parsed.len() != headset_eq::BANDS {
+        eprintln!("give exactly {} gains", headset_eq::BANDS);
+        return ExitCode::from(2);
+    }
+    let bands = std::array::from_fn(|i| headset_eq::Band {
+        freq: current.bands[i].freq,
+        gain: parsed[i],
+    });
+    run_headset_write(a, &headset_eq::write(&bands, save), dry_run)
+}
+
+/// Запись в гарнитуру: печать кадров, отправка, ответ.
 fn run_headset_write(a: &mut centurion::Adapter, w: &centurion::Write, dry_run: bool) -> ExitCode {
-    let frame = match a.preview(w) {
+    let frames = match a.preview(w) {
         Ok(f) => f,
         Err(e) => {
             eprintln!("{e}");
@@ -837,7 +932,9 @@ fn run_headset_write(a: &mut centurion::Adapter, w: &centurion::Write, dry_run: 
         }
     };
     println!("PRO X 2 LIGHTSPEED: {}", w.what);
-    println!("  frame: {}", headset_frame_text(&frame));
+    for frame in &frames {
+        println!("  frame: {}", headset_frame_text(frame));
+    }
     if dry_run {
         println!("  --dry-run: not sent");
         return ExitCode::SUCCESS;
@@ -850,6 +947,20 @@ fn run_headset_write(a: &mut centurion::Adapter, w: &centurion::Write, dry_run: 
             let actual = match w.feature {
                 centurion::SIDETONE => a.sidetone_level(),
                 centurion::AUTO_SLEEP => a.auto_sleep_minutes(),
+                headset_eq::FEATURE => {
+                    return match a.eq() {
+                        Ok(eq) => {
+                            let gains: Vec<String> =
+                                eq.bands.iter().map(|b| format!("{:+}", b.gain)).collect();
+                            println!("  read back: {} dB", gains.join(" "));
+                            ExitCode::SUCCESS
+                        }
+                        Err(e) => {
+                            eprintln!("  read-back failed: {e}");
+                            ExitCode::FAILURE
+                        }
+                    };
+                }
                 _ => return ExitCode::SUCCESS,
             };
             match actual {

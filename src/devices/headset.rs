@@ -14,6 +14,7 @@ use hidapi::HidApi;
 
 use crate::centurion::{self, Adapter};
 use crate::devices::manager::{Command, Controls, Role, Snapshot};
+use crate::headset_eq;
 use crate::hidpp::features::battery::{Battery, ChargeState};
 
 const BATTERY_POLL: Duration = Duration::from_secs(5 * 60);
@@ -82,6 +83,21 @@ impl Worker {
             }
             Command::AutoOff(m) => {
                 self.write(|_| Ok(centurion::set_auto_sleep(m)));
+                false
+            }
+            Command::Eq(gains, save) => {
+                self.write(|a| {
+                    // Частоты полос — те, что сообщает гарнитура.
+                    let eq = a.eq()?;
+                    if eq.bands.len() != headset_eq::BANDS {
+                        return Err(centurion::Error::Malformed);
+                    }
+                    let bands = std::array::from_fn(|i| headset_eq::Band {
+                        freq: eq.bands[i].freq,
+                        gain: gains[i],
+                    });
+                    Ok(headset_eq::write(&bands, save))
+                });
                 false
             }
             Command::Rescan => {
@@ -216,6 +232,10 @@ impl Worker {
         let controls = Controls::Headset {
             sidetone: a.sidetone_level().ok(),
             auto_off: a.auto_sleep_minutes().ok(),
+            eq: a
+                .eq()
+                .ok()
+                .map(|eq| eq.bands.iter().map(|b| (b.freq, b.gain)).collect()),
         };
         let error = self.error.clone();
         match battery {

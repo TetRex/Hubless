@@ -11,8 +11,6 @@ msgstr ""
 "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 
 # Панель
-msgid "More"
-msgstr "Ещё"
 
 msgid "inactive"
 msgstr "неактивно"
@@ -158,8 +156,60 @@ msgstr "Показывать в панели"
 msgid "{} Hz"
 msgstr "{} Гц"
 
+# Панель: свой цвет палитры клавиатуры
+msgid "Add colour"
+msgstr "Добавить цвет"
+
+msgid "Remove the selected colour from the palette"
+msgstr "Убрать выбранный цвет из палитры"
+
 msgid "No Logitech devices found. Connect a device or its receiver."
 msgstr "Устройства Logitech не найдены. Подключите устройство или его ресивер."
 
 msgid "All devices are hidden. Choose which to show in Settings → Devices."
 msgstr "Все устройства скрыты. Выбрать, какие показывать, — в «Настройки → Устройства»."
+
+# Окно настроек, «Устройства»: эквалайзер в карточке гарнитуры
+msgid "Equalizer"
+msgstr "Эквалайзер"
+
+msgid "Flat"
+msgstr "Ровно"
+
+msgid "The headset's built-in equalizer: the curve is stored in the headset and works without Hubless, on any computer."
+msgstr "Встроенный эквалайзер гарнитуры: кривая хранится в самой гарнитуре и работает без Hubless на любом компьютере."
+
+# Панель: значок связи в заголовке карточки (подпись для экранного диктора)
+msgid "USB"
+msgstr "USB"
+
+msgid "Wireless"
+msgstr "Беспроводная связь"
+
+# Окно настроек: «Дополнительно»
+msgid "Advanced"
+msgstr "Дополнительно"
+
+msgid "Version {}"
+msgstr "Версия {}"
+
+msgid "Download"
+msgstr "Скачать"
+
+msgid "Checking…"
+msgstr "Проверка…"
+
+msgid "Check for updates"
+msgstr "Проверить обновления"
+
+msgid "Hubless connects to the internet only when you check for updates."
+msgstr "Hubless выходит в интернет, только когда вы проверяете обновления."
+
+msgid "Logs"
+msgstr "Логи"
+
+msgid "Open log folder"
+msgstr "Открыть папку логов"
+
+msgid "Delete all logs"
+msgstr "Удалить все логи"

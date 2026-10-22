@@ -123,6 +123,9 @@ pub struct DeviceSettings {
 /// Имя профиля из корня файла.
 pub const BASE_PROFILE: &str = "Default";
 
+/// Своих цветов в палитре — не больше, чем помещается во второй ряд кружков панели.
+pub const MAX_COLORS: usize = 10;
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
     pub name: String,
@@ -178,6 +181,9 @@ pub struct SettingsFile {
     /// Профиль, выбранный вручную (`None` — «Обычный»).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub active: Option<String>,
+    /// Свои цвета подсветки клавиатуры для палитры панели, `"rrggbb"` (общие для профилей).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub colors: Vec<String>,
     /// Порядок и видимость карточек панели.
     #[serde(skip_serializing_if = "PanelLayout::is_empty")]
     pub panel: PanelLayout,
@@ -369,6 +375,50 @@ impl SettingsFile {
         Ok(())
     }
 
+    /// Свои цвета палитры (строки, которые не разбираются как `rrggbb`, пропускаются).
+    pub fn custom_colors(&self) -> Vec<[u8; 3]> {
+        self.colors
+            .iter()
+            .filter_map(|s| crate::hidpp::features::rgb_effects::parse_rgb(s))
+            .collect()
+    }
+
+    /// Добавить свой цвет в конец палитры (повтор не добавляется).
+    pub fn add_color(&mut self, rgb: [u8; 3]) -> Result<(), String> {
+        let colors = self.custom_colors();
+        if colors.contains(&rgb) {
+            return Ok(());
+        }
+        if colors.len() >= MAX_COLORS {
+            return Err(format!("no more than {MAX_COLORS} colours"));
+        }
+        self.colors = colors
+            .into_iter()
+            .chain(std::iter::once(rgb))
+            .map(|[r, g, b]| format!("{r:02x}{g:02x}{b:02x}"))
+            .collect();
+        Ok(())
+    }
+
+    /// Убрать свой цвет из палитры по значению.
+    pub fn remove_color_value(&mut self, rgb: [u8; 3]) {
+        if let Some(i) = self.custom_colors().iter().position(|c| *c == rgb) {
+            self.remove_color(i);
+        }
+    }
+
+    /// Убрать свой цвет по индексу в палитре.
+    pub fn remove_color(&mut self, index: usize) {
+        let mut colors = self.custom_colors();
+        if index < colors.len() {
+            colors.remove(index);
+        }
+        self.colors = colors
+            .into_iter()
+            .map(|[r, g, b]| format!("{r:02x}{g:02x}{b:02x}"))
+            .collect();
+    }
+
     /// Профиль, привязанный к exe (сравнение без учёта регистра).
     pub fn profile_for_exe(&self, exe: &str) -> Option<&str> {
         let exe = exe.to_lowercase();
@@ -497,6 +547,30 @@ mod tests {
         assert_eq!(f.profile_for_exe("cs2.exe"), None);
         f.remove("Игры").unwrap();
         assert_eq!(f.current_name(), BASE_PROFILE);
+    }
+
+    #[test]
+    fn custom_colors() {
+        let mut f: SettingsFile = toml::from_str("[mouse]\ndpi = 800\n").unwrap();
+        f.add_color([0xff, 0x80, 0x00]).unwrap();
+        f.add_color([0xff, 0x80, 0x00]).unwrap();
+        f.add_color([0, 0x10, 0xaa]).unwrap();
+        assert_eq!(f.colors, vec!["ff8000".to_owned(), "0010aa".to_owned()]);
+        let text = toml::to_string_pretty(&f).unwrap();
+        let back: SettingsFile = toml::from_str(&text).unwrap();
+        assert_eq!(
+            back.custom_colors(),
+            vec![[0xff, 0x80, 0x00], [0, 0x10, 0xaa]],
+            "{text}"
+        );
+        assert_eq!(back.base.mouse.dpi, Some(800));
+        f.remove_color(0);
+        assert_eq!(f.colors, vec!["0010aa".to_owned()]);
+        for i in 0..MAX_COLORS as u8 {
+            let _ = f.add_color([i, i, 1]);
+        }
+        assert_eq!(f.colors.len(), MAX_COLORS);
+        assert!(f.add_color([9, 9, 9]).is_err());
     }
 
     #[test]

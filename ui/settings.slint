@@ -3,10 +3,19 @@
 // «Общие» — язык и автозапуск; «Устройства» — порядок и видимость карточек панели;
 // «Профили» — карточки профилей, раскрывается выбранная.
 // Создаётся по требованию и уничтожается при закрытии.
-import { Button, ComboBox, LineEdit, ScrollView, Switch, TextEdit } from "std-widgets.slint";
+import { Button, ComboBox, LineEdit, ScrollView, Slider, Switch, TextEdit } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { IconButton } from "widgets.slint";
 import { DeviceKind } from "cards/device_card.slint";
+
+// Полоса эквалайзера гарнитуры (готовит Rust).
+export struct EqBand {
+    // «80 Hz», «2.2 kHz».
+    label: string,
+    // Положение вертикального ползунка = −усиление, дБ: он растёт вниз, а «+» должен быть сверху.
+    // Ползунок связан с полем в обе стороны и не теряет связь с данными (сброс «Ровно»).
+    position: float,
+}
 
 // Устройство в разделе «Устройства» (готовит Rust, в порядке панели).
 export struct DeviceRow {
@@ -15,6 +24,14 @@ export struct DeviceRow {
     connected: bool,
     // Карточка видна в панели.
     shown: bool,
+    // Мышь: есть переключатель host/onboard (у G903 и мышей со старыми фичами — нет: режим host
+    // выключает кнопку DPI на мыши) и его положение.
+    host-mode: bool,
+    host: bool,
+    // Мышь: lift-off — 1 medium, 2 high, 0 low; -1 — не умеет или не подключена.
+    lift-off: int,
+    // Гарнитура: автоотключение, минуты, 0 — никогда; -1 — не прочитано или не подключена.
+    auto-off: int,
 }
 
 // Профиль для карточки (готовит Rust).
@@ -124,7 +141,8 @@ component SettingRow inherits Rectangle {
     }
 }
 
-// Строка устройства: ручка, значок, имя и состояние, видимость в панели.
+// Строка устройства: ручка, значок, имя и состояние, видимость в панели; у мыши и гарнитуры —
+// кнопка, раскрывающая под строкой их настройки (host, lift-off; автоотключение, эквалайзер).
 // Порядок меняется перетаскиванием за любое место карточки, кроме переключателя,
 // или стрелками ↑/↓, когда ручка в фокусе (Tab).
 component DeviceRowCard inherits Rectangle {
@@ -143,8 +161,21 @@ component DeviceRowCard inherits Rectangle {
     // Стрелка на ручке: -1 — выше, 1 — ниже.
     callback step(int);
     callback show(bool);
+    // Настройки устройства под строкой: раскрыты ли и их высота (0 — настроек нет; считает окно).
+    in property <bool> open;
+    in property <length> settings-height;
+    // Гарнитура: встроенный эквалайзер — полосы и пределы усиления.
+    in property <[EqBand]> eq-bands;
+    in property <int> eq-min;
+    in property <int> eq-max;
+    callback toggle-settings();
+    callback set-host(bool);
+    callback set-lift-off(int);
+    callback set-auto-off(int);
+    callback set-eq-band(int, int);
+    callback reset-eq();
 
-    height: Theme.settings-device-row-height;
+    height: Theme.settings-device-row-height + (root.open ? root.settings-height : 0);
     background: Theme.card;
     border-radius: Theme.radius-card;
     border-width: 1px;
@@ -158,95 +189,250 @@ component DeviceRowCard inherits Rectangle {
         }
     }
 
-    HorizontalLayout {
-        padding-left: Theme.spacing-s;
-        padding-right: Theme.spacing-l;
-        spacing: Theme.spacing-m;
+    VerticalLayout {
+        HorizontalLayout {
+            height: Theme.settings-device-row-height;
+            padding-left: Theme.spacing-s;
+            padding-right: Theme.spacing-l;
+            spacing: Theme.spacing-m;
 
-        // Ручка, значок и имя; поверх них — область перетаскивания.
-        Rectangle {
-            horizontal-stretch: 1;
+            // Ручка, значок и имя; поверх них — область перетаскивания.
+            Rectangle {
+                horizontal-stretch: 1;
 
-            HorizontalLayout {
-                spacing: Theme.spacing-s;
+                HorizontalLayout {
+                    spacing: Theme.spacing-s;
 
-                grip := FocusScope {
-                    width: Theme.icon-button-size;
-                    accessible-role: button;
-                    accessible-label: @tr("Reorder: drag, or use the arrow keys");
-                    key-pressed(event) => {
-                        if (event.text == Key.UpArrow) {
-                            root.step(-1);
-                            return accept;
+                    grip := FocusScope {
+                        width: Theme.icon-button-size;
+                        accessible-role: button;
+                        accessible-label: @tr("Reorder: drag, or use the arrow keys");
+                        key-pressed(event) => {
+                            if (event.text == Key.UpArrow) {
+                                root.step(-1);
+                                return accept;
+                            }
+                            if (event.text == Key.DownArrow) {
+                                root.step(1);
+                                return accept;
+                            }
+                            reject
                         }
-                        if (event.text == Key.DownArrow) {
-                            root.step(1);
-                            return accept;
+
+                        Text {
+                            text: Theme.glyph-gripper;
+                            font-family: Theme.icon-font;
+                            font-size: Theme.font-icon;
+                            color: Theme.text-secondary;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
                         }
-                        reject
                     }
 
                     Text {
-                        text: Theme.glyph-gripper;
+                        text: root.device.kind == DeviceKind.mouse ? Theme.glyph-mouse
+                            : root.device.kind == DeviceKind.keyboard ? Theme.glyph-keyboard
+                            : Theme.glyph-headset;
                         font-family: Theme.icon-font;
                         font-size: Theme.font-icon;
-                        color: Theme.text-secondary;
-                        horizontal-alignment: center;
+                        color: root.shown ? Theme.text-primary : Theme.text-disabled;
                         vertical-alignment: center;
                     }
-                }
 
-                Text {
-                    text: root.device.kind == DeviceKind.mouse ? Theme.glyph-mouse
-                        : root.device.kind == DeviceKind.keyboard ? Theme.glyph-keyboard
-                        : Theme.glyph-headset;
-                    font-family: Theme.icon-font;
-                    font-size: Theme.font-icon;
-                    color: root.shown ? Theme.text-primary : Theme.text-disabled;
-                    vertical-alignment: center;
-                }
+                    VerticalLayout {
+                        alignment: center;
+                        horizontal-stretch: 1;
+                        padding-left: Theme.spacing-xs;
 
-                VerticalLayout {
-                    alignment: center;
-                    horizontal-stretch: 1;
-                    padding-left: Theme.spacing-xs;
+                        Text {
+                            text: root.device.name;
+                            color: root.shown ? Theme.text-primary : Theme.text-secondary;
+                            overflow: elide;
+                        }
 
-                    Text {
-                        text: root.device.name;
-                        color: root.shown ? Theme.text-primary : Theme.text-secondary;
-                        overflow: elide;
+                        Caption {
+                            text: root.device.connected ? @tr("Connected") : @tr("Inactive");
+                        }
                     }
+                }
 
-                    Caption {
-                        text: root.device.connected ? @tr("Connected") : @tr("Inactive");
+                TouchArea {
+                    mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+                    pointer-event(event) => {
+                        if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
+                            root.drag-start();
+                        } else if ((event.button == PointerEventButton.left && event.kind == PointerEventKind.up)
+                            || event.kind == PointerEventKind.cancel) {
+                            root.drag-end();
+                        }
+                    }
+                    // Карточка едет за указателем: `mouse-y` считается от её нового места.
+                    moved => {
+                        if (self.pressed) {
+                            root.drag-move(self.mouse-y - self.pressed-y);
+                        }
                     }
                 }
             }
 
-            TouchArea {
-                mouse-cursor: self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
-                pointer-event(event) => {
-                    if (event.button == PointerEventButton.left && event.kind == PointerEventKind.down) {
-                        root.drag-start();
-                    } else if ((event.button == PointerEventButton.left && event.kind == PointerEventKind.up)
-                        || event.kind == PointerEventKind.cancel) {
-                        root.drag-end();
+            if root.settings-height > 0: VerticalLayout {
+                alignment: center;
+
+                IconButton {
+                    glyph: root.open ? Theme.glyph-chevron-down : Theme.glyph-chevron-right;
+                    label: @tr("Settings");
+                    clicked => {
+                        root.toggle-settings();
                     }
                 }
-                // Карточка едет за указателем: `mouse-y` считается от её нового места.
-                moved => {
-                    if (self.pressed) {
-                        root.drag-move(self.mouse-y - self.pressed-y);
-                    }
+            }
+
+            Switch {
+                checked <=> root.shown;
+                accessible-label: @tr("Show in the panel");
+                toggled => {
+                    root.show(self.checked);
                 }
             }
         }
 
-        Switch {
-            checked <=> root.shown;
-            accessible-label: @tr("Show in the panel");
-            toggled => {
-                root.show(self.checked);
+        // Мышь: настройки применяет Hubless (host) или память мыши (onboard).
+        if root.open && root.device.kind == DeviceKind.mouse && root.device.host-mode: HorizontalLayout {
+            height: Theme.device-option-height;
+            padding-left: Theme.spacing-l;
+            padding-right: Theme.spacing-l;
+            padding-bottom: Theme.spacing-s;
+            spacing: Theme.spacing-m;
+
+            Text {
+                text: @tr("Settings from Hubless (host)");
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+
+            Switch {
+                checked: root.device.host;
+                toggled => {
+                    root.set-host(self.checked);
+                }
+            }
+        }
+
+        if root.open && root.device.kind == DeviceKind.mouse && root.device.lift-off >= 0: HorizontalLayout {
+            height: Theme.device-option-height;
+            padding-left: Theme.spacing-l;
+            padding-right: Theme.spacing-l;
+            padding-bottom: Theme.spacing-s;
+            spacing: Theme.spacing-xs;
+
+            Text {
+                text: "Lift-off";
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+
+            // Без «низкого»: PRO X 2 отвергает lift-off 0 (INVALID_ARGUMENT, 2026-10-19).
+            for name[i] in [@tr("medium"), @tr("high")]: Button {
+                text: name;
+                primary: i + 1 == root.device.lift-off;
+                clicked => {
+                    root.set-lift-off(i + 1);
+                }
+            }
+        }
+
+        // Гарнитура: автоотключение без звука.
+        if root.open && root.device.kind == DeviceKind.headset && root.device.auto-off >= 0: HorizontalLayout {
+            height: Theme.device-option-height;
+            padding-left: Theme.spacing-l;
+            padding-right: Theme.spacing-l;
+            padding-bottom: Theme.spacing-s;
+            spacing: Theme.spacing-xs;
+
+            Text {
+                text: @tr("Turn off when silent");
+                color: Theme.text-primary;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+            }
+
+            for m in [0, 10, 30, 60]: Button {
+                text: m == 0 ? @tr("never") : @tr("{} min", m);
+                primary: m == root.device.auto-off;
+                clicked => {
+                    root.set-auto-off(m);
+                }
+            }
+        }
+
+        // Эквалайзер: подпись и «Ровно», под ними — ползунки полос.
+        if root.open && root.device.kind == DeviceKind.headset && root.eq-bands.length > 0: VerticalLayout {
+            height: Theme.eq-panel-height;
+            padding-left: Theme.spacing-l;
+            padding-right: Theme.spacing-l;
+            padding-bottom: Theme.spacing-l;
+            spacing: Theme.spacing-s;
+
+            HorizontalLayout {
+                spacing: Theme.spacing-m;
+
+                Caption {
+                    text: @tr("The headset's built-in equalizer: the curve is stored in the headset and works without Hubless, on any computer.");
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                }
+
+                VerticalLayout {
+                    alignment: center;
+
+                    Button {
+                        text: @tr("Flat");
+                        clicked => {
+                            root.reset-eq();
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                alignment: space-around;
+                vertical-stretch: 1;
+
+                for band[i] in root.eq-bands: VerticalLayout {
+                    width: Theme.eq-band-width;
+                    spacing: Theme.spacing-xs;
+                    alignment: center;
+
+                    Text {
+                        text: (band.position < 0 ? "+" : "") + round(-band.position) + " dB";
+                        color: Theme.text-primary;
+                        horizontal-alignment: center;
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+
+                        Slider {
+                            orientation: vertical;
+                            height: Theme.eq-slider-height;
+                            // Вертикальный ползунок растёт вниз — инвертируем, чтобы «+» был сверху.
+                            minimum: -root.eq-max;
+                            maximum: -root.eq-min;
+                            step: 1;
+                            value <=> band.position;
+                            changed(v) => {
+                                root.set-eq-band(i, -round(v));
+                            }
+                        }
+                    }
+
+                    Caption {
+                        text: band.label;
+                        horizontal-alignment: center;
+                    }
+                }
             }
         }
     }
@@ -425,13 +611,20 @@ component ProfileCard inherits Rectangle {
 }
 
 export component SettingsWindow inherits Window {
-    // Раздел: 0 — «Общие», 1 — «Устройства», 2 — «Профили», 3 — «Отчёт об устройствах».
+    // Раздел: 0 — «Общие», 1 — «Устройства», 2 — «Профили», 3 — «Дополнительно»
+    // (обновления, логи, отчёт об устройствах).
     in-out property <int> page;
     // Общие
     in-out property <int> language;           // 0 — английский, 1 — русский
     in-out property <bool> autostart;
     // Устройства в порядке панели.
     in property <[DeviceRow]> devices;
+    // Встроенный эквалайзер гарнитуры (пусто — гарнитура не подключена) и пределы усиления.
+    in property <[EqBand]> eq-bands;
+    in property <int> eq-min;
+    in property <int> eq-max;
+    // Строка «Устройств» с раскрытыми настройками устройства (-1 — никакая).
+    in-out property <int> open-row: -1;
     // Профили: карточки, раскрытая и варианты для добавления программы (первый — подсказка).
     in property <[ProfileRow]> profiles;
     in-out property <int> selected;
@@ -445,6 +638,13 @@ export component SettingsWindow inherits Window {
     in property <string> report-path;
     in property <string> report-status;
     in property <bool> ghub-running;
+    // Дополнительно: версия Hubless, проверка обновлений (идёт; итог; страница новой версии —
+    // пусто, если обновления нет) и итог действий с логами.
+    in property <string> version;
+    in property <bool> update-busy;
+    in property <string> update-status;
+    in property <string> update-url;
+    in property <string> logs-status;
 
     callback set-language(int);
     callback set-autostart(bool);
@@ -452,6 +652,13 @@ export component SettingsWindow inherits Window {
     // После перестановки Rust присылает новый порядок и вызывает finish-drop().
     callback move-device(int, int);
     callback show-device(int, bool);
+    // Настройки устройства (по индексу строки): host мыши, lift-off, автоотключение гарнитуры.
+    callback set-mouse-host(bool);
+    callback set-lift-off(int);
+    callback set-auto-off(int);
+    // Полоса эквалайзера: номер и усиление, дБ; «Ровно» — все полосы в 0.
+    callback set-eq-band(int, int);
+    callback reset-eq();
     callback select-profile(int);
     callback create-profile();
     callback rename-profile(int, string);
@@ -464,6 +671,10 @@ export component SettingsWindow inherits Window {
     callback open-reports();
     callback copy-report();
     callback open-issue();
+    callback check-updates();
+    callback open-update();
+    callback open-logs();
+    callback delete-logs();
 
     // Перетаскивание в разделе «Устройства»: шаг строк, какая строка тащится (-1 — никакая),
     // её сдвиг от своего места и место, куда она встанет.
@@ -479,6 +690,31 @@ export component SettingsWindow inherits Window {
     property <bool> instant;
     // Строка, которой вернуть фокус после перестановки с клавиатуры.
     property <int> focus-request: -1;
+
+    // Высота настроек под строкой `i` (0 — у устройства их нет): мышь — host и lift-off,
+    // гарнитура — автоотключение и эквалайзер.
+    pure function settings-height(i: int) -> length {
+        if (i < 0 || i >= root.devices.length) {
+            return 0;
+        }
+        if (root.devices[i].kind == DeviceKind.mouse) {
+            return (root.devices[i].host-mode ? Theme.device-option-height : 0)
+                + (root.devices[i].lift-off >= 0 ? Theme.device-option-height : 0);
+        }
+        if (root.devices[i].kind == DeviceKind.headset) {
+            return (root.devices[i].auto-off >= 0 ? Theme.device-option-height : 0)
+                + (root.eq-bands.length > 0 ? Theme.eq-panel-height : 0);
+        }
+        return 0;
+    }
+
+    // Раскрытые настройки сдвигают строки ниже на свою высоту.
+    property <length> open-height: root.settings-height(root.open-row);
+
+    pure function device-y(slot: int) -> length {
+        return slot * root.device-pitch
+            + (root.open-row >= 0 && slot > root.open-row ? root.open-height : 0);
+    }
 
     // Место строки `i`, пока тащат другую: строки между старым и новым местом сдвигаются на одно.
     pure function device-slot(i: int) -> int {
@@ -554,8 +790,8 @@ export component SettingsWindow inherits Window {
             }
 
             NavItem {
-                glyph: Theme.glyph-report;
-                label: @tr("Device report");
+                glyph: Theme.glyph-advanced;
+                label: @tr("Advanced");
                 selected: root.page == 3;
                 clicked => {
                     root.page = 3;
@@ -644,13 +880,14 @@ export component SettingsWindow inherits Window {
                         // Строки стоят на местах по индексу; во время перетаскивания остальные
                         // раздвигаются, освобождая место, куда упадёт перетаскиваемая.
                         Rectangle {
-                            height: max(0, root.devices.length * root.device-pitch - Theme.spacing-s);
+                            height: max(0, root.devices.length * root.device-pitch - Theme.spacing-s
+                                + root.open-height);
 
                             for item[i] in root.devices: DeviceRowCard {
                                 x: 0;
                                 width: parent.width;
                                 y: i == root.drag-from ? i * root.device-pitch + root.drag-dy
-                                    : root.device-slot(i) * root.device-pitch;
+                                    : root.device-y(root.device-slot(i));
                                 z: i == root.drag-from ? 1 : 0;
                                 // Тащимая мышью карточка идёт за указателем без задержки.
                                 animate y {
@@ -662,10 +899,36 @@ export component SettingsWindow inherits Window {
                                 shown <=> item.shown;
                                 dragged: i == root.drag-from && !root.dropping;
                                 want-focus: i == root.focus-request;
+                                open: i == root.open-row;
+                                settings-height: root.settings-height(i);
+                                eq-bands: root.eq-bands;
+                                eq-min: root.eq-min;
+                                eq-max: root.eq-max;
+                                toggle-settings => {
+                                    root.instant = false;
+                                    root.open-row = root.open-row == i ? -1 : i;
+                                }
+                                set-host(on) => {
+                                    root.set-mouse-host(on);
+                                }
+                                set-lift-off(v) => {
+                                    root.set-lift-off(v);
+                                }
+                                set-auto-off(m) => {
+                                    root.set-auto-off(m);
+                                }
+                                set-eq-band(band, gain) => {
+                                    root.set-eq-band(band, gain);
+                                }
+                                reset-eq => {
+                                    root.reset-eq();
+                                }
                                 drag-start => {
                                     if (root.dropping) {
                                         return;
                                     }
+                                    // Перетаскивание считает места строк одинаковой высоты.
+                                    root.open-row = -1;
                                     root.instant = false;
                                     root.focus-request = -1;
                                     root.drag-from = i;
@@ -696,6 +959,7 @@ export component SettingsWindow inherits Window {
                                         return;
                                     }
                                     root.instant = false;
+                                    root.open-row = -1;
                                     root.drag-from = i;
                                     root.focus-request = i + delta;
                                     root.drop(i, i + delta);
@@ -780,69 +1044,151 @@ export component SettingsWindow inherits Window {
                 spacing: Theme.spacing-s;
 
                 Text {
-                    text: @tr("Device report");
+                    text: @tr("Advanced");
                     font-size: Theme.font-title;
                     font-weight: Theme.weight-semibold;
                     color: Theme.text-primary;
                 }
 
-                Caption {
-                    text: @tr("Help add support for your Logitech devices: create a report and send it as a GitHub issue. The report lists your Logitech devices and the HID++ features they support. It only reads from the devices, contains no serial numbers or personal data, and Hubless sends nothing by itself.");
-                    wrap: word-wrap;
-                }
-
-                if root.ghub-running: Text {
-                    text: @tr("G Hub is running: close it completely for an accurate report.");
-                    color: Theme.error-text;
-                    font-size: Theme.font-caption;
-                    wrap: word-wrap;
-                }
-
-                HorizontalLayout {
-                    spacing: Theme.spacing-s;
-                    alignment: start;
-
-                    Button {
-                        text: root.report-busy ? @tr("Collecting…") : @tr("Create report");
-                        primary: true;
-                        enabled: !root.report-busy;
-                        clicked => {
-                            root.create-report();
-                        }
-                    }
-
-                    if root.report-text != "": Button {
-                        text: @tr("Copy");
-                        clicked => {
-                            root.copy-report();
-                        }
-                    }
-
-                    if root.report-text != "": Button {
-                        text: @tr("Open folder");
-                        clicked => {
-                            root.open-reports();
-                        }
-                    }
-
-                    if root.report-text != "": Button {
-                        text: @tr("Open GitHub issue");
-                        clicked => {
-                            root.open-issue();
-                        }
-                    }
-                }
-
-                if root.report-status != "": Caption {
-                    text: root.report-status;
-                    wrap: word-wrap;
-                }
-
-                if root.report-text != "": TextEdit {
+                // Прокрутка и прижатие к верху: блоки не растягиваются на высоту окна.
+                ScrollView {
                     vertical-stretch: 1;
-                    read-only: true;
-                    wrap: no-wrap;
-                    text: root.report-text;
+
+                    VerticalLayout {
+                        alignment: start;
+                        spacing: Theme.spacing-s;
+
+                        // Обновления: только по кнопке — иначе Hubless в сеть не ходит.
+                        SettingRow {
+                            label: @tr("Version {}", root.version);
+
+                            VerticalLayout {
+                                alignment: center;
+
+                                HorizontalLayout {
+                                    spacing: Theme.spacing-s;
+
+                                    if root.update-url != "": Button {
+                                        text: @tr("Download");
+                                        primary: true;
+                                        clicked => {
+                                            root.open-update();
+                                        }
+                                    }
+
+                                    Button {
+                                        text: root.update-busy ? @tr("Checking…") : @tr("Check for updates");
+                                        enabled: !root.update-busy;
+                                        clicked => {
+                                            root.check-updates();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Caption {
+                            text: root.update-status != "" ? root.update-status
+                                : @tr("Hubless connects to the internet only when you check for updates.");
+                            wrap: word-wrap;
+                        }
+
+                        SettingRow {
+                            label: @tr("Logs");
+
+                            VerticalLayout {
+                                alignment: center;
+
+                                HorizontalLayout {
+                                    spacing: Theme.spacing-s;
+
+                                    Button {
+                                        text: @tr("Open log folder");
+                                        clicked => {
+                                            root.open-logs();
+                                        }
+                                    }
+
+                                    Button {
+                                        text: @tr("Delete all logs");
+                                        clicked => {
+                                            root.delete-logs();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if root.logs-status != "": Caption {
+                            text: root.logs-status;
+                            wrap: word-wrap;
+                        }
+
+                        Text {
+                            text: @tr("Device report");
+                            font-weight: Theme.weight-semibold;
+                            color: Theme.text-primary;
+                        }
+
+                        Caption {
+                            text: @tr("Help add support for your Logitech devices: create a report and send it as a GitHub issue. The report lists your Logitech devices and the HID++ features they support. It only reads from the devices, contains no serial numbers or personal data, and Hubless sends nothing by itself.");
+                            wrap: word-wrap;
+                        }
+
+                        if root.ghub-running: Text {
+                            text: @tr("G Hub is running: close it completely for an accurate report.");
+                            color: Theme.error-text;
+                            font-size: Theme.font-caption;
+                            wrap: word-wrap;
+                        }
+
+                        HorizontalLayout {
+                            spacing: Theme.spacing-s;
+                            alignment: start;
+
+                            Button {
+                                text: root.report-busy ? @tr("Collecting…") : @tr("Create report");
+                                primary: true;
+                                enabled: !root.report-busy;
+                                clicked => {
+                                    root.create-report();
+                                }
+                            }
+
+                            if root.report-text != "": Button {
+                                text: @tr("Copy");
+                                clicked => {
+                                    root.copy-report();
+                                }
+                            }
+
+                            if root.report-text != "": Button {
+                                text: @tr("Open folder");
+                                clicked => {
+                                    root.open-reports();
+                                }
+                            }
+
+                            if root.report-text != "": Button {
+                                text: @tr("Open GitHub issue");
+                                clicked => {
+                                    root.open-issue();
+                                }
+                            }
+                        }
+
+                        if root.report-status != "": Caption {
+                            text: root.report-status;
+                            wrap: word-wrap;
+                        }
+
+                        if root.report-text != "": TextEdit {
+                            height: Theme.report-preview-height;
+                            read-only: true;
+                            wrap: no-wrap;
+                            text: root.report-text;
+                        }
+                    }
                 }
             }
 
