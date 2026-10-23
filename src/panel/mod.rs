@@ -545,6 +545,7 @@ fn device_infos(state: &AppState) -> Vec<ui::DeviceInfo> {
             dpi_max: 0,
             rate: -1,
             rate_presets: ModelRc::default(),
+            rate_index: -1,
             brightness: -1,
             brightness_min: 0,
             brightness_max: 100,
@@ -599,6 +600,10 @@ fn fill_controls(info: &mut ui::DeviceInfo, c: &Controls) {
             info.dpi_max = dpi_supported.last().map_or(0, |&v| i32::from(v));
             info.rate = rate_hz.map_or(-1, |hz| hz as i32);
             let rates: Vec<i32> = rate_presets.iter().map(|&hz| hz as i32).collect();
+            info.rate_index = rates
+                .iter()
+                .position(|&hz| hz == info.rate)
+                .map_or(-1, |i| i as i32);
             info.rate_presets = ModelRc::new(VecModel::from(rates));
             info.dpi = dpi.map_or(-1, i32::from);
             let presets: Vec<i32> = dpi_presets.iter().map(|&v| i32::from(v)).collect();

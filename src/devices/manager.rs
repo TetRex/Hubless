@@ -130,9 +130,10 @@ fn settings_event(dev: &crate::hidpp::Device, r: &Report) -> bool {
     .any(|id| dev.feature(id).is_some_and(|f| f.index == r.sub_id()))
 }
 
-/// Quick DPI and polling rate buttons in the mouse card (section 7 of the plan).
+/// Quick DPI and polling rate buttons in the mouse card (section 7 of the plan). The rates are the
+/// standard ones, 125 Hz to 8 kHz; the card shows those the mouse supports on the current connection.
 const DPI_PRESETS: [u16; 4] = [400, 800, 1600, 3200];
-const RATE_PRESETS: [u32; 4] = [1000, 2000, 4000, 8000];
+const RATE_PRESETS: [u32; 7] = [125, 250, 500, 1000, 2000, 4000, 8000];
 
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -678,7 +679,13 @@ impl Worker {
                     dpi::supported(&dev, false).unwrap_or_default()
                 };
                 let rate_presets = if old_rate {
-                    report_rate::old_supported_hz(&dev).unwrap_or_default()
+                    // 0x8060 lists every interval of whole milliseconds (333, 200, 166 Hz…): keep the
+                    // standard rates only, so the buttons fit in the card.
+                    let supported = report_rate::old_supported_hz(&dev).unwrap_or_default();
+                    RATE_PRESETS
+                        .into_iter()
+                        .filter(|hz| supported.contains(hz))
+                        .collect()
                 } else {
                     let supported = report_rate::supported(&dev).unwrap_or_default();
                     RATE_PRESETS

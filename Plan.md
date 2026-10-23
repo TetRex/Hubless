@@ -182,7 +182,7 @@ The model is the Windows 11 flyouts: compact, fast, no "Apply" buttons.
 │ 🖱 PRO X 2               📶 95% ▭ │
 │ DPI  [400][800][1600][3200]         │
 │ ━━━━━━○━━━━━━━━━  [ 800 ]           │
-│ Polling  [1K][2K][4K][8K]           │
+│ Polling [125|250|500|1K|2K|4K|8K]   │
 ├─────────────────────────────────────┤
 │ ⌨ PRO X TKL              📶 97% ▭ │
 │ Brightness ━━━━━━━━━○               │
@@ -196,6 +196,7 @@ The model is the Windows 11 flyouts: compact, fast, no "Apply" buttons.
 ```
 - The profile list in the header appears when there is more than one profile; ⚙ opens the settings window.
 - DPI: buttons plus a slider on a logarithmic scale and an input field; the value snaps to the nearest one the mouse allows.
+- Polling rate: the standard rates from 125 Hz to 8 kHz that the mouse supports on the current connection, as one segmented control (joined segments, the current one filled like a primary button; Tab and ←/→ work too; 2026-10-23). Old mice (`0x8060`) also show only the standard ones.
 - Keyboard palette: six standard colours and your own ones (up to 10, `colors` in `devices.toml`, shared by all profiles) in a second row. The "+" circle at the end of the row opens an editor in the card: a preview and R/G/B sliders starting from the current colour; "Add colour" puts it in the palette and turns it on. If one of your own colours is selected, the editor has a button to remove it from the palette.
 - The keyboard effect list has no "Keyboard" item (2026-10-22): when the keyboard controls the lighting itself or the lighting is off, nothing is selected.
 - Card header: the device icon and name, a connection icon (USB plug, or an antenna for wireless), and at the end the battery: percentage and a small battery with a fill (red when low), plus a charging icon; there is no separate battery row (2026-10-22).

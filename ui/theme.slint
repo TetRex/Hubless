@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // The single source of colours, spacing, radii and animation durations.
 // Colours follow the Windows 11 (Fluent) tokens for flyouts.
+import { Palette } from "std-widgets.slint";
 
 export global Theme {
     // Set from Rust from the system settings.
@@ -65,6 +66,14 @@ export global Theme {
     out property <length> radius-control: 4px;
     out property <length> icon-button-size: 28px;
     out property <length> dpi-field-width: 76px;
+    // Segmented control (polling rate in the mouse card): height, fill, hover and dividers from the
+    // fluent palette, so it matches the buttons next to it; the selected segment looks like a primary button.
+    out property <length> segment-height: 32px;
+    out property <color> segment-fill: Palette.control-background;
+    out property <color> segment-hover: dark ? #ffffff0f : #0000000a;
+    out property <color> segment-stroke: Palette.border;
+    out property <color> segment-selected: Palette.accent-background;
+    out property <color> segment-selected-text: Palette.accent-foreground;
 
     // Typography
     out property <length> font-body: 14px;

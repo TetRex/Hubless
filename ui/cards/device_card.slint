@@ -22,9 +22,11 @@ export struct DeviceInfo {
     // Mouse: the range of allowed DPI (0 if unknown) for the slider and the field.
     dpi-min: int,
     dpi-max: int,
-    // Mouse: polling rate, Hz (-1 if unknown), and quick buttons.
+    // Mouse: polling rate, Hz (-1 if unknown), the rates to choose from and the index of the current
+    // one among them (-1 if it isn't there).
     rate: int,
     rate-presets: [int],
+    rate-index: int,
     // Keyboard: brightness (-1 without the feature) and its range.
     brightness: int,
     brightness-min: int,
@@ -219,6 +221,75 @@ component AddSwatch inherits Rectangle {
     }
 }
 
+// Polling rate as a segmented control: joined segments in one row (seven rates fit, where seven
+// separate buttons didn't), the current rate filled like a primary button. Click a segment, or focus
+// the control with Tab and move with ←/→.
+component RateSelector inherits Rectangle {
+    in property <[int]> rates;
+    // Index of the current rate in `rates` (-1: none).
+    in property <int> current;
+    callback picked(int);
+
+    height: Theme.segment-height;
+    border-radius: Theme.radius-control;
+    border-width: 1px;
+    border-color: focus.has-focus ? Theme.focus-ring : Theme.segment-stroke;
+    background: Theme.segment-fill;
+    clip: true;
+    accessible-role: list;
+    accessible-label: @tr("Polling");
+
+    focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.LeftArrow && root.current > 0) {
+                root.picked(root.rates[root.current - 1]);
+                return accept;
+            }
+            if (event.text == Key.RightArrow && root.current >= 0 && root.current < root.rates.length - 1) {
+                root.picked(root.rates[root.current + 1]);
+                return accept;
+            }
+            reject
+        }
+    }
+
+    HorizontalLayout {
+        for hz[i] in root.rates: Rectangle {
+            horizontal-stretch: 1;
+            background: i == root.current ? Theme.segment-selected
+                : touch.has-hover ? Theme.segment-hover : transparent;
+            accessible-role: button;
+            accessible-label: @tr("{} Hz", hz);
+            accessible-checked: i == root.current;
+            accessible-action-default => {
+                root.picked(hz);
+            }
+
+            // The divider on the left of every segment but the first.
+            if i > 0: Rectangle {
+                x: 0;
+                width: 1px;
+                background: Theme.segment-stroke;
+            }
+
+            Text {
+                text: hz >= 1000 ? (hz / 1000) + "K" : hz;
+                color: i == root.current ? Theme.segment-selected-text : Theme.text-primary;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+
+            // Above the FocusScope: otherwise the first click only takes focus.
+            touch := TouchArea {
+                clicked => {
+                    focus.focus();
+                    root.picked(hz);
+                }
+            }
+        }
+    }
+}
+
 component Label inherits Text {
     font-size: Theme.font-caption;
     color: Theme.text-secondary;
@@ -383,7 +454,8 @@ export component DeviceCard inherits Rectangle {
             }
         }
 
-        // Mouse: polling rate (new mice are switched to host mode, the G903 and others aren't).
+        // Mouse: polling rate (new mice are switched to host mode, the G903 and others aren't): the
+        // rates the mouse supports, 125 Hz to 8 kHz, in one segmented control.
         if info.connected && info.kind == DeviceKind.mouse && info.rate-presets.length > 0: HorizontalLayout {
             spacing: Theme.spacing-xs;
 
@@ -392,11 +464,16 @@ export component DeviceCard inherits Rectangle {
                 min-width: self.preferred-width + Theme.spacing-s;
             }
 
-            for hz in info.rate-presets: Button {
-                text: hz >= 1000 ? (hz / 1000) + "K" : hz;
-                primary: hz == info.rate;
-                clicked => {
-                    root.select-rate(hz);
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+
+                RateSelector {
+                    rates: info.rate-presets;
+                    current: info.rate-index;
+                    picked(hz) => {
+                        root.select-rate(hz);
+                    }
                 }
             }
         }
