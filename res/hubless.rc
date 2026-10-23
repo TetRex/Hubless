@@ -5,8 +5,8 @@
 1 ICON "hubless.ico"
 
 1 VERSIONINFO
-FILEVERSION 0,2,2,0
-PRODUCTVERSION 0,2,2,0
+FILEVERSION 0,2,3,0
+PRODUCTVERSION 0,2,3,0
 FILEOS 0x40004
 FILETYPE 0x1
 BEGIN
@@ -16,12 +16,12 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "TetRex"
       VALUE "FileDescription", "Hubless"
-      VALUE "FileVersion", "0.2.2"
+      VALUE "FileVersion", "0.2.3"
       VALUE "InternalName", "hubless"
       VALUE "LegalCopyright", "Copyright (C) 2026 TetRex. GPL-3.0-or-later"
       VALUE "OriginalFilename", "hubless.exe"
       VALUE "ProductName", "Hubless"
-      VALUE "ProductVersion", "0.2.2"
+      VALUE "ProductVersion", "0.2.3"
     END
   END
   BLOCK "VarFileInfo"
