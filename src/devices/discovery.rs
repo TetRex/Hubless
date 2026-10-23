@@ -62,8 +62,15 @@ pub fn find_or_sleeping(api: &HidApi, want_kind: u8) -> (Vec<Found>, Option<Slee
         .into_iter()
         .filter(|i| i.is_hidpp())
     {
-        let Ok(t) = Transport::open(api, &info) else {
-            continue;
+        let t = match Transport::open(api, &info) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!(
+                    pid = format!("{:04X}", info.pid),
+                    "не удалось открыть интерфейс: {e}"
+                );
+                continue;
+            }
         };
         let mut names = Vec::new();
         // Not a receiver by name: a ping at 0xFF gives HID++ 2.0 for a wired device, 1.0 for a receiver.
@@ -99,6 +106,10 @@ pub fn find_or_sleeping(api: &HidApi, want_kind: u8) -> (Vec<Found>, Option<Slee
                 paired
             } else {
                 // Pairing info can't be read (Bolt and unknown receivers): ping all slots quickly.
+                tracing::info!(
+                    pid = format!("{:04X}", info.pid),
+                    "ресивер не сообщил о спаренных устройствах — быстрый опрос слотов"
+                );
                 (1..=6u8).map(|slot| (slot, false, true)).collect()
             }
         } else if matches!(self_ping, Some(Ok(Protocol::V2(..)))) {

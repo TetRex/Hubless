@@ -32,8 +32,9 @@ const BATTERY_POLL: Duration = Duration::from_secs(5 * 60);
 /// WM_DEVICECHANGE arrives in bursts, so we wait for quiet before rescanning.
 const RESCAN_DEBOUNCE: Duration = Duration::from_millis(800);
 
-/// Rechecks of a sleeping device after it started waiting (counted from discovery); after that only
-/// receiver notifications, no polling.
+/// Rechecks of a sleeping device after it started waiting (counted from discovery), and searches again
+/// after a search found nothing (the receiver may answer late right after a device wakes up,
+/// 2026-10-23); after that only notifications and events, no polling.
 const SLEEP_RECHECKS: [Duration; 3] = [
     Duration::from_secs(1),
     Duration::from_secs(3),
@@ -285,6 +286,10 @@ struct Worker {
     /// When the device started waiting and how many rechecks ([`SLEEP_RECHECKS`]) have been done.
     sleep_since: Instant,
     sleep_rechecks: usize,
+    /// When an event-driven search found nothing and how many searches again ([`SLEEP_RECHECKS`])
+    /// have been done.
+    missing_since: Instant,
+    missing_rechecks: usize,
 }
 
 impl Worker {
@@ -304,6 +309,9 @@ impl Worker {
             key_zones: None,
             sleep_since: Instant::now(),
             sleep_rechecks: 0,
+            missing_since: Instant::now(),
+            // No searches again until a search has run and found nothing.
+            missing_rechecks: SLEEP_RECHECKS.len(),
         }
     }
 
@@ -315,10 +323,7 @@ impl Worker {
             } else if self.sleeping.is_some() {
                 self.wait_sleeping()
             } else {
-                match self.rx.recv() {
-                    Ok(c) => self.command(c),
-                    Err(_) => true,
-                }
+                self.wait_missing()
             };
             if quit {
                 break;
@@ -357,7 +362,40 @@ impl Worker {
         }
     }
 
+    /// No device and no receiver with a sleeping one: wait for a command; shortly after a search that
+    /// found nothing, search again a few times. `true` means exit.
+    fn wait_missing(&mut self) -> bool {
+        let Some(&delay) = SLEEP_RECHECKS.get(self.missing_rechecks) else {
+            return match self.rx.recv() {
+                Ok(c) => self.command(c),
+                Err(_) => true,
+            };
+        };
+        let at = self.missing_since + delay;
+        match self
+            .rx
+            .recv_timeout(at.saturating_duration_since(Instant::now()))
+        {
+            Ok(c) => self.command(c),
+            Err(RecvTimeoutError::Disconnected) => true,
+            Err(RecvTimeoutError::Timeout) => {
+                self.missing_rechecks += 1;
+                tracing::info!(role = ?self.role, attempt = self.missing_rechecks, "устройство не найдено — повторный поиск");
+                self.search();
+                false
+            }
+        }
+    }
+
+    /// A search started by an event (a command, a device waking up): if it finds nothing, a few searches
+    /// again follow ([`SLEEP_RECHECKS`]).
     fn rescan(&mut self) {
+        self.missing_since = Instant::now();
+        self.missing_rechecks = 0;
+        self.search();
+    }
+
+    fn search(&mut self) {
         // The device is still there: just reread and apply the settings (they may have been changed from the CLI).
         if let Some(d) = &self.dev
             && matches!(root::ping(&d.transport, d.index), Ok(Protocol::V2(..)))

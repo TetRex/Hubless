@@ -46,33 +46,32 @@ pub fn read_info(t: &Transport) -> Vec<RegisterValue> {
         read(t, "firmware_build", FIRMWARE, false, [0x02, 0, 0]),
         read(t, "bootloader", FIRMWARE, false, [0x04, 0, 0]),
     ];
-    // LIGHTSPEED receivers have 1–2 slots, and empty ones don't answer at all: quick mode,
-    // and stop after two empty slots in a row.
+    // LIGHTSPEED receivers have 1–2 slots; an empty one answers at once with error 0x09, so stop after
+    // two empty slots in a row. The normal timeout with a retry, not the quick mode: right after a
+    // device wakes up the receiver may answer late, and a missed reply made the paired mouse look
+    // absent (2026-10-23). The quick mode dates from before error replies were parsed (2026-10-19),
+    // when every error looked like a timeout.
     let mut empty_in_row = 0;
     for slot in 1..=6u8 {
-        let reg = t.quick(|| {
-            read(
-                t,
-                format!("pairing_info_slot{slot}"),
-                RECEIVER_INFO,
-                true,
-                [PAIRING_INFO + slot - 1, 0, 0],
-            )
-        });
+        let reg = read(
+            t,
+            format!("pairing_info_slot{slot}"),
+            RECEIVER_INFO,
+            true,
+            [PAIRING_INFO + slot - 1, 0, 0],
+        );
         let paired = reg.result.is_ok();
         empty_in_row = if paired { 0 } else { empty_in_row + 1 };
         regs.push(reg);
         if paired {
             // The receiver itself knows the name, so a sleeping device has it too.
-            regs.push(t.quick(|| {
-                read(
-                    t,
-                    format!("device_name_slot{slot}"),
-                    RECEIVER_INFO,
-                    true,
-                    [DEVICE_NAME + slot - 1, 0, 0],
-                )
-            }));
+            regs.push(read(
+                t,
+                format!("device_name_slot{slot}"),
+                RECEIVER_INFO,
+                true,
+                [DEVICE_NAME + slot - 1, 0, 0],
+            ));
         }
         if empty_in_row == 2 {
             break;
